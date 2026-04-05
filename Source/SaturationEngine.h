@@ -1,0 +1,1810 @@
+#pragma once
+#include <cmath>
+#include <cstring>
+#include <algorithm>
+
+// ══════════════════════════════════════════════════════════════
+//  SaturationEngine — header-only DSP for SAT-TR
+//  6 physically-modeled saturation algorithms with:
+//    ADAA (1st-order antiderivative anti-aliasing)
+//    REACT (Airwindows-inspired energy tracking → parameter modulation)
+//    GIRTH (post-waveshaper wavefolding + sharpen)
+//    VARIATION (analog drift via Hermite S&H)
+//    MOD (input-domain power warp + model-specific secondary)
+//    Internal emphasis / de-emphasis EQ per model
+//    Auto-gain compensation
+//    Safety LPF for ×1 (no oversampling) mode
+// ══════════════════════════════════════════════════════════════
+
+namespace SatEngine
+{
+
+// ──────────────────────────────────────────────────────────────
+//  Model enum
+// ──────────────────────────────────────────────────────────────
+enum class Model : int
+{
+    Clean     = 0,   // Bypass — 1:1 pass-through (no saturation)
+    Tape      = 1,   // Jiles-Atherton hysteresis + flutter + head bump
+    Triode    = 2,   // 12AX7 preamp — Koren asymmetric
+    PushPull  = 3,   // EL34/6L6 power amp — Class AB push-pull
+    Cascade   = 4,   // Cascaded triode stages (1-4, fractional crossfade)
+    Diode     = 5,   // Shockley diode clipper — Ge/Si blend
+    Tundra    = 6,   // Metal Zone→Modern morph — dual-stage cascaded clipping
+    Fuzz      = 7,   // Transistor fuzz — Ge/Si stages with bias starving
+    Doom      = 8,   // Multi-stage doom fuzz — Big Muff inspired wall-of-sound
+    Destroy   = 9,   // Ring-fuzz — pitch-tracked ring modulation + feedback
+    NumModels = 10
+};
+
+// ──────────────────────────────────────────────────────────────
+//  Constants
+// ──────────────────────────────────────────────────────────────
+static constexpr float kPi         = 3.14159265358979323846f;
+static constexpr float kHalfPi     = 1.57079632679489661923f;
+static constexpr float kTwoPi      = 6.28318530717958647692f;
+static constexpr float kInvPi      = 0.31830988618379067154f;
+static constexpr float kLn2        = 0.69314718055994530942f;
+static constexpr float kSmoothCoeff = 0.995f;   // ~10ms @ 48kHz
+static constexpr int   kReactBufSize = 8192;
+static constexpr int   kMaxCascade   = 4;
+static constexpr int   kMaxSeries    = 4;
+
+// ──────────────────────────────────────────────────────────────
+//  ADAA1 helpers  (1st-order antiderivative anti-aliasing)
+// ──────────────────────────────────────────────────────────────
+namespace adaa
+{
+    // Antiderivative of tanh(k·x):  F1(x) = (1/k)·ln(cosh(k·x))
+    // Numerically stable form: (|kx| + log1p(exp(-2|kx|)) - ln2) / k
+    inline float tanhAD1 (float x, float k) noexcept
+    {
+        const float kx = k * x;
+        const float akx = std::abs (kx);
+        return (akx + std::log1p (std::exp (-2.0f * akx)) - kLn2) / k;
+    }
+
+    // Antiderivative of sin(pi*x) wavefolder:  F1(x) = -(1/pi)*cos(pi*x)
+    inline float sinFoldAD1 (float x) noexcept
+    {
+        return -kInvPi * std::cos (kPi * x);
+    }
+
+    // Generic ADAA1 processor for tanh(k·x)
+    struct TanhADAA
+    {
+        float prev    = 0.0f;
+        float ad1Prev = 0.0f;
+
+        inline float process (float x, float k) noexcept
+        {
+            constexpr float kTol = 1.0e-5f;
+            const float ad1 = tanhAD1 (x, k);
+            const float dx  = x - prev;
+            const float y   = (std::abs (dx) < kTol)
+                            ? std::tanh (k * 0.5f * (x + prev))
+                            : (ad1 - ad1Prev) / dx;
+            prev    = x;
+            ad1Prev = ad1;
+            return y;
+        }
+
+        void reset() noexcept { prev = 0.0f; ad1Prev = 0.0f; }
+    };
+
+    // Generic ADAA1 processor for sin(pi*x) wavefolding
+    struct SinFoldADAA
+    {
+        float prev    = 0.0f;
+        float ad1Prev = 0.0f;
+
+        inline float process (float x) noexcept
+        {
+            constexpr float kTol = 1.0e-5f;
+            const float ad1 = sinFoldAD1 (x);
+            const float dx  = x - prev;
+            const float y   = (std::abs (dx) < kTol)
+                            ? std::sin (kPi * 0.5f * (x + prev))
+                            : (ad1 - ad1Prev) / dx;
+            prev    = x;
+            ad1Prev = ad1;
+            return y;
+        }
+
+        void reset() noexcept { prev = 0.0f; ad1Prev = 0.0f; }
+    };
+
+    // ──────────────────────────────────────────────────────────────
+    //  ADAA-2 (2nd-order antiderivative anti-aliasing) for hard clippers
+    //  Used by Doom, Destroy, Fuzz — models with steep waveshaper slopes
+    //  F2(x) = second antiderivative of tanh(k·x)
+    // ──────────────────────────────────────────────────────────────
+
+    // Second antiderivative of tanh(k·x):
+    //   F2(x) = (1/k²) · [ Li₂(-e^{-2kx}) + kx·ln(1+e^{-2kx}) + (kx)²/2 ]
+    //   Stable approx: use direct integration of F1
+    //   F2(x) ≈ x·F1(x) - (1/(2k²))·ln²(cosh(k·x)) ... complex.
+    //   Practical: numerical F2 via Simpson integration of F1.
+    //   Better: closed-form  F2(x) = x·F1(x) − (1/k²)·( Li₂(−e^{2kx}) + kx·ln(1+e^{−2kx}) )
+    //   Simplest accurate approach: store two previous samples + AD1 values.
+    inline float tanhAD2 (float x, float k) noexcept
+    {
+        // F2(x) = x * F1(x) - (1/(2*k*k)) * [kx * kx / 2  - akx + ln(cosh(kx))]
+        // We use the identity: ∫ F1(x) dx = x·F1(x) − ∫ x·f(x) dx
+        // = x·F1(x) − (1/k)*[x·tanh(kx) − (1/k)·ln(cosh(kx))]
+        // Simplified stable form:
+        const float kx = k * x;
+        const float akx = std::abs (kx);
+        const float lnCosh = akx + std::log1p (std::exp (-2.0f * akx)) - kLn2;
+        const float f1 = lnCosh / k;
+        // F2(x) = 0.5 * x * F1(x) + lnCosh / (2*k*k)
+        return 0.5f * x * f1 + lnCosh / (2.0f * k * k);
+    }
+
+    struct TanhADAA2
+    {
+        float x1 = 0.0f, x2 = 0.0f;
+        float ad1_1 = 0.0f;
+        float ad2_1 = 0.0f, ad2_2 = 0.0f;
+
+        inline float process (float x0, float k) noexcept
+        {
+            constexpr float kTol = 1.0e-5f;
+            const float ad1_0 = tanhAD1 (x0, k);
+            const float ad2_0 = tanhAD2 (x0, k);
+
+            const float dx = x0 - x2;
+            float y;
+            if (std::abs (dx) < kTol)
+            {
+                // Fallback to ADAA-1 between x0 and x1
+                const float dx01 = x0 - x1;
+                y = (std::abs (dx01) < kTol)
+                    ? std::tanh (k * 0.5f * (x0 + x1))
+                    : (ad1_0 - ad1_1) / dx01;
+            }
+            else
+            {
+                // ADAA-2: second divided difference of F2
+                const float dx01 = x0 - x1;
+                const float dx12 = x1 - x2;
+                const float dd01 = (std::abs (dx01) < kTol)
+                    ? ad1_0  // F2'(x0) = F1(x0)
+                    : (ad2_0 - ad2_1) / dx01;
+                const float dd12 = (std::abs (dx12) < kTol)
+                    ? ad1_1
+                    : (ad2_1 - ad2_2) / dx12;
+                y = 2.0f * (dd01 - dd12) / dx;
+            }
+
+            x2 = x1;      x1 = x0;
+            ad1_1 = ad1_0;
+            ad2_2 = ad2_1; ad2_1 = ad2_0;
+            return y;
+        }
+
+        void reset() noexcept
+        {
+            x1 = x2 = 0.0f;
+            ad1_1 = 0.0f;
+            ad2_1 = ad2_2 = 0.0f;
+        }
+    };
+} // namespace adaa
+
+// ──────────────────────────────────────────────────────────────
+//  REACT  (Airwindows-inspired circular buffer energy tracker)
+// ──────────────────────────────────────────────────────────────
+struct ReactState
+{
+    float buf[kReactBufSize] = {};
+    float control = 0.0f;
+    int   gcount  = 0;
+
+    void reset() noexcept
+    {
+        std::memset (buf, 0, sizeof (buf));
+        control = 0.0f;
+        gcount  = 0;
+    }
+};
+
+inline void reactTrackEnergy (ReactState& s, float input, int windowSize) noexcept
+{
+    if (s.gcount < 0 || s.gcount >= kReactBufSize)
+        s.gcount = kReactBufSize - 1;
+
+    const float absIn = std::abs (input);
+    s.buf[s.gcount] = absIn;
+    s.control += absIn;
+
+    int oldIdx = s.gcount + windowSize;
+    if (oldIdx >= kReactBufSize) oldIdx -= kReactBufSize;
+    s.control -= s.buf[oldIdx];
+
+    s.gcount--;
+
+    if (s.control > (float) windowSize) s.control = (float) windowSize;
+    if (s.control < 0.0f) s.control = 0.0f;
+}
+
+inline float reactGetDepletion (const ReactState& s, int windowSize) noexcept
+{
+    return s.control / ((float) windowSize + 0.001f);
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Multiband REACT  (3-band energy tracker: sub / mid / air)
+//  Crossover at ~200Hz (sub/mid) and ~4kHz (mid/air).
+//  Each band has its own energy window → frequency-dependent sag.
+// ──────────────────────────────────────────────────────────────
+struct MultibandReactState
+{
+    // Per-band 1st-order crossover filter states (per-channel)
+    float lpSub  = 0.0f;   // LP for sub band (~200Hz)
+    float lpAir  = 0.0f;   // LP for mid/air split (~4kHz)
+
+    // Per-band energy trackers
+    ReactState sub;
+    ReactState mid;
+    ReactState air;
+
+    // Per-band sag envelopes
+    float sagSub = 0.0f;
+    float sagMid = 0.0f;
+    float sagAir = 0.0f;
+
+    void reset() noexcept
+    {
+        lpSub = lpAir = 0.0f;
+        sub.reset(); mid.reset(); air.reset();
+        sagSub = sagMid = sagAir = 0.0f;
+    }
+};
+
+struct MultibandSagResult
+{
+    float sagPreSub  = 1.0f;
+    float sagPreMid  = 1.0f;
+    float sagPreAir  = 1.0f;
+    float sagPostSub = 1.0f;
+    float sagPostMid = 1.0f;
+    float sagPostAir = 1.0f;
+};
+
+inline void multibandReactSplit (MultibandReactState& mb, float x,
+                                 float coeffSub, float coeffAir,
+                                 float& outSub, float& outMid, float& outAir) noexcept
+{
+    // 1st-order LP at ~200Hz → sub
+    mb.lpSub += (x - mb.lpSub) * coeffSub;
+    const float subBand = mb.lpSub;
+    const float hiPass  = x - mb.lpSub;
+
+    // 1st-order LP at ~4kHz → mid (of hi-passed signal)
+    mb.lpAir += (hiPass - mb.lpAir) * coeffAir;
+    const float midBand = mb.lpAir;
+    const float airBand = hiPass - mb.lpAir;
+
+    outSub = subBand;
+    outMid = midBand;
+    outAir = airBand;
+}
+
+inline MultibandSagResult multibandReactProcess (
+    MultibandReactState& mb, float x,
+    float coeffSub, float coeffAir,
+    int window, float react,
+    float attCoeff, float relCoeff) noexcept
+{
+    float subSig, midSig, airSig;
+    multibandReactSplit (mb, x, coeffSub, coeffAir, subSig, midSig, airSig);
+
+    // Track per-band energy
+    reactTrackEnergy (mb.sub, subSig, window);
+    reactTrackEnergy (mb.mid, midSig, window);
+    reactTrackEnergy (mb.air, airSig, window);
+
+    float depSub = reactGetDepletion (mb.sub, window);
+    float depMid = reactGetDepletion (mb.mid, window);
+    float depAir = reactGetDepletion (mb.air, window);
+
+    // Per-band sag envelope (asymmetric attack/release)
+    auto envFollow = [&] (float& env, float dep) {
+        if (dep > env)
+            env += (dep - env) * attCoeff;
+        else
+            env += (dep - env) * relCoeff;
+    };
+    envFollow (mb.sagSub, depSub);
+    envFollow (mb.sagMid, depMid);
+    envFollow (mb.sagAir, depAir);
+
+    // Basses sag more than highs (realistic transformer/tube behavior)
+    MultibandSagResult r;
+    const float sSub = mb.sagSub * mb.sagSub;
+    const float sMid = mb.sagMid * mb.sagMid;
+    const float sAir = mb.sagAir * mb.sagAir;
+
+    r.sagPreSub  = 1.0f + sSub * react * 14.0f;  // bass sags most
+    r.sagPreMid  = 1.0f + sMid * react * 10.0f;
+    r.sagPreAir  = 1.0f + sAir * react * 6.0f;   // treble sags least
+    r.sagPostSub = 1.0f / (1.0f + sSub * react * 10.0f);
+    r.sagPostMid = 1.0f / (1.0f + sMid * react * 7.0f);
+    r.sagPostAir = 1.0f / (1.0f + sAir * react * 4.0f);
+
+    return r;
+}
+
+// ──────────────────────────────────────────────────────────────
+//  VARIATION — analog component tolerance + slow thermal drift
+//  Static tolerance (dominant, 70%): per-instance hash → fixed offset
+//  Thermal drift (secondary, 30%): 3 incommensurate sub-Hz sines
+// ──────────────────────────────────────────────────────────────
+struct DriftOsc
+{
+    float phase1 = 0.0f;
+    float phase2 = 0.0f;
+    float phase3 = 0.0f;
+    float staticTol = 0.0f;     // per-component tolerance (fixed per instance)
+    float output = 0.0f;
+
+    // Deterministic per-component tolerance from hash seed
+    void initTolerance (uint32_t seed, int paramIdx) noexcept
+    {
+        uint32_t h = seed ^ (uint32_t (paramIdx) * 2654435761u);
+        h = ((h >> 16) ^ h) * 0x45d9f3bu;
+        h = ((h >> 16) ^ h) * 0x45d9f3bu;
+        h = (h >> 16) ^ h;
+        staticTol = float (h & 0xFFFFu) / 32768.0f - 1.0f;  // [-1, 1]
+    }
+
+    void advance (float rate, float depth, float sampleRate) noexcept
+    {
+        // Very slow non-periodic thermal drift (~0.03-0.15 Hz)
+        phase1 += rate / sampleRate;
+        phase2 += rate * 0.7937f / sampleRate;   // cube-root of 2
+        phase3 += rate * 0.6180f / sampleRate;   // 1/phi (golden ratio inverse)
+
+        if (phase1 >= 1.0f) phase1 -= 1.0f;
+        if (phase2 >= 1.0f) phase2 -= 1.0f;
+        if (phase3 >= 1.0f) phase3 -= 1.0f;
+
+        const float drift = std::sin (phase1 * kTwoPi) * 0.5f
+                          + std::sin (phase2 * kTwoPi) * 0.3f
+                          + std::sin (phase3 * kTwoPi) * 0.2f;
+
+        // Static tolerance (70%) + slow thermal drift (30%)
+        output = (staticTol * 0.7f + drift * 0.3f) * depth;
+    }
+
+    void reset() noexcept { phase1 = phase2 = phase3 = 0.0f; output = 0.0f; }
+};
+
+struct VariationState
+{
+    DriftOsc gainDrift;
+    DriftOsc biasDrift;
+    DriftOsc shapeDrift;
+    DriftOsc asymDrift;
+    bool     tolerancesReady = false;
+
+    void initTolerances (uint32_t seed) noexcept
+    {
+        gainDrift.initTolerance  (seed, 0);
+        biasDrift.initTolerance  (seed, 1);
+        shapeDrift.initTolerance (seed, 2);
+        asymDrift.initTolerance  (seed, 3);
+        tolerancesReady = true;
+    }
+
+    void reset() noexcept
+    {
+        gainDrift.reset();
+        biasDrift.reset();
+        shapeDrift.reset();
+        asymDrift.reset();
+    }
+};
+
+// ──────────────────────────────────────────────────────────────
+//  Internal emphasis/de-emphasis EQ state (1st-order filters)
+// ──────────────────────────────────────────────────────────────
+struct EmphasisState
+{
+    float preHP  = 0.0f;
+    float preSh  = 0.0f;
+    float postLP = 0.0f;
+    float postHP = 0.0f;
+
+    void reset() noexcept { preHP = 0.0f; preSh = 0.0f; postLP = 0.0f; postHP = 0.0f; }
+};
+
+// ──────────────────────────────────────────────────────────────
+//  Safety LPF for ×1 mode (2nd-order Butterworth at 0.4×fs)
+// ──────────────────────────────────────────────────────────────
+struct SafetyLPF
+{
+    float x1 = 0.0f, x2 = 0.0f;
+    float y1 = 0.0f, y2 = 0.0f;
+
+    void reset() noexcept { x1 = x2 = y1 = y2 = 0.0f; }
+};
+
+// ──────────────────────────────────────────────────────────────
+//  Full per-channel / per-loader state
+// ──────────────────────────────────────────────────────────────
+struct State
+{
+    // REACT energy tracker (per-channel)
+    ReactState react[2];
+
+    // REACT sag envelope follower (per-channel, asymmetric attack/release)
+    float sagEnvelope[2] = {};
+
+    // CASCADE per-stage DC accumulation (coupling cap model)
+    // [series pass][stage][channel]
+    float cascadeDC[kMaxSeries][kMaxCascade][2] = {};
+
+    // DC blocker (1st-order HPF, post-saturation)
+    float dcX[2] = {};
+    float dcY[2] = {};
+
+    // TAPE flutter LFO phase
+    float flutterPhase = 0.0f;
+
+    // TAPE head bump resonance (2-pole band-pass state per-channel)
+    // [series pass][channel]
+    float bumpZ1[kMaxSeries][2] = {};
+    float bumpZ2[kMaxSeries][2] = {};
+
+    // Internal emphasis/de-emphasis (per-channel)
+    EmphasisState emphasis[2];
+
+    // ADAA states — main waveshaper [series pass][channel]
+    adaa::TanhADAA wsAdaa[kMaxSeries][2];
+    // ADAA-2 states — hard clippers (Fuzz/Doom/Destroy) [series pass][channel]
+    adaa::TanhADAA2 wsAdaa2[kMaxSeries][2];
+    // CASCADE per-stage ADAA [series pass][stage][channel]
+    adaa::TanhADAA cascadeAdaa[kMaxSeries][kMaxCascade][2];
+    // GIRTH wavefolder ADAA [series pass][channel]
+    adaa::SinFoldADAA girthAdaa[kMaxSeries][2];
+
+    // VARIATION drift
+    VariationState variation;
+
+    // Multiband REACT (per-channel)
+    MultibandReactState mbReact[2];
+
+    // Safety LPF (per-channel, for ×1 mode)
+    SafetyLPF safetyLpf[2];
+
+    // DOOM (multi-stage fuzz) state [series pass][filter][channel]
+    float doomDC[kMaxSeries][3][2] = {};
+    float doomFeedback[kMaxSeries][2] = {};
+
+    // Shared YIN pitch tracker state (used by sub-osc + DESTROY ring mod)
+    static constexpr int kYinBufSize = 2048; // analysis window (~46ms @ 44.1k, supports down to ~43Hz)
+    float yinBuf[kYinBufSize] = {};          // circular input buffer for autocorrelation
+    int   yinWritePos = 0;                   // write position
+    float yinSmoothedFreq = 220.0f;          // smoothed detected frequency (Hz)
+    float yinRawFreq = 220.0f;               // last detected frequency (unsmoothed, for onset snap)
+    int   yinCounter = 0;                    // samples since last YIN analysis
+
+    // DESTROY ring mod state
+    float destroyRingPhase = 0.0f;           // ring mod oscillator phase (mono)
+    float destroyFeedback[kMaxSeries][2] = {};  // feedback [series pass][channel]
+
+    // TUNDRA inter-stage coupling cap + tightness HPF
+    float tundraInterHP[kMaxSeries][2] = {};
+    float tundraTightHP[kMaxSeries][2] = {};
+    // TUNDRA presence bump (2-pole BP state per-channel)
+    float tundraPresZ1[kMaxSeries][2] = {};
+    float tundraPresZ2[kMaxSeries][2] = {};
+
+    // Inter-stage LPF for series chaining (one-pole per pass per channel)
+    float interStageLPF[kMaxSeries][2] = {};
+
+    // Inter-stage DC blocker (coupling cap between series passes)
+    float interStageDCx[kMaxSeries][2] = {};
+    float interStageDCy[kMaxSeries][2] = {};
+
+    // Sub-octave synthesizer (pitch-tracked sine at f/2)
+    float subOscPhase = 0.0f;       // phase accumulator (mono, both ch use same)
+    float subOscEnv[2] = {};        // per-channel envelope follower
+    float subOscLPF[2] = {};        // per-channel output LPF (~250 Hz)
+
+    // Current series pass index (set by processBlock before waveshapers)
+    int currentSeriesPass = 0;
+
+    // Parameter smoothing (one-pole IIR)
+    float sDrive = 0.0f;
+    float sGirth = 0.0f;
+    float sBias  = 0.0f;
+    float sReact = 0.0f;
+    float sMod   = 0.0f;
+    float sVar   = 0.0f;
+
+    void reset()
+    {
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            react[ch].reset();
+            mbReact[ch].reset();
+            sagEnvelope[ch] = 0.0f;
+            dcX[ch] = dcY[ch] = 0.0f;
+            emphasis[ch].reset();
+            safetyLpf[ch].reset();
+            for (int sp = 0; sp < kMaxSeries; ++sp)
+            {
+                bumpZ1[sp][ch] = bumpZ2[sp][ch] = 0.0f;
+                wsAdaa[sp][ch].reset();
+                wsAdaa2[sp][ch].reset();
+                girthAdaa[sp][ch].reset();
+                doomDC[sp][0][ch] = doomDC[sp][1][ch] = doomDC[sp][2][ch] = 0.0f;
+                doomFeedback[sp][ch] = 0.0f;
+                destroyFeedback[sp][ch] = 0.0f;
+                interStageLPF[sp][ch] = 0.0f;
+                interStageDCx[sp][ch] = 0.0f;
+                interStageDCy[sp][ch] = 0.0f;
+                tundraInterHP[sp][ch] = 0.0f;
+                tundraTightHP[sp][ch] = 0.0f;
+                tundraPresZ1[sp][ch] = 0.0f;
+                tundraPresZ2[sp][ch] = 0.0f;
+                for (int s = 0; s < kMaxCascade; ++s)
+                {
+                    cascadeDC[sp][s][ch] = 0.0f;
+                    cascadeAdaa[sp][s][ch].reset();
+                }
+            }
+        }
+        flutterPhase = 0.0f;
+        std::memset (yinBuf, 0, sizeof (yinBuf));
+        yinWritePos = 0;
+        yinCounter = 0;
+        yinSmoothedFreq = 220.0f;
+        yinRawFreq = 220.0f;
+        destroyRingPhase = 0.0f;
+        subOscPhase = 0.0f;
+        subOscEnv[0] = subOscEnv[1] = 0.0f;
+        subOscLPF[0] = subOscLPF[1] = 0.0f;
+        currentSeriesPass = 0;
+        variation.reset();
+        sDrive = sGirth = sBias = sReact = sMod = sVar = 0.0f;
+    }
+};
+
+// ──────────────────────────────────────────────────────────────
+//  Internal helpers
+// ──────────────────────────────────────────────────────────────
+namespace detail
+{
+    inline float fastTanh (float x) noexcept
+    {
+        const float x2 = x * x;
+        return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+    }
+
+    inline float onePoleCoeff (float freqHz, float sr) noexcept
+    {
+        return 1.0f - std::exp (-kTwoPi * freqHz / sr);
+    }
+
+    inline float clampF (float x, float lo, float hi) noexcept
+    {
+        return x < lo ? lo : (x > hi ? hi : x);
+    }
+} // namespace detail
+
+// ══════════════════════════════════════════════════════════════
+//  GIRTH — post-waveshaper fold + sharpen
+// ══════════════════════════════════════════════════════════════
+inline float applyGirth (float shaped, float girth,
+                         adaa::SinFoldADAA& foldAdaa) noexcept
+{
+    if (girth < 0.01f) return shaped;
+
+    // Stage 1: Sine wavefolding (with ADAA)
+    const float foldK = 1.0f + girth * girth * 3.0f;
+    const float foldInput = shaped * foldK;
+    const float folded = foldAdaa.process (foldInput);
+
+    // Stage 2: Transfer function sharpening
+    const float sharpK = 1.0f + girth * 1.5f;
+    const float sgn = shaped >= 0.0f ? 1.0f : -1.0f;
+    const float tanhVal = std::abs (detail::fastTanh (shaped * (1.0f + girth * 2.0f)));
+    const float sharpened = sgn * std::pow (tanhVal + 1.0e-12f, 1.0f / sharpK);
+
+    // Stage 3: Blend fold + sharpen
+    const float aggressive = folded * 0.6f + sharpened * 0.4f;
+
+    // Stage 4: Wet/dry crossfade (quadratic ease-in)
+    const float girthCurve = girth * girth;
+    return shaped * (1.0f - girthCurve) + aggressive * girthCurve;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Internal Emphasis / De-emphasis
+// ══════════════════════════════════════════════════════════════
+struct EmphCoeffs {
+    float preHP = 0, preSh = 0, postLP = 0, postHP = 0;
+};
+
+inline float preEmphasize (float x, EmphasisState& st, Model model,
+                           float mod, const EmphCoeffs& ec) noexcept
+{
+    switch (model)
+    {
+        case Model::Triode:
+        case Model::Cascade:
+        {
+            st.preHP += (x - st.preHP) * ec.preHP;
+            float hp = x - st.preHP;
+            st.preSh += (hp - st.preSh) * ec.preSh;
+            float treble = hp - st.preSh;
+            return hp + treble * 0.4f;
+        }
+        case Model::PushPull:
+            return x;
+        case Model::Diode:
+        {
+            st.preHP += (x - st.preHP) * ec.preHP;
+            return x - st.preHP;
+        }
+        case Model::Tape:
+        {
+            st.preSh += (x - st.preSh) * ec.preSh;
+            float hfPart = x - st.preSh;
+            float tapeSpeedBoost = 0.5f + (1.0f - mod) * 0.5f;
+            return x + hfPart * tapeSpeedBoost;
+        }
+        case Model::Fuzz:
+        {
+            st.preSh += (x - st.preSh) * ec.preSh;
+            st.preHP += (st.preSh - st.preHP) * ec.preHP;
+            return st.preSh - st.preHP;
+        }
+        case Model::Doom:
+        {
+            st.preSh += (x - st.preSh) * ec.preSh;
+            st.preHP += (st.preSh - st.preHP) * ec.preHP;
+            return st.preSh - st.preHP;
+        }
+        case Model::Destroy:
+        {
+            st.preHP += (x - st.preHP) * ec.preHP;
+            return x - st.preHP;
+        }
+        case Model::Tundra:
+        {
+            st.preHP += (x - st.preHP) * ec.preHP;
+            float hp = x - st.preHP;
+            st.preSh += (hp - st.preSh) * ec.preSh;
+            float treble = hp - st.preSh;
+            return hp + treble * 0.3f;
+        }
+        default: return x;
+    }
+}
+
+inline float deEmphasize (float y, EmphasisState& st, Model model,
+                          float mod, const EmphCoeffs& ec) noexcept
+{
+    switch (model)
+    {
+        case Model::Triode:
+        case Model::Cascade:
+        {
+            st.postLP += (y - st.postLP) * ec.postLP;
+            st.postHP += (st.postLP - st.postHP) * ec.postHP;
+            return st.postLP - st.postHP;
+        }
+        case Model::PushPull:
+        {
+            st.postLP += (y - st.postLP) * ec.postLP;
+            return st.postLP;
+        }
+        case Model::Diode:
+        {
+            st.postLP += (y - st.postLP) * ec.postLP;
+            return st.postLP;
+        }
+        case Model::Tape:
+        {
+            st.postLP += (y - st.postLP) * ec.postLP;
+            float tapeSpeedCut = 0.5f + (1.0f - mod) * 0.5f;
+            float hfPart = y - st.postLP;
+            return y - hfPart * tapeSpeedCut;
+        }
+        case Model::Fuzz:
+        {
+            st.postHP += (y - st.postHP) * ec.postHP;
+            float hp = y - st.postHP;
+            st.postLP += (hp - st.postLP) * ec.postLP;
+            return st.postLP;
+        }
+        case Model::Doom:
+        {
+            st.postHP += (y - st.postHP) * ec.postHP;
+            float hp = y - st.postHP;
+            st.postLP += (hp - st.postLP) * ec.postLP;
+            return st.postLP;
+        }
+        case Model::Destroy:
+        {
+            st.postHP += (y - st.postHP) * ec.postHP;
+            float hp = y - st.postHP;
+            st.postLP += (hp - st.postLP) * ec.postLP;
+            return st.postLP;
+        }
+        case Model::Tundra:
+        {
+            st.postHP += (y - st.postHP) * ec.postHP;
+            float hp = y - st.postHP;
+            st.postLP += (hp - st.postLP) * ec.postLP;
+            return st.postLP;
+        }
+        default: return y;
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Per-sample waveshaper functions (new models)
+// ══════════════════════════════════════════════════════════════
+
+// TRIODE: Koren-inspired 12AX7 asymmetric waveshaper
+inline float processTriode (float x, float drive, float bias, float mod,
+                            adaa::TanhADAA& adaaState) noexcept
+{
+    const float gain = 1.0f + drive * 30.0f;
+    float s = x * gain;
+
+    // Bias shifts operating point (hot → earlier breakup, cold → more headroom)
+    s += bias * 0.2f;
+
+    // MOD: grid conduction knee sharpness
+    const float kneeSharp = 1.0f + mod * mod * 2.0f;
+    const float k = 1.0f + drive * 3.0f * kneeSharp;
+
+    // ADAA tanh core
+    float shaped = adaaState.process (s, k);
+
+    // Asymmetry: positive side gets extra even-harmonic content
+    const float asym = 0.15f + bias * 0.1f;
+    if (s > 0.0f)
+        shaped += asym * drive * shaped * shaped;
+
+    return shaped;
+}
+
+// PUSH-PULL: Class AB EL34/6L6 power tube push-pull
+inline float processPushPull (float x, float drive, float bias, float mod,
+                              adaa::TanhADAA& adaaState) noexcept
+{
+    const float gain = 1.0f + drive * 24.0f;
+    float s = x * gain;
+
+    // Bias: -1 = hot (Class A), +1 = cold (wide crossover notch)
+    const float crossoverWidth = 0.02f + (bias * 0.5f + 0.5f) * 0.15f;
+
+    // MOD: saturation knee hardness
+    const float k = 1.5f + drive * 4.0f + mod * mod * 3.0f;
+
+    float posHalf = detail::clampF (s, 0.0f, 100.0f);
+    float negHalf = detail::clampF (-s, 0.0f, 100.0f);
+
+    posHalf = adaaState.process (posHalf, k);
+    float negShaped = std::tanh (k * negHalf);
+
+    // Crossover distortion
+    const float crossover = std::exp (-(s * s) / (crossoverWidth * crossoverWidth + 1.0e-6f));
+    const float notchDepth = crossoverWidth * 2.0f;
+
+    float out = posHalf - negShaped;
+    out *= (1.0f - crossover * notchDepth);
+
+    return out;
+}
+
+// CASCADE: single-stage helper
+inline float processCascadeSingle (float x, float drivePerStage, float bias,
+                                   float dcAccum[][2], int ch,
+                                   adaa::TanhADAA cascAdaa[][2],
+                                   int numStages, float capBleed) noexcept
+{
+    float s = x;
+    const float k = 1.0f + drivePerStage * 3.0f;
+
+    for (int stage = 0; stage < numStages; ++stage)
+    {
+        s *= (1.0f + drivePerStage * 12.0f);
+        s += bias * 0.1f + dcAccum[stage][ch];
+        s = cascAdaa[stage][ch].process (s, k);
+        dcAccum[stage][ch] = dcAccum[stage][ch] * capBleed + s * (1.0f - capBleed) * 0.1f;
+        s *= 0.8f;
+    }
+    return s;
+}
+
+// CASCADE: N cascaded triode stages with fractional crossfade
+inline float processCascade (float x, float drive, float bias, float mod,
+                             State& state, int ch, float capBleed) noexcept
+{
+    // MOD maps to continuous stage range: MOD=0 → 4 stages, MOD=1 → 1 stage
+    const float stagesF = 4.0f - mod * 3.0f;
+    const int nLo = std::max (1, (int) stagesF);
+    const int nHi = std::min (nLo + 1, kMaxCascade);
+    const float frac = stagesF - (float) nLo;
+
+    const float drivePerStage = drive / std::sqrt ((float) nHi);
+
+    const int sp = state.currentSeriesPass;
+
+    float outLo = processCascadeSingle (x, drivePerStage, bias,
+                                        state.cascadeDC[sp], ch,
+                                        state.cascadeAdaa[sp],
+                                        nLo, capBleed);
+
+    float outHi = outLo;
+    if (nHi > nLo)
+    {
+        float sExtra = outLo * (1.0f + drivePerStage * 12.0f);
+        sExtra += bias * 0.1f;
+        const float k = 1.0f + drivePerStage * 3.0f;
+        sExtra = state.cascadeAdaa[sp][nLo][ch].process (sExtra, k);
+        sExtra *= 0.8f;
+        outHi = sExtra;
+    }
+
+    return outLo * (1.0f - frac) + outHi * frac;
+}
+
+// DIODE: Shockley equation diode clipper — Ge/Si blend
+inline float processDiode (float x, float drive, float bias, float mod,
+                           adaa::TanhADAA& adaaState) noexcept
+{
+    const float gain = 1.0f + drive * 40.0f;
+    float s = x * gain;
+
+    // Bias blends Ge↔Si:  -1 = Germanium, +1 = Silicon
+    const float geRatio = 0.5f - bias * 0.5f;
+    const float siRatio = 1.0f - geRatio;
+    const float Vf  = geRatio * 0.3f + siRatio * 0.6f;
+    const float nFactor = geRatio * 1.3f + siRatio * 1.8f;
+
+    // MOD: clipping topology (0 = feedback/soft, 1 = shunt/hard)
+    const float hardness = 1.0f + mod * mod * 4.0f;
+
+    const float k = hardness / (Vf * nFactor + 0.01f);
+    float shaped = adaaState.process (s * Vf, k);
+
+    const float peakEst = std::tanh (k * Vf);
+    if (peakEst > 0.01f)
+        shaped /= peakEst;
+
+    return shaped;
+}
+
+// TAPE: simplified hysteresis + flutter + head bump
+inline float processTape (float x, float drive, float bias, float mod,
+                          State& state, int ch, float sr,
+                          adaa::TanhADAA& adaaState,
+                          bool advanceOsc = true) noexcept
+{
+    const float gain = 1.0f + drive * 18.0f;
+    const float biasLevel = 1.0f + bias * 0.3f;
+    float s = x * gain * biasLevel;
+
+    // Flutter modulation (wow + flutter, deeper at slow speed)
+    if (ch == 0 && advanceOsc)
+    {
+        state.flutterPhase += kTwoPi * 5.5f / sr;
+        if (state.flutterPhase > kTwoPi) state.flutterPhase -= kTwoPi;
+    }
+    const float flutterDepth = 0.003f + mod * 0.004f;
+    const float flutter = std::sin (state.flutterPhase) * flutterDepth
+                        + std::sin (state.flutterPhase * 7.636f) * flutterDepth * 0.4f;
+    s += flutter * s;
+
+    // Hysteresis-inspired saturation via ADAA tanh
+    const float hystK = 1.0f + drive * 4.0f + mod * 2.0f;
+    float shaped = adaaState.process (s, hystK);
+
+    // Head bump: resonant peak at speed-dependent frequency
+    // Head bump: gentle resonant peak at speed-dependent frequency
+    // Using Transposed Direct Form II for correct bandpass behaviour
+    const float bumpFreq = 60.0f + (1.0f - mod) * 60.0f;
+    const float bumpQ = 1.5f;
+    const float w0    = kTwoPi * bumpFreq / sr;
+    const float alpha = std::sin (w0) / (2.0f * bumpQ);
+    const float cosW0 = std::cos (w0);
+    const float a0inv = 1.0f / (1.0f + alpha);
+
+    const float b0 =  alpha * a0inv;
+    const float b2 = -alpha * a0inv;
+    const float a1 = -2.0f * cosW0 * a0inv;
+    const float a2 = (1.0f - alpha) * a0inv;
+
+    const int sp = state.currentSeriesPass;
+    // TDF2: y = b0*x + z1;  z1 = b1*x - a1*y + z2;  z2 = b2*x - a2*y
+    // (b1 = 0 for cookbook bandpass)
+    const float bump = b0 * shaped + state.bumpZ1[sp][ch];
+    state.bumpZ1[sp][ch] = -a1 * bump + state.bumpZ2[sp][ch];
+    state.bumpZ2[sp][ch] = b2 * shaped - a2 * bump;
+
+    shaped += bump * (0.2f + mod * 0.2f);
+
+    return shaped;
+}
+
+// FUZZ: Transistor fuzz — Ge/Si stages with bias starving
+inline float processFuzz (float x, float drive, float bias, float mod,
+                          adaa::TanhADAA2& adaaState) noexcept
+{
+    const float gain = 1.0f + drive * 35.0f;
+    float s = x * gain;
+
+    // Bias: -1 = PNP Germanium (sputtery), +1 = NPN Silicon (sustained)
+    const float geChar = 0.5f - bias * 0.5f;
+
+    // MOD: clipping symmetry (0 = symmetric, 1 = max asymmetry)
+    const float asymmetry = mod * mod * 0.4f;
+
+    const float k1 = 1.0f + drive * 6.0f;
+    const float k2 = 1.0f + drive * 3.5f;
+
+    // Stage 1: main clipping (ADAA-2 for hard clipper)
+    float s1 = adaaState.process (s, k1);
+    s1 += asymmetry * s1 * std::abs (s1);
+
+    // Stage 2: output stage
+    float s2 = std::tanh (k2 * s1);
+
+    // Germanium gating at low levels
+    float gateThreshold = geChar * 0.05f;
+    if (std::abs (s2) < gateThreshold)
+        s2 *= std::abs (s2) / (gateThreshold + 1.0e-6f);
+
+    return s2;
+}
+
+// DOOM: Multi-stage hard clipper with feedback (Big Muff / doom / stoner)
+// 3 cascaded stages: soft → hard (exponential) → output saturation
+// MOD controls feedback loop, BIAS controls voltage starving (-1=gated, +1=wall)
+inline float processDoom (float x, float drive, float bias, float mod,
+                          State& state, int ch, float sr,
+                          adaa::TanhADAA2& adaaState) noexcept
+{
+    // Feedback: MOD controls amount (0 = open loop, 1 = near self-oscillation)
+    const float fbAmount = mod * mod * 0.35f;
+    const int sp = state.currentSeriesPass;
+    x += state.doomFeedback[sp][ch] * fbAmount;
+
+    // Bias: -1 = gated/velcro (voltage starve), +1 = wall/sustain
+    const float starve = 0.5f - bias * 0.5f;  // 0 = clean supply, 1 = starved
+    const float headroom = 1.0f - starve * 0.6f;
+
+    // Gain distributed across 3 stages (cube root for balanced saturation)
+    const float totalGain = 1.0f + drive * 45.0f;
+    const float perStage = std::pow (totalGain, 1.0f / 3.0f);
+
+    // ── Stage 1: soft clip (ADAA tanh — like BMP first diode stage) ──
+    float s = x * perStage;
+    const float k1 = 1.0f + drive * 3.5f;
+    s = adaaState.process (s, k1);
+    // Coupling cap HPF ~50Hz
+    {
+        const float c = detail::onePoleCoeff (50.0f, sr);
+        state.doomDC[sp][0][ch] += (s - state.doomDC[sp][0][ch]) * c;
+        s -= state.doomDC[sp][0][ch];
+    }
+    s *= headroom;
+
+    // ── Stage 2: hard clip (exponential — like BMP second diode stage) ──
+    s *= perStage;
+    {
+        const float k2 = 1.0f + drive * 6.0f;
+        const float a = s * k2;
+        const float sgn = a >= 0.0f ? 1.0f : -1.0f;
+        s = sgn * (1.0f - std::exp (-std::abs (a)));
+    }
+    // Coupling cap HPF ~80Hz
+    {
+        const float c = detail::onePoleCoeff (80.0f, sr);
+        state.doomDC[sp][1][ch] += (s - state.doomDC[sp][1][ch]) * c;
+        s -= state.doomDC[sp][1][ch];
+    }
+    // Miller cap LPF ~1.5kHz (narrow BW — BMP doom character)
+    {
+        const float c = detail::onePoleCoeff (1500.0f, sr);
+        state.doomDC[sp][2][ch] += (s - state.doomDC[sp][2][ch]) * c;
+        s = state.doomDC[sp][2][ch];
+    }
+    s *= headroom;
+
+    // ── Stage 3: output saturation (like BMP output booster) ──
+    s *= 1.0f + drive * 3.0f;
+    s = detail::fastTanh (s);
+
+    // Low-level gating when starved (germanium velcro character)
+    if (starve > 0.1f)
+    {
+        const float gate = starve * 0.06f;
+        const float absS = std::abs (s);
+        if (absS < gate)
+            s *= absS / (gate + 1.0e-6f);
+    }
+
+    // Store output for feedback
+    state.doomFeedback[sp][ch] = s;
+
+    return s;
+}
+
+// DESTROY: Ring-fuzz with pitch-tracked ring modulation + implicit feedback
+// Fuzz base (2-stage hard clip) → ring mod using shared YIN pitch tracker
+// MOD = ring mix, BIAS = ring freq ratio (-1=sub ÷2, 0=unison, +1=5th ×3)
+inline float processDestroy (float x, float drive, float bias, float mod,
+                             State& state, int ch, float sr,
+                             adaa::TanhADAA2& adaaState,
+                             bool advanceOsc = true) noexcept
+{
+    // ── Enhanced feedback: ring-carrier modulated + parameter-dependent ──
+    const float fbCarrier = std::sin (state.destroyRingPhase);
+    const float fbBase  = drive * 0.08f;
+    const float fbRing  = mod * (0.15f + fbCarrier * 0.12f);
+    const float fbBias  = std::abs (bias) * drive * 0.06f;
+    const float fbAmount = detail::clampF (fbBase + fbRing + fbBias, 0.0f, 0.45f);
+    const int sp = state.currentSeriesPass;
+    x += state.destroyFeedback[sp][ch] * fbAmount;
+
+    // ── Fuzz base: 2-stage hard clip (ADAA-2) ──
+    const float gain = 1.0f + drive * 30.0f;
+    float s = x * gain;
+
+    // Stage 1: ADAA-2 tanh
+    const float k1 = 1.0f + drive * 5.0f;
+    s = adaaState.process (s, k1);
+
+    // Stage 2: algebraic hard clip
+    const float hard = 1.5f + drive * 3.0f;
+    s = s / (1.0f + std::abs (s) * hard);
+
+    const float fuzzed = s;
+
+    // ── Ring Modulator with pitch-tracked carrier ──
+    float ratio;
+    if (bias <= 0.0f)
+        ratio = 0.5f + (bias + 1.0f) * 0.5f;
+    else
+        ratio = 1.0f + bias * 2.0f;
+
+    if (ch == 0 && advanceOsc)
+    {
+        const float ringFreq = state.yinSmoothedFreq * ratio;
+        state.destroyRingPhase += kTwoPi * ringFreq / sr;
+        if (state.destroyRingPhase > kTwoPi)
+            state.destroyRingPhase -= kTwoPi;
+    }
+
+    const float carrier = std::sin (state.destroyRingPhase);
+    const float ringOut = fuzzed * carrier;
+
+    // MOD: blend fuzz ↔ ring mod (0 = pure fuzz, 1 = full ring mod)
+    s = fuzzed * (1.0f - mod) + ringOut * mod;
+
+    // Store for feedback
+    state.destroyFeedback[sp][ch] = s;
+
+    return s;
+}
+
+// TUNDRA: Metal Zone → Modern high‐gain morph (dual‐stage cascaded clipping)
+// Stage 1: op‐amp gain + ADAA tanh soft clip (MT-2 first diode stage)
+// Stage 2: exponential→algebraic hard clip morph (MT-2→modern tight)
+// MOD = Metal Zone classic (0) ↔ Modern tight (1)
+// BIAS = clipping asymmetry (even‐harmonic injection)
+inline float processTundra (float x, float drive, float bias, float mod,
+                            State& state, int ch, float sr,
+                            adaa::TanhADAA& adaaState) noexcept
+{
+    const int sp = state.currentSeriesPass;
+
+    // ── Input tightness filter: MOD‐dependent HPF (50Hz@MZ → 120Hz@Modern) ──
+    const float tightFreq = 50.0f + mod * 70.0f;
+    const float tightC = detail::onePoleCoeff (tightFreq, sr);
+    state.tundraTightHP[sp][ch] += (x - state.tundraTightHP[sp][ch]) * tightC;
+    x -= state.tundraTightHP[sp][ch];
+
+    // ── Stage 1: Op‐amp gain + soft clip (ADAA tanh) ──
+    const float gain1 = 1.0f + drive * (20.0f + mod * 8.0f);
+    float s = x * gain1;
+    const float k1 = 1.5f + drive * 4.0f + mod * 2.0f;
+    s = adaaState.process (s, k1);
+
+    // Asymmetry: even‐harmonic injection via bias
+    s += bias * 0.15f * s * std::abs (s);
+
+    // ── Inter‐stage coupling cap HPF ~80Hz ──
+    const float coupC = detail::onePoleCoeff (80.0f, sr);
+    state.tundraInterHP[sp][ch] += (s - state.tundraInterHP[sp][ch]) * coupC;
+    s -= state.tundraInterHP[sp][ch];
+
+    // ── Stage 2: Hard clip — exponential (MT-2) ↔ algebraic (modern) morph ──
+    const float gain2 = 1.0f + drive * (12.0f + mod * 5.0f);
+    s *= gain2;
+    const float k2 = 1.5f + drive * 6.0f;
+
+    // Exponential clip (MT-2 diode character)
+    {
+        const float a = s * k2;
+        const float sgn = a >= 0.0f ? 1.0f : -1.0f;
+        const float expClip = sgn * (1.0f - std::exp (-std::abs (a)));
+
+        // Algebraic clip (modern tight character)
+        const float algClip = s / (1.0f + std::abs (s) * k2);
+
+        // Morph between the two clipping styles
+        s = expClip * (1.0f - mod) + algClip * mod;
+    }
+
+    // ── Presence spike: 2.5kHz resonant bump (MT-2 gyrator emulation) ──
+    // Decreases with MOD for cleaner modern tone
+    const float presAmount = (1.0f - mod) * 0.3f;
+    if (presAmount > 0.01f)
+    {
+        const float presFreq = 2500.0f;
+        const float presQ = 1.5f;
+        const float w0 = kTwoPi * presFreq / sr;
+        const float alpha = std::sin (w0) / (2.0f * presQ);
+        const float cosW = std::cos (w0);
+        const float a0 = 1.0f + alpha;
+        const float b0 =  alpha / a0;
+        const float b2 = -alpha / a0;
+        const float a1n = -2.0f * cosW / a0;
+        const float a2n = (1.0f - alpha) / a0;
+
+        const float pres = b0 * s + b2 * state.tundraPresZ2[sp][ch]
+                         - a1n * state.tundraPresZ1[sp][ch] - a2n * state.tundraPresZ2[sp][ch];
+        state.tundraPresZ2[sp][ch] = state.tundraPresZ1[sp][ch];
+        state.tundraPresZ1[sp][ch] = pres;
+
+        s += pres * presAmount;
+    }
+
+    return s;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Per-model drive curve — normalizes perceived distortion range
+//  so that drive=50% feels similar across all models.
+//  Higher exponent = more gradual ramp (for cascaded/high-gain models).
+// ══════════════════════════════════════════════════════════════
+inline float applyDriveCurve (float driveParam, Model model) noexcept
+{
+    // Per-model exponent: gentle models use lower exponent, aggressive
+    // cascaded models use higher exponent to spread usable range.
+    float exp;
+    switch (model)
+    {
+        case Model::Triode:     exp = 1.5f; break;  // single stage, moderate gain
+        case Model::PushPull:   exp = 1.5f; break;  // single stage, moderate gain
+        case Model::Cascade:    exp = 2.0f; break;  // multi-stage, gain compounds
+        case Model::Diode:      exp = 1.8f; break;  // single stage, high gain (×40)
+        case Model::Tape:       exp = 1.5f; break;  // single stage, moderate gain
+        case Model::Fuzz:       exp = 3.0f; break;  // 2 stages, high gain (×35)
+        case Model::Doom:       exp = 4.0f; break;  // 3 cascaded stages, extreme gain
+        case Model::Destroy:    exp = 3.5f; break;  // 2 stages + ring mod + feedback
+        case Model::Tundra:     exp = 3.0f; break;  // 2 stages, high combined gain
+        default:                exp = 1.5f; break;
+    }
+    return std::pow (driveParam, exp);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Auto-Gain Compensation
+// ══════════════════════════════════════════════════════════════
+inline float getAutoGain (Model model, float drive) noexcept
+{
+    float peakOut = 1.0f;
+    switch (model)
+    {
+        case Model::Triode:
+        {
+            // Account for asymmetry term: shaped += asym * drive * shaped²
+            // Peak asym ≈ 0.25 at max bias, adds up to 0.25 to the peak
+            const float base = std::tanh (1.0f + drive * 8.0f);
+            const float asymExtra = 0.25f * drive * base * base;
+            peakOut = base + asymExtra;
+            break;
+        }
+        case Model::PushPull:
+            peakOut = std::tanh (1.0f + drive * 8.0f);
+            break;
+        case Model::Cascade:
+        {
+            float g = std::tanh (1.0f + drive * 6.0f);
+            peakOut = g * g;
+            break;
+        }
+        case Model::Diode:
+            peakOut = 0.5f + drive * 0.3f;
+            break;
+        case Model::Tape:
+            peakOut = std::tanh (1.0f + drive * 4.0f);
+            break;
+        case Model::Fuzz:
+        {
+            // 2-stage: tanh(k1*tanh(k2*input)), peak approaches 1.0
+            const float k = 1.0f + drive * 7.0f;
+            peakOut = std::tanh (k);
+            // At drive=0, tanh(1)=0.76 → autoGain=1.31. Fix: lerp to 1.0 at low drive.
+            peakOut = 1.0f + (peakOut - 1.0f) * detail::clampF (drive * 10.0f, 0.0f, 1.0f);
+            break;
+        }
+        case Model::Doom:
+        {
+            // 3-stage cascaded clipper. At drive=0, output ≈ input (unity).
+            const float s1 = std::tanh (1.0f + drive * 3.5f);
+            const float s3 = std::tanh (1.0f + drive * 3.0f);
+            peakOut = s1 * s3;
+            // At drive=0, s1*s3 = 0.76*0.76 = 0.58 → too much gain. Lerp to 1.0.
+            peakOut = 1.0f + (peakOut - 1.0f) * detail::clampF (drive * 10.0f, 0.0f, 1.0f);
+            break;
+        }
+        case Model::Destroy:
+        {
+            // 2-stage hard clip + ring mod. Peak ≈ tanh output.
+            const float k = 1.0f + drive * 5.0f;
+            peakOut = std::tanh (k);
+            peakOut = 1.0f + (peakOut - 1.0f) * detail::clampF (drive * 10.0f, 0.0f, 1.0f);
+            break;
+        }
+        case Model::Tundra:
+        {
+            // Dual-stage cascaded clip. Peak approaches 1.0.
+            const float k1 = 1.0f + drive * 4.0f;
+            const float k2 = 1.0f + drive * 6.0f;
+            peakOut = std::tanh (k1) * std::tanh (k2);
+            peakOut = 1.0f + (peakOut - 1.0f) * detail::clampF (drive * 10.0f, 0.0f, 1.0f);
+            break;
+        }
+        default: break;
+    }
+    return (peakOut > 0.01f) ? 1.0f / peakOut : 1.0f;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Safety LPF processing (Butterworth 2nd-order at 0.4×fs)
+//  Coefficients precomputed per-block; struct just holds state.
+// ══════════════════════════════════════════════════════════════
+struct SafetyLPFCoeffs { float b0=0, b1=0, b2=0, a1=0, a2=0; };
+
+inline float processSafetyLPF (SafetyLPF& st, float x, const SafetyLPFCoeffs& c) noexcept
+{
+    const float y = c.b0 * x + c.b1 * st.x1 + c.b2 * st.x2
+                  - c.a1 * st.y1 - c.a2 * st.y2;
+
+    st.x2 = st.x1; st.x1 = x;
+    st.y2 = st.y1; st.y1 = y;
+    return y;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Main block processor
+// ══════════════════════════════════════════════════════════════
+inline void processBlock (State& state,
+                          float* left, float* right,
+                          int numSamples,
+                          Model model,
+                          float driveParam,     // 0..1
+                          float girthParam,     // 0..1
+                          float modParam,       // 0..1
+                          float biasParam,      // -1..1
+                          float reactParam,     // 0..1
+                          float varParam,       // 0..1
+                          float sampleRate,
+                          int   seriesCount = 1,
+                          bool  isSafetyLpfOn = false,
+                          bool  skipAutoGain = false,
+                          bool  rawMode = false) noexcept
+{
+    // CLEAN model: 1:1 pass-through — no saturation processing at all
+    if (model == Model::Clean)
+        return;
+
+    // Sample-rate-aware parameter smoothing (~15ms time constant at any SR).
+    // Using onePoleCoeff(11Hz) → 63% in ~15ms, 95% in ~43ms. Consistent
+    // whether running at 44.1kHz native or 176.4kHz (4× oversampled).
+    const float oneMinusSmooth = detail::onePoleCoeff (11.0f, sampleRate);
+
+    // DC blocker coefficient
+    const float dcR = 1.0f - (kTwoPi * 5.0f / sampleRate);
+
+    // REACT window size (model-dependent base, scaled by react amount)
+    int reactBaseWindow = 1024;
+    switch (model)
+    {
+        case Model::Triode:   reactBaseWindow = 1024; break;
+        case Model::PushPull: reactBaseWindow = 4096; break;
+        case Model::Cascade:  reactBaseWindow = 512;  break;
+        case Model::Diode:    reactBaseWindow = 4096; break;
+        case Model::Tape:     reactBaseWindow = 2048; break;
+        case Model::Fuzz:     reactBaseWindow = 4096; break;
+        case Model::Doom:     reactBaseWindow = 4096; break;
+        case Model::Destroy:  reactBaseWindow = 2048; break;
+        case Model::Tundra:   reactBaseWindow = 2048; break;
+        default: break;
+    }
+
+    // Inter-stage LPF: model-dependent Miller-cap roll-off between series passes
+    float interStageFreq = 6000.0f;
+    switch (model)
+    {
+        case Model::Triode:   interStageFreq = 5000.0f; break;
+        case Model::PushPull: interStageFreq = 7000.0f; break;
+        case Model::Cascade:  interStageFreq = 5000.0f; break;
+        case Model::Diode:    interStageFreq = 5000.0f; break;
+        case Model::Tape:     interStageFreq = 8000.0f; break;
+        case Model::Fuzz:     interStageFreq = 6000.0f; break;
+        case Model::Doom:     interStageFreq = 4000.0f; break;
+        case Model::Destroy:  interStageFreq = 10000.0f; break;
+        case Model::Tundra:   interStageFreq = 5000.0f; break;
+        default: break;
+    }
+    const float interStageCoeff = detail::onePoleCoeff (interStageFreq, sampleRate);
+    // Inter-stage DC blocker (coupling cap HPF, same as output DC blocker)
+    const float interStageDCR = 1.0f - (kTwoPi * 30.0f / sampleRate);
+
+    // Precomputed emphasis/de-emphasis coefficients (hoisted from per-sample)
+    EmphCoeffs emphCoeffs;
+    switch (model)
+    {
+        case Model::Triode:
+        case Model::Cascade:
+            emphCoeffs.preHP  = detail::onePoleCoeff (30.0f,   sampleRate);
+            emphCoeffs.preSh  = detail::onePoleCoeff (800.0f,  sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (3500.0f, sampleRate);
+            emphCoeffs.postHP = detail::onePoleCoeff (70.0f,   sampleRate);
+            break;
+        case Model::PushPull:
+            emphCoeffs.postLP = detail::onePoleCoeff (5000.0f, sampleRate);
+            break;
+        case Model::Diode:
+            emphCoeffs.preHP  = detail::onePoleCoeff (720.0f,  sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (723.0f,  sampleRate);
+            break;
+        case Model::Tape:
+            emphCoeffs.preSh  = detail::onePoleCoeff (2122.0f, sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (2122.0f, sampleRate);
+            break;
+        case Model::Fuzz:
+            emphCoeffs.preSh  = detail::onePoleCoeff (2000.0f, sampleRate);
+            emphCoeffs.preHP  = detail::onePoleCoeff (14.0f,   sampleRate);
+            emphCoeffs.postHP = detail::onePoleCoeff (31.0f,   sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (8000.0f, sampleRate);
+            break;
+        case Model::Doom:
+            emphCoeffs.preSh  = detail::onePoleCoeff (1800.0f, sampleRate);
+            emphCoeffs.preHP  = detail::onePoleCoeff (20.0f,   sampleRate);
+            emphCoeffs.postHP = detail::onePoleCoeff (40.0f,   sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (5000.0f, sampleRate);
+            break;
+        case Model::Destroy:
+            emphCoeffs.preHP  = detail::onePoleCoeff (20.0f,    sampleRate);
+            emphCoeffs.postHP = detail::onePoleCoeff (20.0f,    sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (14000.0f, sampleRate);
+            break;
+        case Model::Tundra:
+            emphCoeffs.preHP  = detail::onePoleCoeff (80.0f,   sampleRate);
+            emphCoeffs.preSh  = detail::onePoleCoeff (2000.0f, sampleRate);
+            emphCoeffs.postHP = detail::onePoleCoeff (35.0f,   sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (6000.0f, sampleRate);
+            break;
+        default: break;
+    }
+
+    // Precomputed REACT envelope coefficients (hoisted from per-sample)
+    const float reactAttCoeff  = 1.0f - std::exp (-kTwoPi * 1000.0f / sampleRate);
+    const float reactRelCoeff  = 1.0f - std::exp (-kTwoPi * 2.0f / sampleRate);
+
+    // Multiband REACT crossover coefficients (~200Hz sub/mid, ~4kHz mid/air)
+    const float mbSubCoeff = detail::onePoleCoeff (200.0f, sampleRate);
+    const float mbAirCoeff = detail::onePoleCoeff (4000.0f, sampleRate);
+
+    // Precomputed Cascade coupling-cap bleed coefficient
+    const float cascadeCapBleed = 1.0f - detail::onePoleCoeff (70.0f, sampleRate);
+
+    // Precomputed safety LPF coefficients (constant since fc = 0.4×sr)
+    // Precomputed safety LPF coefficients (constant since fc = 0.4×sr)
+    SafetyLPFCoeffs safetyCoeffs;
+    if (isSafetyLpfOn)
+    {
+        const float fc   = sampleRate * 0.4f;
+        const float w0   = kTwoPi * fc / sampleRate;
+        const float cosW = std::cos (w0);
+        const float sinW = std::sin (w0);
+        const float alpha = sinW / (2.0f * 0.7071f);
+        const float a0 = 1.0f + alpha;
+        safetyCoeffs.b0 = ((1.0f - cosW) * 0.5f) / a0;
+        safetyCoeffs.b1 = (1.0f - cosW) / a0;
+        safetyCoeffs.b2 = safetyCoeffs.b0;
+        safetyCoeffs.a1 = (-2.0f * cosW) / a0;
+        safetyCoeffs.a2 = (1.0f - alpha) / a0;
+    }
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        // ── Parameter smoothing (once per actual sample, NOT per series pass) ──
+        const float driveCurved = applyDriveCurve (driveParam, model);
+        state.sDrive += (driveCurved - state.sDrive) * oneMinusSmooth;
+        state.sGirth += (girthParam  - state.sGirth) * oneMinusSmooth;
+        state.sMod   += (modParam   - state.sMod)   * oneMinusSmooth;
+        state.sBias  += (biasParam  - state.sBias)  * oneMinusSmooth;
+        state.sReact += (reactParam - state.sReact) * oneMinusSmooth;
+        state.sVar   += (varParam   - state.sVar)   * oneMinusSmooth;
+
+        const float drive = state.sDrive;
+        const float girth = state.sGirth;
+        const float mod   = state.sMod;
+        const float bias  = state.sBias;
+        const float react = state.sReact;
+        const float var   = state.sVar;
+
+        // ── VARIATION: analog component tolerance + slow thermal drift ──
+        // Static tolerance (per-instance hash): each "unit" has unique character.
+        // Thermal drift (sub-Hz sines): very slow cathode/plate temp changes.
+        // NO fast oscillation — real components don't modulate at Hz rates.
+        float driveMod = 1.0f, biasMod = 0.0f, shapeMod = 0.0f, asymMod = 0.0f;
+        if (var > 0.001f)
+        {
+            // Init static tolerances once (deterministic seed → same "unit" every session)
+            if (! state.variation.tolerancesReady)
+                state.variation.initTolerances (0x5A54'5231u);  // fixed seed = one specific amp unit
+
+            // Very slow thermal drift: 0.03-0.15 Hz (one full cycle per 7-33 seconds)
+            const float rate = 0.03f + var * 0.12f;
+            state.variation.gainDrift.advance  (rate,         var, sampleRate);
+            state.variation.biasDrift.advance  (rate * 0.37f, var, sampleRate);
+            state.variation.shapeDrift.advance (rate * 1.43f, var, sampleRate);
+            state.variation.asymDrift.advance  (rate * 0.61f, var, sampleRate);
+
+            // Output already incorporates var scaling (depth) — no double-scaling
+            driveMod = 1.0f + state.variation.gainDrift.output  * 0.08f;  // ±8% gain (tube gm + resistor dividers)
+            biasMod  =        state.variation.biasDrift.output  * 0.04f;  // ±4% bias (cathode R + grid leak)
+            shapeMod =        state.variation.shapeDrift.output * 0.02f;  // ±2% shape (plate Rp variation)
+            asymMod  =        state.variation.asymDrift.output  * 0.025f; // ±2.5% L/R (matched pair mismatch)
+        }
+
+        // ── Per-sample series passes (inner loop — proper cascading) ──
+        for (int sp = 0; sp < seriesCount; ++sp)
+        {
+            state.currentSeriesPass = sp;
+            const bool isFirst = (sp == 0);
+            const bool isLast  = (sp == seriesCount - 1);
+
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                float& sample = (ch == 0) ? left[i] : right[i];
+                float x = sample;
+
+                // ── Safety LPF (first pass only, ×1 mode) ──
+                if (isSafetyLpfOn && isFirst)
+                    x = processSafetyLPF (state.safetyLpf[ch], x, safetyCoeffs);
+
+                // ── YIN pitch tracker on CLEAN input (ch0, first pass only) ──
+                // Feeds both sub-octave synthesizer and DESTROY ring mod.
+                if (ch == 0 && isFirst)
+                {
+                    state.yinBuf[state.yinWritePos] = x;
+                    state.yinWritePos = (state.yinWritePos + 1) & (State::kYinBufSize - 1);
+
+                    if (++state.yinCounter >= 96)
+                    {
+                        state.yinCounter = 0;
+
+                        // kMaxLag=512 → lowest freq = sr/512 ≈ 86Hz @ 44.1k (covers low E guitar).
+                        // kHalfW=512 for the difference function.
+                        // Cost: 512×512 = 262k ops every 96 samples ≈ 120M ops/s — acceptable.
+                        constexpr int kHalfW   = 512;
+                        constexpr int kMinLag  = 16;    // ~2756 Hz max
+                        constexpr int kMaxLag  = kHalfW;  // ~86 Hz min @ 44.1k
+                        constexpr float kYinThreshold = 0.20f;
+
+                        // Step 1+2: Difference function + CMND (store for interpolation)
+                        float cmndfBuf[kMaxLag + 1];
+                        cmndfBuf[0] = 1.0f;
+                        float runningSum = 0.0f;
+
+                        for (int tau = 1; tau <= kMaxLag; ++tau)
+                        {
+                            float d = 0.0f;
+                            for (int n = 0; n < kHalfW; ++n)
+                            {
+                                const int idx1 = (state.yinWritePos - 1 - n) & (State::kYinBufSize - 1);
+                                const int idx2 = (state.yinWritePos - 1 - n - tau) & (State::kYinBufSize - 1);
+                                const float diff = state.yinBuf[idx1] - state.yinBuf[idx2];
+                                d += diff * diff;
+                            }
+                            runningSum += d;
+                            cmndfBuf[tau] = (runningSum > 1e-10f)
+                                          ? (d * (float) tau / runningSum) : 1.0f;
+                        }
+
+                        // Step 3: Absolute threshold + walk to local minimum
+                        int bestLag = -1;
+                        for (int tau = kMinLag; tau <= kMaxLag; ++tau)
+                        {
+                            if (cmndfBuf[tau] < kYinThreshold)
+                            {
+                                while (tau + 1 <= kMaxLag && cmndfBuf[tau + 1] < cmndfBuf[tau])
+                                    ++tau;
+                                bestLag = tau;
+                                break;
+                            }
+                        }
+
+                        if (bestLag > 0)
+                        {
+                            // Step 5: Parabolic interpolation for sub-sample accuracy
+                            float betterLag = (float) bestLag;
+                            if (bestLag > kMinLag && bestLag < kMaxLag)
+                            {
+                                const float s0 = cmndfBuf[bestLag - 1];
+                                const float s1 = cmndfBuf[bestLag];
+                                const float s2 = cmndfBuf[bestLag + 1];
+                                const float denom = 2.0f * (2.0f * s1 - s2 - s0);
+                                if (std::abs (denom) > 1e-10f)
+                                    betterLag = (float) bestLag + (s2 - s0) / denom;
+                            }
+
+                            const float detFreq = sampleRate / betterLag;
+                            const float clamped = detail::clampF (detFreq, 30.0f, 4000.0f);
+                            state.yinRawFreq = clamped;
+
+                            // Adaptive smoothing: fast snap on large jumps (new note),
+                            // slow smooth on small changes (vibrato/sustain)
+                            const float jumpRatio = clamped / (state.yinSmoothedFreq + 1e-6f);
+                            const float absJump = std::abs (jumpRatio - 1.0f);
+                            // >10% change = new note → snap fast; <5% = vibrato → smooth
+                            const float hopRate = sampleRate / 96.0f;
+                            const float fastC = detail::onePoleCoeff (60.0f, hopRate);  // ~2.4ms
+                            const float slowC = detail::onePoleCoeff (6.0f,  hopRate);  // ~24ms
+                            const float blend = detail::clampF ((absJump - 0.05f) * 20.0f, 0.0f, 1.0f);
+                            const float sC = slowC + (fastC - slowC) * blend;
+                            state.yinSmoothedFreq += (clamped - state.yinSmoothedFreq) * sC;
+                        }
+                    }
+                }
+
+                // ── Apply VARIATION per-channel (L/R asymmetry decorrelation) ──
+                float effDrive = drive * driveMod;
+                float effBias  = bias  + biasMod + (ch == 0 ? asymMod : -asymMod);
+                float effMod   = detail::clampF (mod + shapeMod, 0.0f, 1.0f);
+
+                // ── INTERNAL PRE-EMPHASIS (first pass only, unless rawMode) ──
+                if (isFirst && !rawMode)
+                    x = preEmphasize (x, state.emphasis[ch], model, effMod, emphCoeffs);
+
+                // ── REACT: energy tracking + per-model processing (first pass only) ──
+                float sagPre  = 1.0f;
+                float sagPost = 1.0f;
+                float sagBias = 0.0f;
+                bool  doSubOctave = false;
+                MultibandSagResult mbSag;
+                bool useMbSag = false;
+
+                if (isFirst && react > 0.001f)
+                {
+                    const int window = std::min (
+                        (int) ((float) reactBaseWindow * (1.0f + react * 3.0f) * sampleRate / 44100.0f),
+                        kReactBufSize - 1);
+
+                    reactTrackEnergy (state.react[ch], x, window);
+                    const float depletion = reactGetDepletion (state.react[ch], window);
+
+                    if (depletion > state.sagEnvelope[ch])
+                        state.sagEnvelope[ch] += (depletion - state.sagEnvelope[ch]) * reactAttCoeff;
+                    else
+                        state.sagEnvelope[ch] += (depletion - state.sagEnvelope[ch]) * reactRelCoeff;
+
+                    const float sagEnv = state.sagEnvelope[ch];
+
+                    switch (model)
+                    {
+                        case Model::Triode:
+                        case Model::PushPull:
+                        case Model::Cascade:
+                        {
+                            // Multiband REACT: frequency-dependent sag (bass sags more)
+                            mbSag = multibandReactProcess (
+                                state.mbReact[ch], x, mbSubCoeff, mbAirCoeff,
+                                window, react, reactAttCoeff, reactRelCoeff);
+                            useMbSag = true;
+
+                            // Broadband sag bias + drive boost (same as before)
+                            const float sagSq = sagEnv * sagEnv;
+                            sagBias = -sagSq * react * 0.8f;
+                            effDrive = std::min (effDrive * (1.0f + sagSq * react * 2.0f), 1.0f);
+                            break;
+                        }
+                        case Model::Diode:
+                            sagBias = sagEnv * react * 0.6f;
+                            sagPre  = 1.0f + sagEnv * react * 0.5f;
+                            break;
+                        case Model::Tape:
+                            sagPre  = 1.0f + sagEnv * react * 1.0f;
+                            sagPost = 1.0f / (1.0f + sagEnv * react * 2.5f);
+                            break;
+                        case Model::Fuzz:
+                        case Model::Doom:
+                        case Model::Destroy:
+                        case Model::Tundra:
+                            doSubOctave = true;
+                            break;
+                        default: break;
+                    }
+                }
+
+                // Apply pre-sag boost + bias drift (first pass only)
+                if (isFirst)
+                {
+                    if (useMbSag)
+                    {
+                        // Apply multiband pre-sag: split→boost per band→recombine
+                        float subSig, midSig, airSig;
+                        multibandReactSplit (state.mbReact[ch], x, mbSubCoeff, mbAirCoeff,
+                                            subSig, midSig, airSig);
+                        x = subSig * mbSag.sagPreSub + midSig * mbSag.sagPreMid + airSig * mbSag.sagPreAir;
+                    }
+                    else
+                    {
+                        x *= sagPre;
+                    }
+                    effBias += sagBias;
+                }
+
+                // ── WAVESHAPER (all passes, with per-pass ADAA state) ──
+                switch (model)
+                {
+                    case Model::Triode:
+                        x = processTriode (x, effDrive, effBias, effMod,
+                                           state.wsAdaa[sp][ch]);
+                        break;
+                    case Model::PushPull:
+                        x = processPushPull (x, effDrive, effBias, effMod,
+                                             state.wsAdaa[sp][ch]);
+                        break;
+                    case Model::Cascade:
+                        x = processCascade (x, effDrive, effBias, effMod,
+                                            state, ch, cascadeCapBleed);
+                        break;
+                    case Model::Diode:
+                        x = processDiode (x, effDrive, effBias, effMod,
+                                          state.wsAdaa[sp][ch]);
+                        break;
+                    case Model::Tape:
+                        x = processTape (x, effDrive, effBias, effMod,
+                                         state, ch, sampleRate,
+                                         state.wsAdaa[sp][ch], isFirst);
+                        break;
+                    case Model::Fuzz:
+                        x = processFuzz (x, effDrive, effBias, effMod,
+                                         state.wsAdaa2[sp][ch]);
+                        break;
+                    case Model::Doom:
+                        x = processDoom (x, effDrive, effBias, effMod,
+                                         state, ch, sampleRate,
+                                         state.wsAdaa2[sp][ch]);
+                        break;
+                    case Model::Destroy:
+                        x = processDestroy (x, effDrive, effBias, effMod,
+                                             state, ch, sampleRate,
+                                             state.wsAdaa2[sp][ch], isFirst);
+                        break;
+                    case Model::Tundra:
+                        x = processTundra (x, effDrive, effBias, effMod,
+                                           state, ch, sampleRate,
+                                           state.wsAdaa[sp][ch]);
+                        break;
+                    default: break;
+                }
+
+                // ── Post-sag ceiling (first pass only) ──
+                if (isFirst)
+                {
+                    if (useMbSag)
+                    {
+                        // Multiband post-sag: split→attenuate per band→recombine
+                        float subSig, midSig, airSig;
+                        multibandReactSplit (state.mbReact[ch], x, mbSubCoeff, mbAirCoeff,
+                                            subSig, midSig, airSig);
+                        x = subSig * mbSag.sagPostSub + midSig * mbSag.sagPostMid + airSig * mbSag.sagPostAir;
+                    }
+                    else
+                    {
+                        x *= sagPost;
+                    }
+                }
+
+                // ── Sub-octave synthesizer (first pass, Fuzz/Doom/Destroy/Tundra + REACT) ──
+                // Pitch-tracked sine oscillator at f/2, shaped by envelope follower.
+                // Runs on post-waveshaper signal but the pitch comes from pre-waveshaper YIN.
+                if (isFirst && doSubOctave)
+                {
+                    // Advance sub-osc phase at half the detected frequency (mono phase)
+                    if (ch == 0)
+                    {
+                        const float subFreq = state.yinSmoothedFreq * 0.5f;
+                        state.subOscPhase += kTwoPi * subFreq / sampleRate;
+                        if (state.subOscPhase > kTwoPi)
+                            state.subOscPhase -= kTwoPi;
+                    }
+
+                    // Envelope follower on the distorted signal (fast attack, slow release)
+                    const float absX = std::abs (x);
+                    const float envAtt = detail::onePoleCoeff (500.0f, sampleRate);  // ~0.3ms attack
+                    const float envRel = detail::onePoleCoeff (3.0f,  sampleRate);   // ~53ms release (smooth sustain)
+                    if (absX > state.subOscEnv[ch])
+                        state.subOscEnv[ch] += (absX - state.subOscEnv[ch]) * envAtt;
+                    else
+                        state.subOscEnv[ch] += (absX - state.subOscEnv[ch]) * envRel;
+
+                    // Generate sub sine, multiply by envelope
+                    const float subRaw = std::sin (state.subOscPhase) * state.subOscEnv[ch];
+
+                    // LPF the sub output — track half the detected frequency (sub fundamental)
+                    // Clamp to reasonable range: min 40Hz, max 400Hz
+                    const float subLpfFreq = detail::clampF (state.yinSmoothedFreq * 0.7f, 40.0f, 400.0f);
+                    const float subLpfC = detail::onePoleCoeff (subLpfFreq, sampleRate);
+                    state.subOscLPF[ch] += (subRaw - state.subOscLPF[ch]) * subLpfC;
+
+                    // Blend: react controls sub-octave mix (0 = dry, 1 = full sub blend)
+                    x = x + state.subOscLPF[ch] * react * 1.4f;
+                }
+
+                // ── GIRTH (all passes, with per-pass ADAA) ──
+                x = applyGirth (x, girth, state.girthAdaa[sp][ch]);
+
+                // ── Inter-stage filtering (between series passes, always active) ──
+                // Analogous to Miller capacitance + coupling caps between tube stages.
+                // LPF prevents cascaded harmonic aliasing; DC blocker removes
+                // accumulated DC offset from bias (prevents silence at high series).
+                if (! isLast && seriesCount > 1)
+                {
+                    // Miller-cap LPF (model-dependent frequency)
+                    state.interStageLPF[sp][ch] += (x - state.interStageLPF[sp][ch]) * interStageCoeff;
+                    x = state.interStageLPF[sp][ch];
+
+                    // Coupling-cap DC blocker (HPF ~30Hz)
+                    const float dcOut = x - state.interStageDCx[sp][ch]
+                                      + interStageDCR * state.interStageDCy[sp][ch];
+                    state.interStageDCx[sp][ch] = x;
+                    state.interStageDCy[sp][ch] = dcOut;
+                    x = dcOut;
+                }
+
+                // ── INTERNAL DE-EMPHASIS (last pass only, unless rawMode) ──
+                if (isLast && !rawMode)
+                    x = deEmphasize (x, state.emphasis[ch], model, effMod, emphCoeffs);
+
+                // ── DC BLOCKER (1st-order HPF at 5Hz, last pass only) ──
+                if (isLast)
+                {
+                    const float dcOut = x - state.dcX[ch] + dcR * state.dcY[ch];
+                    state.dcX[ch] = x;
+                    state.dcY[ch] = dcOut;
+                    x = dcOut;
+                }
+
+                // ── AUTO-GAIN COMPENSATION (last pass only) ──
+                if (isLast && !skipAutoGain)
+                    x *= getAutoGain (model, drive);
+
+                sample = x;
+            }
+        }
+    }
+}
+
+} // namespace SatEngine
