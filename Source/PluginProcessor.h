@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "SaturationEngine.h"
+#include "SatDspDiag.h"
 #include <array>
 #include <atomic>
 #include <vector>
@@ -606,6 +607,10 @@ public:
 	IRLoaderState stateA;
 	IRLoaderState stateB;
 	IRLoaderState stateC;
+
+#if SAT_DSP_DIAG
+	SatDiag::Collector _diagCollector;
+#endif
 
 	// ══════════════════════════════════════════════════════════════
 	//  Helper methods (public for editor to trigger IR loading)

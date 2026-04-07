@@ -1,6 +1,7 @@
 ﻿#include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "DspDebugLog.h"
+#include "SatDspDiag.h"
 
 // ---------------------------------------------------------------------------
 // DSP utility functions (consistent with ECHO-TR)
@@ -1009,6 +1010,11 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	juce::ScopedNoDenormals noDenormals;
 	juce::ignoreUnused (midiMessages);
 
+#if SAT_DSP_DIAG
+	const auto _diagStart = std::chrono::steady_clock::now();
+	_diagCollector.reset();
+#endif
+
 	auto totalNumInputChannels  = getTotalNumInputChannels();
 	auto totalNumOutputChannels = getTotalNumOutputChannels();
 
@@ -1579,6 +1585,9 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		if (std::abs (dcBlockY_[0])  < kDnr) dcBlockY_[0]  = 0.0f;
 		if (std::abs (dcBlockY_[1])  < kDnr) dcBlockY_[1]  = 0.0f;
 	}
+	stateA.satState.flushDenormals();
+	stateB.satState.flushDenormals();
+	stateC.satState.flushDenormals();
 
 	// Apply output gain
 	const float outputGain = fastDecibelsToGain (loadRelaxed (pOutput));
@@ -1671,6 +1680,90 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	// Peak output + clip detection (post output gain)
 	// (removed — profiling disabled for release)
+
+#if SAT_DSP_DIAG
+	// ── Final peak + diagnostics snapshot ──
+	{
+		float peakFinal = 0.0f;
+		for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+		{
+			const auto* data = buffer.getReadPointer (ch);
+			for (int n = 0; n < numSamples; ++n)
+			{
+				const float a = std::abs (data[n]);
+				if (a > peakFinal) peakFinal = a;
+			}
+		}
+
+		const auto _diagEnd = std::chrono::steady_clock::now();
+		const double blockUs = std::chrono::duration<double, std::micro> (_diagEnd - _diagStart).count();
+		const double availUs = (numSamples / (double) getSampleRate()) * 1.0e6;
+
+		SatDiag::BlockSnap snap;
+		snap.blockTimeUs   = blockUs;
+		snap.numSamples    = numSamples;
+		snap.sampleRate    = (float) getSampleRate();
+		snap.cpuPercent    = (availUs > 0.0) ? (blockUs / availUs * 100.0) : 0.0;
+		snap.peakIn        = _diagCollector.peakIn;
+		snap.peakOut       = _diagCollector.peakOut;
+		// pkPreAG: compute from pkOut / autoGain (feedPreAG not called from audio thread)
+		// This gives the peak output BEFORE auto-gain compensation was applied.
+		snap.peakPreAG     = 0.0f;  // will be filled after autoGain is captured
+		snap.peakFinal     = peakFinal;
+		snap.maxDelta      = _diagCollector.maxDelta;
+		snap.clickCount    = _diagCollector.clickCount;
+		snap.nanCount      = _diagCollector.nanCount;
+		snap.infCount      = _diagCollector.infCount;
+		snap.denormalCount = _diagCollector.denormals;
+		snap.adaaFallbacks = _diagCollector.adaaFB;
+		snap.adaaBlends    = _diagCollector.adaaBlend;
+		snap.adaaFull      = _diagCollector.adaaFull;
+		snap.adaaLastDx    = _diagCollector.lastDx;
+		snap.adaaLastK     = _diagCollector.lastK;
+		snap.timestampMs   = juce::Time::currentTimeMillis();
+
+		// Grab active loader index + state for model info + feedback states
+		int diagIdx = 0;
+		const IRLoaderState* activeState = &stateA;
+		if (enableB) { diagIdx = 1; activeState = &stateB; }
+		if (enableC) { diagIdx = 2; activeState = &stateC; }
+
+		auto diagPick = [&] (std::atomic<float>* a, std::atomic<float>* b, std::atomic<float>* c)
+			-> std::atomic<float>* { return diagIdx == 0 ? a : (diagIdx == 1 ? b : c); };
+
+		snap.model        = loadRelaxedInt (diagPick (pSatTypeA, pSatTypeB, pSatTypeC));
+		snap.seriesCount  = juce::jlimit (1, 4, loadRelaxedInt (diagPick (pSeriesA, pSeriesB, pSeriesC)));
+		snap.osOrder      = loadRelaxedInt (pOversample);
+		snap.drive        = loadRelaxed (diagPick (pSatDriveA, pSatDriveB, pSatDriveC));
+		snap.girth        = loadRelaxed (diagPick (pSatGirthA, pSatGirthB, pSatGirthC));
+		snap.mod          = loadRelaxed (diagPick (pSatModA,   pSatModB,   pSatModC));
+		snap.bias         = loadRelaxed (diagPick (pSatBiasA,  pSatBiasB,  pSatBiasC));
+		snap.react        = loadRelaxed (diagPick (pSatSagA,   pSatSagB,   pSatSagC));
+
+		const auto& ss = activeState->satState;
+		snap.fuzzFeedback    = ss.fuzzFeedback[0][0];
+		snap.doomFeedback    = ss.doomFeedback[0][0];
+		snap.destroyFeedback = ss.destroyFeedback[0][0];
+		snap.autoGainVal     = ss.blockCoeffs.autoGain;
+		// Now compute pkPreAG = pkOut / autoGain (the peak before gain compensation)
+		if (snap.autoGainVal > 0.001f)
+			snap.peakPreAG = snap.peakOut / snap.autoGainVal;
+		snap.sagEnvelope     = ss.sagEnvelope[0];
+		snap.yinFreq         = ss.yinSmoothedFreq;
+
+		// Max filter state magnitude (check for stuck/denormal filters)
+		float mf = 0.0f;
+		for (int f = 0; f < 6; ++f)
+			mf = std::max (mf, std::abs (ss.doomDC[0][f][0]));
+		mf = std::max (mf, std::abs (ss.fuzzCoupDC[0][0]));
+		mf = std::max (mf, std::abs (ss.fuzzToneLPF[0][0]));
+		mf = std::max (mf, std::abs (ss.destroyXfmrLP[0][0]));
+		mf = std::max (mf, std::abs (ss.destroyRectHP[0][0]));
+		snap.maxFilterState = mf;
+
+		SatDiag::getDiagRing().push (snap);
+	}
+#endif
 }
 
 //==============================================================================
@@ -2057,6 +2150,14 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 
 	if (model != SatEngine::Model::Clean && satDrive > 0.001f)
 	{
+#if SAT_DSP_DIAG
+		// Capture pre-saturation peak (L channel)
+		{
+			const float* pL = buffer.getReadPointer (0);
+			for (int n = 0; n < numSamples; ++n)
+				_diagCollector.feedIn (pL[n]);
+		}
+#endif
 
 		if (osOrder > 0 && osOrder <= 4)
 		{
@@ -2083,6 +2184,15 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 			                         model, satDrive, satGirth, satMod, satBias, satSag, varAmt,
 			                         (float) currentSampleRate, seriesCount, true, skipAutoGain, satRaw);
 		}
+
+#if SAT_DSP_DIAG
+		// Capture post-saturation peak + click detection (L channel)
+		{
+			const float* pL = buffer.getReadPointer (0);
+			for (int n = 0; n < numSamples; ++n)
+				_diagCollector.feedOut (pL[n]);
+		}
+#endif
 	}
 
 	// ── POST-saturation: apply tilt/filter if not already applied ──
@@ -2433,6 +2543,10 @@ juce::AudioProcessorEditor* CABTRAudioProcessor::createEditor()
 //==============================================================================
 void CABTRAudioProcessor::timerCallback()
 {
+#if SAT_DSP_DIAG
+	SatDiag::getDiagWriter().drain (SatDiag::getDiagRing());
+#endif
+
 	// ALIGN: momentary action — calculate cross-correlation + set delay/inv, then auto-reset
 	{
 		const float alignVal = parameters.getRawParameterValue (kParamAlign)->load();
