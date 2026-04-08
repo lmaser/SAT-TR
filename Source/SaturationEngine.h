@@ -933,7 +933,7 @@ inline TapeCompResult processTapeComp (float x, TapeCompState& st,
     hfGain = juce::jlimit (0.46f, 1.0f, juce::jmap (hfKnee, 1.0f, hfGain));
 
     const float makeup = 1.0f + (1.0f - compGain)
-                                   * (0.14f + 0.18f * program + 0.10f * react);
+                                   * (0.08f + 0.10f * program + 0.05f * react);
     const float targetGain = juce::jlimit (0.35f, 1.0f, compGain * makeup);
     const float gainAtk = detail::onePoleCoeff (90.0f + react * 170.0f, sr);
     const float gainRel = detail::onePoleCoeff (4.0f + program * (4.0f + react * 5.0f), sr);
@@ -944,9 +944,36 @@ inline TapeCompResult processTapeComp (float x, TapeCompState& st,
         st.gain += (targetGain - st.gain) * gainRel;
 
     r.sample = (low + high * hfGain) * st.gain;
-    r.driveLift = 1.0f + (1.0f - compGain) * react * (0.18f + 0.14f * program);
+    r.driveLift = 1.0f + (1.0f - compGain) * react * (0.06f + 0.06f * program);
     r.amount = 1.0f - compGain;
     return r;
+}
+
+inline float getTapeLevelTrim (float drive, float mod, float girth, float react) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float m = detail::clampF (mod,   0.0f, 1.0f);
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float r = detail::clampF (react, 0.0f, 1.0f);
+    const float rabbit = 1.0f - m;
+    const float rabbitSq = rabbit * rabbit;
+
+    const float driveTrimA = detail::interpDrive5 (d,
+                                                   1.00f, 1.00f, 0.99f, 0.98f, 0.96f);
+    const float driveTrimB = detail::interpDrive5 (d,
+                                                   0.45f, 0.58f, 0.70f, 0.78f, 0.85f);
+    const float driveTrim = juce::jmap (rabbitSq, driveTrimA, driveTrimB);
+
+    const float girthAmt = g * g;
+    const float girthTrim = 1.0f / (1.0f + girthAmt
+                                           * (0.06f + 0.12f * rabbitSq)
+                                           * (0.85f + 0.15f * d));
+
+    const float reactTrim = 1.0f / (1.0f + r
+                                           * (0.04f + 0.10f * rabbitSq)
+                                           * (0.55f + 0.45f * d));
+
+    return driveTrim * girthTrim * reactTrim;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2538,7 +2565,10 @@ inline void processBlock (State& state,
 
                 // ── GIRTH (all passes) ──
                 if (model == Model::Tape)
+                {
                     x = applyTapeGirth (x, girth);
+                    x *= getTapeLevelTrim (drive, effMod, girth, react);
+                }
                 else
                     x = applyGirth (x, girth, state.girthAdaa[sp][ch]);
 
