@@ -879,13 +879,13 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
         }
         case Model::Tape:
         {
-            // The fitted reference behaves essentially as a direct path at 0%,
-            // so keep the tape pre-stage transparent for now.
-            (void) st;
-            (void) drive;
+            // Keep the record side almost transparent, but trim a little
+            // sub-energy before the nonlinearity so the stage feels more like
+            // a tape bus than a flat digital clipper.
+            st.preHP += (x - st.preHP) * ec.preHP;
+            float hp = x - st.preHP;
             (void) mod;
-            (void) ec;
-            return x;
+            return hp;
         }
         case Model::Fuzz:
         {
@@ -946,13 +946,13 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
         }
         case Model::Tape:
         {
-            // For the current fitted tape base, the tone is carried by the
-            // transfer curve itself. Keep the post stage neutral.
-            (void) st;
+            // Airwindows-style polish: keep the post stage subtle and broad.
+            // No heavy de-emphasis, only a gentle HF rounding that increases
+            // with drive and remains bypassable via RAW mode upstream.
+            st.postLP += (y - st.postLP) * ec.postLP;
+            const float lpMix = 0.025f + drive * 0.095f;
             (void) mod;
-            (void) drive;
-            (void) ec;
-            return y;
+            return y + (st.postLP - y) * lpMix;
         }
         case Model::Fuzz:
         {
@@ -1175,10 +1175,10 @@ inline float processTape (float x, float drive, float bias, float mod,
     //   100% -> tanh(pre*x)/pre with pre ~= 24.649 and gain ~= 3.5497
     constexpr float baseGain = 1.1438f;       // matches the 0% reference lift
     constexpr float pre0     = 1.0f;          // keeps ADAA bounded and nearly linear
-    constexpr float pre50    = 3.1839465f;
-    constexpr float pre100   = 24.649416f;
-    constexpr float mu50     = 0.9289423f;    // gain50 / baseGain
-    constexpr float mu100    = 3.1034508f;    // gain100 / baseGain
+    constexpr float pre50    = 3.30f;
+    constexpr float pre100   = 22.50f;
+    constexpr float mu50     = 0.95f;         // gain50 / baseGain
+    constexpr float mu100    = 3.00f;         // gain100 / baseGain
 
     float pregain = pre0;
     float makeup = 1.0f;
@@ -1192,7 +1192,7 @@ inline float processTape (float x, float drive, float bias, float mod,
     else
     {
         const float u = (d - 0.5f) * 2.0f;
-        const float t = u * u * u;
+        const float t = detail::smoothStep01 (u);
         pregain = juce::jmap (t, pre50, pre100);
         makeup = juce::jmap (t, mu50, mu100);
     }
@@ -1851,8 +1851,8 @@ inline void processBlock (State& state,
             emphCoeffs.postLP = detail::onePoleCoeff (723.0f,  sampleRate);
             break;
         case Model::Tape:
-            emphCoeffs.preHP  = detail::onePoleCoeff (24.0f,   sampleRate);
-            emphCoeffs.postLP = detail::onePoleCoeff (16500.0f, sampleRate);
+            emphCoeffs.preHP  = detail::onePoleCoeff (28.0f,   sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (12500.0f, sampleRate);
             break;
         case Model::Fuzz:
             emphCoeffs.preHP  = detail::onePoleCoeff (14.0f,   sampleRate);  // C1 HPF
