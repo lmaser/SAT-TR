@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include "SatDspDiag.h"
 
 // ══════════════════════════════════════════════════════════════
 //  SaturationEngine — header-only DSP for SAT-TR
@@ -25,9 +26,9 @@ namespace SatEngine
 enum class Model : int
 {
     Clean     = 0,   // Bypass — 1:1 pass-through (no saturation)
-    Tape      = 1,   // Jiles-Atherton hysteresis + flutter + head bump
-    Triode    = 2,   // 12AX7 preamp — Koren asymmetric
-    PushPull  = 3,   // EL34/6L6 power amp — Class AB push-pull
+    Tape      = 1,   // Tape stage — soft magnetic compression + losses
+    Triode    = 2,   // 12AX7-style preamp stage
+    PushPull  = 3,   // Power stage — hybrid EL34/6L6 class AB feel
     Cascade   = 4,   // Cascaded triode stages (1-4, fractional crossfade)
     Diode     = 5,   // Shockley diode clipper — Ge/Si blend
     Tundra    = 6,   // Metal Zone→Modern morph — dual-stage cascaded clipping
@@ -112,6 +113,77 @@ namespace adaa
         }
 
         void reset() noexcept { prev = 0.0f; ad1Prev = 0.0f; }
+    };
+
+    // Dedicated ADAA for tape-style tanh stages.
+    // Uses exact std::exp/log1p evaluation plus a wide fallback/blend zone to
+    // avoid the pathological spikes seen with the generic fast-math variant.
+    struct TapeTanhADAA
+    {
+        float prev = 0.0f;
+        float ad1Prev = 0.0f;
+        bool initialised = false;
+
+        static inline float tanhAD1Exact (float x, float k) noexcept
+        {
+            const double kd = (double) k * (double) x;
+            const double a = std::abs (kd);
+            const double ad = (a + std::log1p (std::exp (-2.0 * a)) - std::log (2.0)) / (double) k;
+            return (float) ad;
+        }
+
+        inline float process (float x, float k) noexcept
+        {
+            constexpr float smallDx = 1.0e-4f;
+            constexpr float blendDx = 2.0e-3f;
+            constexpr float jumpReset = 8.0f;
+
+            const float direct = std::tanh (k * x);
+
+            if (! initialised || ! std::isfinite (prev) || ! std::isfinite (ad1Prev)
+                || std::abs (x - prev) > jumpReset)
+            {
+                prev = x;
+                ad1Prev = tanhAD1Exact (x, k);
+                initialised = true;
+                return direct;
+            }
+
+            const float ad1 = tanhAD1Exact (x, k);
+            const float dx = x - prev;
+            const float adx = std::abs (dx);
+            const float mid = std::tanh (k * 0.5f * (x + prev));
+
+            float y = mid;
+            if (adx > smallDx)
+            {
+                const float adaaY = (ad1 - ad1Prev) / dx;
+                if (adx >= blendDx)
+                {
+                    y = adaaY;
+                }
+                else
+                {
+                    const float t = (adx - smallDx) / (blendDx - smallDx);
+                    const float s = t * t * (3.0f - 2.0f * t);
+                    y = mid + (adaaY - mid) * s;
+                }
+            }
+
+            if (! std::isfinite (y) || std::abs (y) > 1.25f)
+                y = mid;
+
+            prev = x;
+            ad1Prev = ad1;
+            return std::max (-1.1f, std::min (1.1f, y));
+        }
+
+        void reset() noexcept
+        {
+            prev = 0.0f;
+            ad1Prev = 0.0f;
+            initialised = false;
+        }
     };
 
     // Generic ADAA1 processor for sin(pi*x) wavefolding
@@ -490,11 +562,17 @@ struct State
     float bumpZ1[kMaxSeries][2] = {};
     float bumpZ2[kMaxSeries][2] = {};
 
+    // Model-specific dynamic states [series pass][channel]
+    float triodeBlock[kMaxSeries][2] = {};   // grid conduction / blocking memory
+    float powerSag[kMaxSeries][2]    = {};   // supply compression memory
+    float tapeFlux[kMaxSeries][2]    = {};   // magnetic remanence proxy
+
     // Internal emphasis/de-emphasis (per-channel)
     EmphasisState emphasis[2];
 
     // ADAA states — main waveshaper [series pass][channel]
     adaa::TanhADAA wsAdaa[kMaxSeries][2];
+    adaa::TapeTanhADAA tapeAdaa[kMaxSeries][2];
     // ADAA-2 states — hard clippers (Fuzz/Doom/Destroy) [series pass][channel]
     adaa::TanhADAA2 wsAdaa2[kMaxSeries][2];
     // FUZZ Q2 second ADAA-2 stage [series pass][channel]
@@ -586,6 +664,8 @@ struct State
     float sReact = 0.0f;
     float sMod   = 0.0f;
     float sVar   = 0.0f;
+    float lastTapeDrive = 0.0f;
+    bool tapeWasActive = false;
 
     void reset()
     {
@@ -600,7 +680,11 @@ struct State
             for (int sp = 0; sp < kMaxSeries; ++sp)
             {
                 bumpZ1[sp][ch] = bumpZ2[sp][ch] = 0.0f;
+                triodeBlock[sp][ch] = 0.0f;
+                powerSag[sp][ch] = 0.0f;
+                tapeFlux[sp][ch] = 0.0f;
                 wsAdaa[sp][ch].reset();
+                tapeAdaa[sp][ch].reset();
                 wsAdaa2[sp][ch].reset();
                 fuzzAdaa2Q2[sp][ch].reset();
                 doomAdaa2S2[sp][ch].reset();
@@ -643,6 +727,8 @@ struct State
         lastModel = Model::Clean;
         variation.reset();
         sDrive = sGirth = sBias = sReact = sMod = sVar = 0.0f;
+        lastTapeDrive = 0.0f;
+        tapeWasActive = false;
     }
 
     // Flush denormal-prone filter state to zero (call once per block)
@@ -670,6 +756,9 @@ struct State
                 fl (interStageDCy[sp][ch]);
                 fl (bumpZ1[sp][ch]);
                 fl (bumpZ2[sp][ch]);
+                fl (triodeBlock[sp][ch]);
+                fl (powerSag[sp][ch]);
+                fl (tapeFlux[sp][ch]);
             }
             fl (emphasis[ch].preHP);
             fl (emphasis[ch].preSh);
@@ -701,6 +790,35 @@ namespace detail
     inline float clampF (float x, float lo, float hi) noexcept
     {
         return x < lo ? lo : (x > hi ? hi : x);
+    }
+
+    inline float sech2FromTanh (float t) noexcept
+    {
+        return 1.0f - t * t;
+    }
+
+    inline float smoothRect (float x, float softness) noexcept
+    {
+        const float s = std::max (softness, 1.0e-6f);
+        return 0.5f * (std::sqrt (x * x + s * s) + x) - 0.5f * s;
+    }
+
+    inline float smoothRectDeriv (float x, float softness) noexcept
+    {
+        const float s = std::max (softness, 1.0e-6f);
+        return 0.5f * (x / std::sqrt (x * x + s * s) + 1.0f);
+    }
+
+    inline float normalizeSmallSignal (float raw, float raw0, float slope0) noexcept
+    {
+        const float denom = std::max (std::abs (slope0), 1.0e-4f);
+        return (raw - raw0) / denom;
+    }
+
+    inline float smoothStep01 (float t) noexcept
+    {
+        t = clampF (t, 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
     }
 } // namespace detail
 
@@ -739,7 +857,7 @@ struct EmphCoeffs {
 };
 
 inline float preEmphasize (float x, EmphasisState& st, Model model,
-                           float mod, const EmphCoeffs& ec) noexcept
+                           float drive, float mod, const EmphCoeffs& ec) noexcept
 {
     switch (model)
     {
@@ -749,8 +867,8 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
             st.preHP += (x - st.preHP) * ec.preHP;
             float hp = x - st.preHP;
             st.preSh += (hp - st.preSh) * ec.preSh;
-            float treble = hp - st.preSh;
-            return hp + treble * 0.4f;
+            const float edge = hp - st.preSh;
+            return hp + edge * (0.01f + drive * mod * 0.06f);
         }
         case Model::PushPull:
             return x;
@@ -761,10 +879,13 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
         }
         case Model::Tape:
         {
-            st.preSh += (x - st.preSh) * ec.preSh;
-            float hfPart = x - st.preSh;
-            float tapeSpeedBoost = 0.5f + (1.0f - mod) * 0.5f;
-            return x + hfPart * tapeSpeedBoost;
+            // The fitted reference behaves essentially as a direct path at 0%,
+            // so keep the tape pre-stage transparent for now.
+            (void) st;
+            (void) drive;
+            (void) mod;
+            (void) ec;
+            return x;
         }
         case Model::Fuzz:
         {
@@ -796,7 +917,7 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
 }
 
 inline float deEmphasize (float y, EmphasisState& st, Model model,
-                          float mod, const EmphCoeffs& ec) noexcept
+                          float drive, float mod, const EmphCoeffs& ec) noexcept
 {
     switch (model)
     {
@@ -809,12 +930,14 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
             // accumulating DC from asymmetry, then releasing at zero crossings.
             // The 5Hz DC blocker downstream handles any DC from asymmetry.
             st.postLP += (y - st.postLP) * ec.postLP;
-            return st.postLP;
+            const float lpMix = 0.05f + drive * (0.18f + mod * 0.10f);
+            return y + (st.postLP - y) * lpMix;
         }
         case Model::PushPull:
         {
             st.postLP += (y - st.postLP) * ec.postLP;
-            return st.postLP;
+            const float lpMix = 0.08f + drive * (0.22f + mod * 0.10f);
+            return y + (st.postLP - y) * lpMix;
         }
         case Model::Diode:
         {
@@ -823,10 +946,13 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
         }
         case Model::Tape:
         {
-            st.postLP += (y - st.postLP) * ec.postLP;
-            float tapeSpeedCut = 0.5f + (1.0f - mod) * 0.5f;
-            float hfPart = y - st.postLP;
-            return y - hfPart * tapeSpeedCut;
+            // For the current fitted tape base, the tone is carried by the
+            // transfer curve itself. Keep the post stage neutral.
+            (void) st;
+            (void) mod;
+            (void) drive;
+            (void) ec;
+            return y;
         }
         case Model::Fuzz:
         {
@@ -866,58 +992,78 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
 //  Per-sample waveshaper functions (new models)
 // ══════════════════════════════════════════════════════════════
 
-// TRIODE: Koren-inspired 12AX7 asymmetric waveshaper
+// TRIODE: 12AX7-style preamp stage with normalized small-signal behavior
 inline float processTriode (float x, float drive, float bias, float mod,
+                            State& state, int ch, float sr,
                             adaa::TanhADAA& adaaState) noexcept
 {
-    const float gain = 1.0f + drive * 30.0f;
-    float s = x * gain;
+    const int sp = state.currentSeriesPass;
+    const float gain = 1.0f + drive * (3.2f + mod * 1.3f);
+    const float biasShift = bias * 0.055f + drive * (0.010f + mod * 0.015f);
+    const float k = 0.95f + drive * (2.2f + mod * 1.1f);
 
-    // Bias shifts operating point (hot → earlier breakup, cold → more headroom)
-    s += bias * 0.2f;
+    // Positive grid conduction charges the coupling network and gently moves
+    // the operating point during hard hits, but it should stay invisible at
+    // low drive and in the sustain tail.
+    const float conduction = std::max (0.0f, x * gain + biasShift - (0.32f - drive * 0.08f));
+    const float attack = detail::onePoleCoeff (250.0f + drive * 350.0f, sr);
+    const float release = detail::onePoleCoeff (2.5f + drive * 4.0f, sr);
+    const float targetBlock = conduction * (0.10f + drive * 0.18f);
+    if (targetBlock > state.triodeBlock[sp][ch])
+        state.triodeBlock[sp][ch] += (targetBlock - state.triodeBlock[sp][ch]) * attack;
+    else
+        state.triodeBlock[sp][ch] += (targetBlock - state.triodeBlock[sp][ch]) * release;
 
-    // MOD: grid conduction knee sharpness
-    const float kneeSharp = 1.0f + mod * mod * 2.0f;
-    const float k = 1.0f + drive * 3.0f * kneeSharp;
+    const float blockBias = state.triodeBlock[sp][ch];
+    const float opBias = biasShift - blockBias;
+    const float s = x * gain + opBias;
 
-    // ADAA tanh core
-    float shaped = adaaState.process (s, k);
+    const float raw = adaaState.process (s, k);
+    const float raw0 = std::tanh (k * opBias);
+    const float raw0t = std::tanh (k * opBias);
+    const float slope0 = gain * k * detail::sech2FromTanh (raw0t);
+    float out = detail::normalizeSmallSignal (raw, raw0, slope0);
 
-    // Asymmetry: positive side gets extra even-harmonic content
-    const float asym = 0.15f + bias * 0.1f;
-    if (s > 0.0f)
-        shaped += asym * drive * shaped * shaped;
-
-    return shaped;
-}
-
-// PUSH-PULL: Class AB EL34/6L6 power tube push-pull
-inline float processPushPull (float x, float drive, float bias, float mod,
-                              adaa::TanhADAA& adaaState) noexcept
-{
-    const float gain = 1.0f + drive * 24.0f;
-    float s = x * gain;
-
-    // Bias: -1 = hot (Class A), +1 = cold (wide crossover notch)
-    const float crossoverWidth = 0.02f + (bias * 0.5f + 0.5f) * 0.15f;
-
-    // MOD: saturation knee hardness
-    const float k = 1.5f + drive * 4.0f + mod * mod * 3.0f;
-
-    float posHalf = detail::clampF (s, 0.0f, 100.0f);
-    float negHalf = detail::clampF (-s, 0.0f, 100.0f);
-
-    posHalf = adaaState.process (posHalf, k);
-    float negShaped = std::tanh (k * negHalf);
-
-    // Crossover distortion
-    const float crossover = std::exp (-(s * s) / (crossoverWidth * crossoverWidth + 1.0e-6f));
-    const float notchDepth = crossoverWidth * 2.0f;
-
-    float out = posHalf - negShaped;
-    out *= (1.0f - crossover * notchDepth);
+    // Plate load asymmetry / even harmonics, constructed so the derivative at
+    // zero stays unchanged.
+    const float driveDelta = x * gain;
+    const float even = driveDelta * std::abs (driveDelta);
+    out += even * (0.020f + drive * 0.060f) * (0.4f + 0.6f * (bias * 0.5f + 0.5f));
 
     return out;
+}
+
+// POWER: Hybrid 6L6/EL34 class-AB output stage
+inline float processPushPull (float x, float drive, float bias, float mod,
+                              State& state, int ch, float sr,
+                              adaa::TanhADAA& adaaState) noexcept
+{
+    const int sp = state.currentSeriesPass;
+    const float hotness = detail::clampF (0.5f - bias * 0.5f, 0.0f, 1.0f);
+    const float envTarget = std::abs (x) * (0.18f + drive * 0.55f);
+    const float sagCoeff = detail::onePoleCoeff (12.0f + mod * 18.0f, sr);
+    state.powerSag[sp][ch] += (envTarget - state.powerSag[sp][ch]) * sagCoeff;
+    const float sag = state.powerSag[sp][ch];
+
+    float gain = 1.0f + drive * (3.8f + mod * 1.2f);
+    gain *= 1.0f - sag * (0.08f + drive * 0.10f);
+
+    const float idleBias = 0.022f + hotness * (0.050f + drive * 0.010f);
+    const float crossover = 0.010f + (1.0f - hotness) * (0.012f + drive * 0.010f);
+    const float satK = 1.0f + drive * (2.6f + mod * 0.9f);
+
+    const float posV = x * gain + idleBias;
+    const float negV = -x * gain + idleBias;
+    const float posC = detail::smoothRect (posV, crossover);
+    const float negC = detail::smoothRect (negV, crossover);
+
+    float conduction = posC - negC;
+    conduction += x * std::abs (x) * gain * (0.020f + mod * 0.035f);
+
+    const float raw = adaaState.process (conduction, satK);
+    const float derivRect = detail::smoothRectDeriv (idleBias, crossover);
+    const float slope0 = satK * (2.0f * gain * derivRect);
+    return detail::normalizeSmallSignal (raw, 0.0f, slope0);
 }
 
 // CASCADE: single-stage helper
@@ -999,56 +1145,67 @@ inline float processDiode (float x, float drive, float bias, float mod,
     return shaped;
 }
 
-// TAPE: simplified hysteresis + flutter + head bump
+// TAPE: fitted ADAA tape stage based on the reference family.
+// Base behavior:
+//   0%   -> almost linear with ~+1.12 dB
+//   50%  -> mild rounded saturation
+//   100% -> dense, strongly compressed tanh-like stage
 inline float processTape (float x, float drive, float bias, float mod,
                           State& state, int ch, float sr,
-                          adaa::TanhADAA& adaaState,
+                          adaa::TapeTanhADAA& adaaState,
                           bool advanceOsc = true) noexcept
 {
-    const float gain = 1.0f + drive * 18.0f;
-    const float biasLevel = 1.0f + bias * 0.3f;
-    float s = x * gain * biasLevel;
-
-    // Flutter modulation (wow + flutter, deeper at slow speed)
-    if (ch == 0 && advanceOsc)
-    {
-        state.flutterPhase += kTwoPi * 5.5f / sr;
-        if (state.flutterPhase > kTwoPi) state.flutterPhase -= kTwoPi;
-    }
-    const float flutterDepth = 0.003f + mod * 0.004f;
-    const float flutter = std::sin (state.flutterPhase) * flutterDepth
-                        + std::sin (state.flutterPhase * 7.636f) * flutterDepth * 0.4f;
-    s += flutter * s;
-
-    // Hysteresis-inspired saturation via ADAA tanh
-    const float hystK = 1.0f + drive * 4.0f + mod * 2.0f;
-    float shaped = adaaState.process (s, hystK);
-
-    // Head bump: resonant peak at speed-dependent frequency
-    // Head bump: gentle resonant peak at speed-dependent frequency
-    // Using Transposed Direct Form II for correct bandpass behaviour
-    const float bumpFreq = 60.0f + (1.0f - mod) * 60.0f;
-    const float bumpQ = 1.5f;
-    const float w0    = kTwoPi * bumpFreq / sr;
-    const float alpha = std::sin (w0) / (2.0f * bumpQ);
-    const float cosW0 = std::cos (w0);
-    const float a0inv = 1.0f / (1.0f + alpha);
-
-    const float b0 =  alpha * a0inv;
-    const float b2 = -alpha * a0inv;
-    const float a1 = -2.0f * cosW0 * a0inv;
-    const float a2 = (1.0f - alpha) * a0inv;
-
     const int sp = state.currentSeriesPass;
-    // TDF2: y = b0*x + z1;  z1 = b1*x - a1*y + z2;  z2 = b2*x - a2*y
-    // (b1 = 0 for cookbook bandpass)
-    const float bump = b0 * shaped + state.bumpZ1[sp][ch];
-    state.bumpZ1[sp][ch] = -a1 * bump + state.bumpZ2[sp][ch];
-    state.bumpZ2[sp][ch] = b2 * shaped - a2 * bump;
+    (void) mod;
+    (void) sr;
+    (void) advanceOsc;
 
-    shaped += bump * (0.2f + mod * 0.2f);
+    // This base implementation intentionally ignores the legacy magnetic-memory
+    // extras until the core transfer matches the reference family.
+    state.tapeFlux[sp][ch] = 0.0f;
+    state.bumpZ1[sp][ch] = 0.0f;
+    state.bumpZ2[sp][ch] = 0.0f;
+    if (ch == 0)
+        state.flutterPhase = 0.0f;
 
-    return shaped;
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+
+    // Endpoint fits derived from comparison renders:
+    //   50%  -> tanh(pre*x)/pre with pre ~= 3.184 and gain ~= 1.0625
+    //   100% -> tanh(pre*x)/pre with pre ~= 24.649 and gain ~= 3.5497
+    constexpr float baseGain = 1.1438f;       // matches the 0% reference lift
+    constexpr float pre0     = 1.0f;          // keeps ADAA bounded and nearly linear
+    constexpr float pre50    = 3.1839465f;
+    constexpr float pre100   = 24.649416f;
+    constexpr float mu50     = 0.9289423f;    // gain50 / baseGain
+    constexpr float mu100    = 3.1034508f;    // gain100 / baseGain
+
+    float pregain = pre0;
+    float makeup = 1.0f;
+
+    if (d <= 0.5f)
+    {
+        const float t = detail::smoothStep01 (d * 2.0f);
+        pregain = juce::jmap (t, pre0, pre50);
+        makeup = juce::jmap (t, 1.0f, mu50);
+    }
+    else
+    {
+        const float u = (d - 0.5f) * 2.0f;
+        const float t = u * u * u;
+        pregain = juce::jmap (t, pre50, pre100);
+        makeup = juce::jmap (t, mu50, mu100);
+    }
+
+    // Keep bias subtle in this base fit so the comparison path remains mostly
+    // symmetric with default controls.
+    const float biasShift = bias * (0.0015f + d * 0.0025f);
+    const float satIn = (x + biasShift) * pregain;
+
+    // Use a fixed tanh ADAA kernel. Varying k inside the ADAA state was a
+    // likely source of the pathological spikes seen in the diagnostics.
+    const float raw = adaaState.process (satIn, 1.0f);
+    return raw * (baseGain * makeup / pregain);
 }
 
 // FUZZ: Fuzz Face — 2-stage CE topology with global feedback
@@ -1439,11 +1596,11 @@ inline float applyDriveCurve (float driveParam, Model model) noexcept
     float exp;
     switch (model)
     {
-        case Model::Triode:     exp = 1.5f; break;  // single stage, moderate gain
-        case Model::PushPull:   exp = 1.5f; break;  // single stage, moderate gain
+        case Model::Triode:     exp = 2.0f; break;  // make low-drive range cleaner and wider
+        case Model::PushPull:   exp = 2.0f; break;  // power stage should stay cleaner early on
         case Model::Cascade:    exp = 2.0f; break;  // multi-stage, gain compounds
         case Model::Diode:      exp = 1.8f; break;  // single stage, high gain (×40)
-        case Model::Tape:       exp = 1.5f; break;  // single stage, moderate gain
+        case Model::Tape:       exp = 1.0f; break;  // Tape fitting is done directly in UI-drive space
         case Model::Fuzz:       exp = 2.5f; break;  // feedback controls gain range naturally
         case Model::Doom:       exp = 3.0f; break;  // 2 cascaded BMP clipping stages
         case Model::Destroy:    exp = 2.5f; break;  // plasma: fast attack, wide sustain range
@@ -1467,24 +1624,14 @@ inline float getAutoGain (Model model, float drive) noexcept
     {
         case Model::Triode:
         {
-            // processTriode: gain = 1 + drive*30, k = 1 + drive*3*kneeSharp
-            // For auto-gain we use kneeSharp=1 (mod=0 neutral).
-            // Peak output for x=1: tanh(k * gain * 1) ≈ tanh(k*gain).
-            // Asymmetry adds up to ~0.25*drive*tanh² ≈ small at peak.
-            const float gain = 1.0f + drive * 30.0f;
-            const float k = 1.0f + drive * 3.0f;
-            const float base = std::tanh (k * std::min (gain, 10.0f));
-            const float asymExtra = 0.25f * drive * base * base;
-            peakOut = base + asymExtra;
+            const float peak = 1.0f + drive * 0.28f;
+            peakOut = 1.0f + (peak - 1.0f) * detail::clampF (drive * 2.5f, 0.0f, 1.0f);
             break;
         }
         case Model::PushPull:
         {
-            // processPushPull: gain = 1 + drive*24, k = 1.5 + drive*4 + mod²*3
-            // Mid-range mod assumption: k ≈ 1.5 + drive*4
-            const float gain = 1.0f + drive * 24.0f;
-            const float k = 1.5f + drive * 4.0f;
-            peakOut = std::tanh (k * std::min (gain, 10.0f));
+            const float peak = 1.0f + drive * 0.24f;
+            peakOut = 1.0f + (peak - 1.0f) * detail::clampF (drive * 2.5f, 0.0f, 1.0f);
             break;
         }
         case Model::Cascade:
@@ -1505,10 +1652,10 @@ inline float getAutoGain (Model model, float drive) noexcept
             break;
         case Model::Tape:
         {
-            // processTape: gain = 1 + drive*10, k = 1 + drive*4
-            const float gain = 1.0f + drive * 10.0f;
-            const float k = 1.0f + drive * 4.0f;
-            peakOut = std::tanh (k * std::min (gain, 8.0f));
+            // Keep tape level largely user-driven. A strong auto-gain here
+            // makes low-drive passages feel unnaturally hyped and can invert
+            // the expected "more drive = at least similar loudness" behavior.
+            peakOut = 1.0f;
             break;
         }
         case Model::Fuzz:
@@ -1595,7 +1742,8 @@ inline void processBlock (State& state,
                           int   seriesCount = 1,
                           bool  isSafetyLpfOn = false,
                           bool  skipAutoGain = false,
-                          bool  rawMode = false) noexcept
+                          bool  rawMode = false,
+                          SatDiag::Collector* diagCollector = nullptr) noexcept
 {
     // CLEAN model: 1:1 pass-through — no saturation processing at all
     if (model == Model::Clean)
@@ -1611,10 +1759,14 @@ inline void processBlock (State& state,
             for (int sp = 0; sp < kMaxSeries; ++sp)
             {
                 state.wsAdaa[sp][ch].reset();
+                state.tapeAdaa[sp][ch].reset();
                 state.wsAdaa2[sp][ch].reset();
                 state.fuzzAdaa2Q2[sp][ch].reset();
                 state.doomAdaa2S2[sp][ch].reset();
                 state.girthAdaa[sp][ch].reset();
+                state.triodeBlock[sp][ch] = 0.0f;
+                state.powerSag[sp][ch] = 0.0f;
+                state.tapeFlux[sp][ch] = 0.0f;
                 state.fuzzFeedback[sp][ch] = 0.0f;
                 state.fuzzCoupDC[sp][ch] = 0.0f;
                 state.fuzzToneLPF[sp][ch] = 0.0f;
@@ -1665,11 +1817,11 @@ inline void processBlock (State& state,
     float interStageFreq = 6000.0f;
     switch (model)
     {
-        case Model::Triode:   interStageFreq = 5000.0f; break;
-        case Model::PushPull: interStageFreq = 7000.0f; break;
+        case Model::Triode:   interStageFreq = 6500.0f; break;
+        case Model::PushPull: interStageFreq = 7500.0f; break;
         case Model::Cascade:  interStageFreq = 5000.0f; break;
         case Model::Diode:    interStageFreq = 5000.0f; break;
-        case Model::Tape:     interStageFreq = 8000.0f; break;
+        case Model::Tape:     interStageFreq = 9000.0f; break;
         case Model::Fuzz:     interStageFreq = 6000.0f; break;
         case Model::Doom:     interStageFreq = 4000.0f; break;
         case Model::Destroy:  interStageFreq = 10000.0f; break;
@@ -1686,21 +1838,21 @@ inline void processBlock (State& state,
     {
         case Model::Triode:
         case Model::Cascade:
-            emphCoeffs.preHP  = detail::onePoleCoeff (30.0f,   sampleRate);
-            emphCoeffs.preSh  = detail::onePoleCoeff (800.0f,  sampleRate);
-            emphCoeffs.postLP = detail::onePoleCoeff (3500.0f, sampleRate);
-            emphCoeffs.postHP = detail::onePoleCoeff (70.0f,   sampleRate);
+            emphCoeffs.preHP  = detail::onePoleCoeff (22.0f,   sampleRate);
+            emphCoeffs.preSh  = detail::onePoleCoeff (1600.0f, sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (6500.0f, sampleRate);
+            emphCoeffs.postHP = detail::onePoleCoeff (40.0f,   sampleRate);
             break;
         case Model::PushPull:
-            emphCoeffs.postLP = detail::onePoleCoeff (5000.0f, sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (5500.0f, sampleRate);
             break;
         case Model::Diode:
             emphCoeffs.preHP  = detail::onePoleCoeff (720.0f,  sampleRate);
             emphCoeffs.postLP = detail::onePoleCoeff (723.0f,  sampleRate);
             break;
         case Model::Tape:
-            emphCoeffs.preSh  = detail::onePoleCoeff (2122.0f, sampleRate);
-            emphCoeffs.postLP = detail::onePoleCoeff (2122.0f, sampleRate);
+            emphCoeffs.preHP  = detail::onePoleCoeff (24.0f,   sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (16500.0f, sampleRate);
             break;
         case Model::Fuzz:
             emphCoeffs.preHP  = detail::onePoleCoeff (14.0f,   sampleRate);  // C1 HPF
@@ -1757,6 +1909,32 @@ inline void processBlock (State& state,
     // ── Per-block hoisted computations (avoid per-sample transcendentals) ──
     // Drive curve: std::pow only once per block (driveParam is constant within a block)
     const float driveCurved = applyDriveCurve (driveParam, model);
+
+    if (model == Model::Tape)
+    {
+        const bool tapeActive = driveCurved > 0.001f;
+        const bool driveJump = std::abs (driveCurved - state.lastTapeDrive) > 0.15f;
+        if (driveJump || tapeActive != state.tapeWasActive)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                state.emphasis[ch].reset();
+                state.dcX[ch] = state.dcY[ch] = 0.0f;
+                for (int sp = 0; sp < kMaxSeries; ++sp)
+                {
+                    state.tapeAdaa[sp][ch].reset();
+                    state.interStageDCx[sp][ch] = 0.0f;
+                    state.interStageDCy[sp][ch] = 0.0f;
+                    state.interStageLPF[sp][ch] = 0.0f;
+                    state.bumpZ1[sp][ch] = 0.0f;
+                    state.bumpZ2[sp][ch] = 0.0f;
+                    state.tapeFlux[sp][ch] = 0.0f;
+                }
+            }
+        }
+        state.lastTapeDrive = driveCurved;
+        state.tapeWasActive = tapeActive;
+    }
 
     // Auto-gain: precompute with target drive (std::tanh per-block, not per-sample)
     const float preAutoGain = skipAutoGain ? 1.0f : getAutoGain (model, driveCurved);
@@ -1930,7 +2108,7 @@ inline void processBlock (State& state,
 
                 // ── INTERNAL PRE-EMPHASIS (first pass only, unless rawMode) ──
                 if (isFirst && !rawMode)
-                    x = preEmphasize (x, state.emphasis[ch], model, effMod, emphCoeffs);
+                    x = preEmphasize (x, state.emphasis[ch], model, effDrive, effMod, emphCoeffs);
 
                 // ── REACT: energy tracking + per-model processing (first pass only) ──
                 float sagPre  = 1.0f;
@@ -2015,10 +2193,12 @@ inline void processBlock (State& state,
                 {
                     case Model::Triode:
                         x = processTriode (x, effDrive, effBias, effMod,
+                                           state, ch, sampleRate,
                                            state.wsAdaa[sp][ch]);
                         break;
                     case Model::PushPull:
                         x = processPushPull (x, effDrive, effBias, effMod,
+                                             state, ch, sampleRate,
                                              state.wsAdaa[sp][ch]);
                         break;
                     case Model::Cascade:
@@ -2032,7 +2212,7 @@ inline void processBlock (State& state,
                     case Model::Tape:
                         x = processTape (x, effDrive, effBias, effMod,
                                          state, ch, sampleRate,
-                                         state.wsAdaa[sp][ch], isFirst);
+                                         state.tapeAdaa[sp][ch], isFirst);
                         break;
                     case Model::Fuzz:
                         x = processFuzz (x, effDrive, effBias, effMod,
@@ -2059,6 +2239,9 @@ inline void processBlock (State& state,
                     default: break;
                 }
 
+                if (diagCollector != nullptr && model == Model::Tape && isLast && ch == 0)
+                    diagCollector->feedTapeCore (x);
+
                 // ── Intermediate safety: prevent extreme values entering girth/filters ──
                 // Soft clip: transparent below ±2, asymptotic to ±3
                 {
@@ -2069,6 +2252,9 @@ inline void processBlock (State& state,
                         x = sign * (2.0f + std::tanh (absX - 2.0f));
                     }
                 }
+
+                if (diagCollector != nullptr && model == Model::Tape && isLast && ch == 0)
+                    diagCollector->feedTapeClip (x);
 
                 // ── Post-sag ceiling (first pass only) ──
                 if (isFirst)
@@ -2114,7 +2300,7 @@ inline void processBlock (State& state,
 
                 // ── INTERNAL DE-EMPHASIS (last pass only, unless rawMode) ──
                 if (isLast && !rawMode)
-                    x = deEmphasize (x, state.emphasis[ch], model, effMod, emphCoeffs);
+                    x = deEmphasize (x, state.emphasis[ch], model, effDrive, effMod, emphCoeffs);
 
                 // ── DC BLOCKER (1st-order HPF at 5Hz, last pass only) ──
                 if (isLast)
@@ -2124,6 +2310,9 @@ inline void processBlock (State& state,
                     state.dcY[ch] = dcOut;
                     x = dcOut;
                 }
+
+                if (diagCollector != nullptr && model == Model::Tape && isLast && ch == 0)
+                    diagCollector->feedTapeDc (x);
 
                 // ── AUTO-GAIN COMPENSATION (last pass only, precomputed per-block) ──
                 if (isLast && !skipAutoGain)
@@ -2141,6 +2330,9 @@ inline void processBlock (State& state,
                         x = sign * (1.5f + std::tanh (absX - 1.5f));
                     }
                 }
+
+                if (diagCollector != nullptr && model == Model::Tape && isLast && ch == 0)
+                    diagCollector->feedTapeLim (x);
 
                 sample = x;
             }

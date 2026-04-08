@@ -15,7 +15,7 @@ public:
 	~CABTRAudioProcessor() override;
 
 	// ══════════════════════════════════════════════════════════════
-	//  Parameter IDs — IR Loader A
+	//  Parameter IDs — Loader A
 	// ══════════════════════════════════════════════════════════════
 	static constexpr const char* kParamEnableA      = "enable_a";
 	static constexpr const char* kParamHpFreqA      = "hp_freq_a";
@@ -64,7 +64,7 @@ public:
 	static constexpr const char* kParamExpRelA      = "exp_rel_a";
 
 	// ══════════════════════════════════════════════════════════════
-	//  Parameter IDs — IR Loader B
+	//  Parameter IDs — Loader B
 	// ══════════════════════════════════════════════════════════════
 	static constexpr const char* kParamEnableB      = "enable_b";
 	static constexpr const char* kParamHpFreqB      = "hp_freq_b";
@@ -113,7 +113,7 @@ public:
 	static constexpr const char* kParamExpRelB      = "exp_rel_b";
 
 	// ══════════════════════════════════════════════════════════════
-	//  Parameter IDs — IR Loader C
+	//  Parameter IDs — Loader C
 	// ══════════════════════════════════════════════════════════════
 	static constexpr const char* kParamEnableC      = "enable_c";
 	static constexpr const char* kParamHpFreqC      = "hp_freq_c";
@@ -283,7 +283,7 @@ public:
 	static constexpr float kMaxNormBoost   = 7.94328f; // +18 dB
 
 	// ══════════════════════════════════════════════════════════════
-	//  Parameter Ranges & Defaults — IR Controls
+	//  Parameter Ranges & Defaults — Legacy IR Compatibility Controls
 	// ══════════════════════════════════════════════════════════════
 	static constexpr float kInMin                   = -100.0f;
 	static constexpr float kInMax                   = 0.0f;
@@ -504,7 +504,7 @@ public:
 	}
 
 	// ══════════════════════════════════════════════════════════════
-	//  DSP State — IR Convolution (public for editor access)
+	//  DSP State — Per-loader processing
 	// ══════════════════════════════════════════════════════════════
 	struct IRLoaderState
 		{
@@ -836,7 +836,7 @@ private:
 		}
 	}
 
-	// Post-prepare fade-in to suppress convolver/filter warmup transients
+	// Post-prepare fade-in to suppress processing/filter warmup transients
 	int fadeInSamplesRemaining_ = 0;
 	int fadeInTotalSamples_     = 0;
 

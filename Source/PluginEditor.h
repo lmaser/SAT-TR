@@ -43,7 +43,7 @@ private:
 	void openFilterPrompt (int loaderIndex);
 	void openMixSendPrompt();
 	void applyLabelTextColour (juce::Label& label, juce::Colour colour);
-	void layoutIRSection (juce::Rectangle<int> area, int loaderIndex);
+	void layoutLoaderSection (juce::Rectangle<int> area, int loaderIndex);
 	void updateLoaderEnabledState (int loaderIndex);
 	void updateSatControlsEnabledState (int loaderIndex);
 	juce::String getMixText() const;
@@ -67,7 +67,7 @@ private:
 	{
 	public:
 		enum class Type { Unknown, HpFreq, LpFreq, Input, Output, Tilt,
-	                  Start, End, Size, Series, Pan, Fred, Pos, Reso,
+	                  Series, Pan, Fred, Pos,
 	                  Mix, GlobalMix, GlobalOutput, LimThreshold,
 	                  SatDrive, SatGirth, SatMod, SatBias, SatSag, Var, Delay };
 		void setOwner (CABTRAudioProcessorEditor* o) { owner = o; }
@@ -263,41 +263,12 @@ private:
 	MinimalLNF lnf;
 
 	// ══════════════════════════════════════════════════════════════
-	//  Browse Button with drag-and-drop support
-	// ══════════════════════════════════════════════════════════════
-	class BrowseButton : public juce::TextButton,
-	                    public juce::FileDragAndDropTarget
-	{
-	public:
-		BrowseButton() : juce::TextButton ("...") {}
-		void setOwner (CABTRAudioProcessorEditor* o, int idx) { owner = o; loaderIndex = idx; }
-
-		bool isInterestedInFileDrag (const juce::StringArray& files) override
-		{
-			for (const auto& f : files)
-				if (f.endsWithIgnoreCase (".wav") || f.endsWithIgnoreCase (".aif") ||
-				    f.endsWithIgnoreCase (".aiff") || f.endsWithIgnoreCase (".flac") ||
-				    f.endsWithIgnoreCase (".mp3") || f.endsWithIgnoreCase (".ogg"))
-					return true;
-			return false;
-		}
-
-		void filesDropped (const juce::StringArray& /*files*/, int /*x*/, int /*y*/) override
-		{
-		}
-
-	private:
-		CABTRAudioProcessorEditor* owner = nullptr;
-		int loaderIndex = 0;
-	};
-
-	// ══════════════════════════════════════════════════════════════
 	//  DRY helpers for tripled loader A/B/C setup
 	// ══════════════════════════════════════════════════════════════
 	struct LoaderRefs
 	{
-		juce::ToggleButton &enableBtn;  BrowseButton &browseBtn;  juce::Label &fileDisp;
-		BarSlider &hp, &lp, &in, &out, &tilt, &start, &end, &size, &series, &pan, &fred, &pos, &reso;
+		juce::ToggleButton &enableBtn;
+		BarSlider &hp, &lp, &in, &out, &tilt, &series, &pan, &fred, &pos;
 		juce::ToggleButton &inv, &chaos, &chaosFilter;  juce::Label &chaosDisp;
 		juce::ToggleButton &exp;  juce::Label &expDisp;
 		juce::ComboBox &modeIn, &modeOut, &sumBus, &filterPos;
@@ -311,7 +282,7 @@ private:
 	struct AttachRefs
 	{
 		std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>   &enableAtt;
-		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &hpAtt, &lpAtt, &inAtt, &outAtt, &tiltAtt, &startAtt, &endAtt, &sizeAtt, &seriesAtt, &panAtt, &fredAtt, &posAtt, &resoAtt;
+		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &hpAtt, &lpAtt, &inAtt, &outAtt, &tiltAtt, &seriesAtt, &panAtt, &fredAtt, &posAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>   &invAtt, &chaosAtt, &chaosFilterAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>   &expAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> &modeInAtt, &modeOutAtt, &sumBusAtt, &filterPosAtt;
@@ -347,36 +318,20 @@ private:
 	static const LoaderParamIds kLoaderParams[3];
 
 	// ══════════════════════════════════════════════════════════════
-	//  File Explorer State
-	// ══════════════════════════════════════════════════════════════
-	juce::File currentFolderA;
-	juce::File currentFolderB;
-	juce::File currentFolderC;
-	juce::String currentFileA;
-	juce::String currentFileB;
-	juce::String currentFileC;
-
-	// ══════════════════════════════════════════════════════════════
-	//  UI Components — IR Loader A
+	//  UI Components — Loader A
 	// ══════════════════════════════════════════════════════════════
 	juce::ToggleButton enableButtonA;
-	BrowseButton browseButtonA;
-	juce::Label fileDisplayA;
 
 	BarSlider hpFreqSliderA;
 	BarSlider lpFreqSliderA;
 	BarSlider inSliderA;
 	BarSlider outSliderA;
 	BarSlider tiltSliderA;
-	BarSlider startSliderA;
-	BarSlider endSliderA;
-	BarSlider sizeSliderA;
 	BarSlider seriesSliderA;
 	BarSlider varSliderA;
 	BarSlider panSliderA;
 	BarSlider fredSliderA;
 	BarSlider posSliderA;
-	BarSlider resoSliderA;
 
 	juce::ToggleButton invButtonA;
 	juce::ToggleButton chaosButtonA;
@@ -391,15 +346,11 @@ private:
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tiltAttachA;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> startAttachA;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> endAttachA;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sizeAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> seriesAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> varAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> panAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> fredAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> posAttachA;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> resoAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> invAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> chaosAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> chaosFilterAttachA;
@@ -431,26 +382,20 @@ private:
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> delayAttachA;
 
 	// ══════════════════════════════════════════════════════════════
-	//  UI Components — IR Loader B
+	//  UI Components — Loader B
 	// ══════════════════════════════════════════════════════════════
 	juce::ToggleButton enableButtonB;
-	BrowseButton browseButtonB;
-	juce::Label fileDisplayB;
 
 	BarSlider hpFreqSliderB;
 	BarSlider lpFreqSliderB;
 	BarSlider inSliderB;
 	BarSlider outSliderB;
 	BarSlider tiltSliderB;
-	BarSlider startSliderB;
-	BarSlider endSliderB;
-	BarSlider sizeSliderB;
 	BarSlider seriesSliderB;
 	BarSlider varSliderB;
 	BarSlider panSliderB;
 	BarSlider fredSliderB;
 	BarSlider posSliderB;
-	BarSlider resoSliderB;
 
 	juce::ToggleButton invButtonB;
 	juce::ToggleButton chaosButtonB;
@@ -465,15 +410,11 @@ private:
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tiltAttachB;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> startAttachB;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> endAttachB;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sizeAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> seriesAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> varAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> panAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> fredAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> posAttachB;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> resoAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> invAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> chaosAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> chaosFilterAttachB;
@@ -505,26 +446,20 @@ private:
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> delayAttachB;
 
 	// ══════════════════════════════════════════════════════════════
-	//  UI Components — IR Loader C
+	//  UI Components — Loader C
 	// ══════════════════════════════════════════════════════════════
 	juce::ToggleButton enableButtonC;
-	BrowseButton browseButtonC;
-	juce::Label fileDisplayC;
 
 	BarSlider hpFreqSliderC;
 	BarSlider lpFreqSliderC;
 	BarSlider inSliderC;
 	BarSlider outSliderC;
 	BarSlider tiltSliderC;
-	BarSlider startSliderC;
-	BarSlider endSliderC;
-	BarSlider sizeSliderC;
 	BarSlider seriesSliderC;
 	BarSlider varSliderC;
 	BarSlider panSliderC;
 	BarSlider fredSliderC;
 	BarSlider posSliderC;
-	BarSlider resoSliderC;
 
 	juce::ToggleButton invButtonC;
 	juce::ToggleButton chaosButtonC;
@@ -539,15 +474,11 @@ private:
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tiltAttachC;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> startAttachC;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> endAttachC;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sizeAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> seriesAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> varAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> panAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> fredAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> posAttachC;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> resoAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> invAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> chaosAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> chaosFilterAttachC;
@@ -677,8 +608,6 @@ private:
 		for (int i = 0; i < 3; ++i)
 		{
 			auto r = getLoaderRefs (i);
-			r.browseBtn.setColour (juce::TextButton::buttonColourId, activeScheme.bg);
-			r.fileDisp.setColour (juce::Label::textColourId, activeScheme.text);
 			applyComboScheme (r.modeIn);
 			applyComboScheme (r.modeOut);
 			applyComboScheme (r.sumBus);
@@ -706,8 +635,8 @@ private:
 	//  TR-style legend text cache (for value display)
 	// ══════════════════════════════════════════════════════════════
 	struct CachedParamText { juce::String full, short_, intOnly; };
-	// Param indices: HP=0, LP=1, OUT=2, START=3, END=4, SIZE=5, SERIES=6, PAN=7, FRED=8, POS=9, MIX=10, (IN=11, TILT=12, RESO=13), DRIVE=14, GIRTH=15, MOD=16, BIAS=17, SAG=18, VAR=19, DELAY=20
-	static constexpr int kNumCachedParams = 21;
+	// Param indices: HP=0, LP=1, IN=2, OUT=3, TILT=4, SERIES=5, PAN=6, FRED=7, POS=8, MIX=9, DRIVE=10, GIRTH=11, MOD=12, BIAS=13, SAG=14, VAR=15, DELAY=16
+	static constexpr int kNumCachedParams = 17;
 	CachedParamText cachedTexts[3][kNumCachedParams];  // [loader][param]
 
 	// Global mix legend cache (for SEND mode dB display)
@@ -719,10 +648,10 @@ private:
 	int columnLeft_[3]  = {};
 	int columnRight_[3] = {};
 
-	// Delay bar areas (set in layoutIRSection, painted in paintOverChildren)
+	// Delay bar areas (set in layoutLoaderSection, painted in paintOverChildren)
 
 	// Value display areas (calculated in paint(), used for click detection)
-	std::array<juce::Rectangle<int>, 63> cachedValueAreas_;  // 21 per loader × 3
+	std::array<juce::Rectangle<int>, 51> cachedValueAreas_;  // 17 per loader × 3
 
 	// Gear icon for info button
 	juce::Path cachedInfoGearPath;
