@@ -376,6 +376,20 @@ struct MultibandSagResult
     float sagPostAir = 1.0f;
 };
 
+struct TapeCompState
+{
+    float scLP  = 0.0f;
+    float env   = 0.0f;
+    float hfEnv = 0.0f;
+    float gain  = 1.0f;
+
+    void reset() noexcept
+    {
+        scLP = env = hfEnv = 0.0f;
+        gain = 1.0f;
+    }
+};
+
 inline void multibandReactSplit (MultibandReactState& mb, float x,
                                  float coeffSub, float coeffAir,
                                  float& outSub, float& outMid, float& outAir) noexcept
@@ -546,6 +560,9 @@ struct State
     // REACT sag envelope follower (per-channel, asymmetric attack/release)
     float sagEnvelope[2] = {};
 
+    // TAPE REACT/COMP state (per-channel)
+    TapeCompState tapeComp[2];
+
     // CASCADE per-stage DC accumulation (coupling cap model)
     // [series pass][stage][channel]
     float cascadeDC[kMaxSeries][kMaxCascade][2] = {};
@@ -674,6 +691,7 @@ struct State
             react[ch].reset();
             mbReact[ch].reset();
             sagEnvelope[ch] = 0.0f;
+            tapeComp[ch].reset();
             dcX[ch] = dcY[ch] = 0.0f;
             emphasis[ch].reset();
             safetyLpf[ch].reset();
@@ -764,6 +782,10 @@ struct State
             fl (emphasis[ch].preSh);
             fl (emphasis[ch].postHP);
             fl (emphasis[ch].postLP);
+            fl (tapeComp[ch].scLP);
+            fl (tapeComp[ch].env);
+            fl (tapeComp[ch].hfEnv);
+            fl (tapeComp[ch].gain);
             fl (subOscEnv[ch]);
             fl (subOscLPF[ch]);
             fl (sagEnvelope[ch]);
@@ -820,7 +842,112 @@ namespace detail
         t = clampF (t, 0.0f, 1.0f);
         return t * t * (3.0f - 2.0f * t);
     }
+
+    inline float interpDrive5 (float d, float p0, float p25, float p50,
+                               float p75, float p100) noexcept
+    {
+        d = clampF (d, 0.0f, 1.0f);
+        if (d <= 0.25f)
+        {
+            const float t = smoothStep01 (d / 0.25f);
+            return juce::jmap (t, p0, p25);
+        }
+        if (d <= 0.50f)
+        {
+            const float t = smoothStep01 ((d - 0.25f) / 0.25f);
+            return juce::jmap (t, p25, p50);
+        }
+        if (d <= 0.75f)
+        {
+            const float t = smoothStep01 ((d - 0.50f) / 0.25f);
+            return juce::jmap (t, p50, p75);
+        }
+
+        const float t = smoothStep01 ((d - 0.75f) / 0.25f);
+        return juce::jmap (t, p75, p100);
+    }
 } // namespace detail
+
+struct TapeCompResult
+{
+    float sample    = 0.0f;
+    float driveLift = 1.0f;
+    float amount    = 0.0f;
+};
+
+inline TapeCompResult processTapeComp (float x, TapeCompState& st,
+                                       float react, float drive, float program,
+                                       float sr) noexcept
+{
+    TapeCompResult r;
+    r.sample = x;
+
+    if (react <= 0.0001f)
+        return r;
+
+    const float splitHz = juce::jmap (react, 1100.0f, 2600.0f);
+    const float splitC  = detail::onePoleCoeff (splitHz, sr);
+    st.scLP += (x - st.scLP) * splitC;
+
+    const float low  = st.scLP;
+    const float high = x - low;
+    const float highWeight = 1.15f + react * 1.85f;
+    const float detSq = low * low * (0.42f + react * 0.10f)
+                      + high * high * highWeight;
+    const float detector = std::sqrt (std::max (detSq, 0.0f) + 1.0e-12f);
+
+    const float attackHz  = 55.0f + react * 180.0f + drive * 70.0f;
+    const float releaseHz = 1.9f + program * (3.5f + react * 6.0f);
+    const float atk = detail::onePoleCoeff (attackHz, sr);
+    const float rel = detail::onePoleCoeff (releaseHz, sr);
+
+    if (detector > st.env)
+        st.env += (detector - st.env) * atk;
+    else
+        st.env += (detector - st.env) * rel;
+
+    const float hfDet = std::abs (high) * (1.0f + react * 1.2f);
+    const float hfAtk = std::min (1.0f, atk * 1.35f);
+    const float hfRel = detail::onePoleCoeff (releaseHz * 1.7f + 1.0f, sr);
+    if (hfDet > st.hfEnv)
+        st.hfEnv += (hfDet - st.hfEnv) * hfAtk;
+    else
+        st.hfEnv += (hfDet - st.hfEnv) * hfRel;
+
+    const float threshold = juce::jmap (react, 0.34f, 0.14f)
+                          * juce::jmap (drive, 1.04f, 0.90f);
+    const float ratio = juce::jmap (react, 1.25f, 3.8f);
+    const float over = st.env / std::max (threshold, 1.0e-4f);
+    const float knee = detail::smoothStep01 ((over - 0.85f) / 0.75f);
+
+    float compGain = 1.0f;
+    if (over > 1.0f)
+        compGain = std::pow (over, -(ratio - 1.0f) / ratio);
+    compGain = juce::jlimit (0.35f, 1.0f, juce::jmap (knee, 1.0f, compGain));
+
+    const float hfOver = st.hfEnv / std::max (threshold * (0.74f - react * 0.08f), 1.0e-4f);
+    const float hfKnee = detail::smoothStep01 ((hfOver - 0.78f) / 0.65f);
+    float hfGain = 1.0f;
+    if (hfOver > 1.0f)
+        hfGain = 1.0f / (1.0f + (hfOver - 1.0f) * (0.28f + react * 1.05f));
+    hfGain = juce::jlimit (0.46f, 1.0f, juce::jmap (hfKnee, 1.0f, hfGain));
+
+    const float makeup = 1.0f + (1.0f - compGain)
+                                   * (0.14f + 0.18f * program + 0.10f * react);
+    const float targetGain = juce::jlimit (0.35f, 1.0f, compGain * makeup);
+    const float gainAtk = detail::onePoleCoeff (90.0f + react * 170.0f, sr);
+    const float gainRel = detail::onePoleCoeff (4.0f + program * (4.0f + react * 5.0f), sr);
+
+    if (targetGain < st.gain)
+        st.gain += (targetGain - st.gain) * gainAtk;
+    else
+        st.gain += (targetGain - st.gain) * gainRel;
+
+    r.sample = (low + high * hfGain) * st.gain;
+    r.driveLift = 1.0f + (1.0f - compGain) * react * (0.18f + 0.14f * program);
+    r.amount = 1.0f - compGain;
+    return r;
+}
 
 // ══════════════════════════════════════════════════════════════
 //  GIRTH — post-waveshaper fold + sharpen
@@ -847,6 +974,18 @@ inline float applyGirth (float shaped, float girth,
     // Stage 4: Wet/dry crossfade (quadratic ease-in)
     const float girthCurve = girth * girth;
     return shaped * (1.0f - girthCurve) + aggressive * girthCurve;
+}
+
+inline float applyTapeGirth (float shaped, float girth) noexcept
+{
+    if (girth < 0.01f) return shaped;
+
+    const float girthCurve = girth * girth;
+    const float density = detail::fastTanh (shaped * (1.0f + girth * 1.2f));
+    const float body = shaped + shaped * (1.0f - std::min (1.0f, std::abs (shaped)))
+                                 * girth * 0.12f;
+    const float tapeLike = density * 0.82f + body * 0.18f;
+    return juce::jmap (girthCurve, shaped, tapeLike);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -879,13 +1018,17 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
         }
         case Model::Tape:
         {
-            // Keep the record side almost transparent, but trim a little
-            // sub-energy before the nonlinearity so the stage feels more like
-            // a tape bus than a flat digital clipper.
+            // MOD morphs Rabbit-style Tape B at 0% into the smoother Tape A at
+            // 100%. Keep the path unified and only morph the voicing.
             st.preHP += (x - st.preHP) * ec.preHP;
             float hp = x - st.preHP;
-            (void) mod;
-            return hp;
+            st.preSh += (hp - st.preSh) * ec.preSh;
+            const float edge = hp - st.preSh;
+            const float rabbitMod = 1.0f - mod;
+            const float rabbit = rabbitMod * rabbitMod;
+            const float gritMix = rabbitMod * (0.048f + drive * 0.145f + rabbit * (0.010f + drive * 0.040f));
+            const float bodyLift = rabbit * (0.022f + drive * 0.055f);
+            return hp * (1.0f + bodyLift) + edge * gritMix;
         }
         case Model::Fuzz:
         {
@@ -946,13 +1089,17 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
         }
         case Model::Tape:
         {
-            // Airwindows-style polish: keep the post stage subtle and broad.
-            // No heavy de-emphasis, only a gentle HF rounding that increases
-            // with drive and remains bypassable via RAW mode upstream.
+            // Rabbit needs to stay more open and more harmonically forward than
+            // Tape A, especially as drive rises.
             st.postLP += (y - st.postLP) * ec.postLP;
-            const float lpMix = 0.025f + drive * 0.095f;
-            (void) mod;
-            return y + (st.postLP - y) * lpMix;
+            const float lpMixA = 0.025f + drive * 0.095f;
+            const float lpMixB = 0.002f + drive * 0.008f;
+            const float rabbitMod = 1.0f - mod;
+            const float lpMix = juce::jmap (rabbitMod, lpMixA, lpMixB);
+            const float rabbit = rabbitMod * rabbitMod;
+            const float softened = y + (st.postLP - y) * lpMix;
+            const float bright = y - st.postLP;
+            return softened + bright * rabbit * (0.050f + drive * 0.120f);
         }
         case Model::Fuzz:
         {
@@ -1145,67 +1292,159 @@ inline float processDiode (float x, float drive, float bias, float mod,
     return shaped;
 }
 
-// TAPE: fitted ADAA tape stage based on the reference family.
-// Base behavior:
-//   0%   -> almost linear with ~+1.12 dB
-//   50%  -> mild rounded saturation
-//   100% -> dense, strongly compressed tanh-like stage
+// TAPE: ADAA tape stage with two fitted families:
+//   MOD=0   -> Rabbit-style grittier tape reference
+//   MOD=1   -> current smoother tape reference
+// Interpolate parameters, not outputs, so the mode remains a single cohesive
+// nonlinear path instead of behaving like a parallel blend.
 inline float processTape (float x, float drive, float bias, float mod,
                           State& state, int ch, float sr,
                           adaa::TapeTanhADAA& adaaState,
                           bool advanceOsc = true) noexcept
 {
     const int sp = state.currentSeriesPass;
-    (void) mod;
     (void) sr;
     (void) advanceOsc;
 
-    // This base implementation intentionally ignores the legacy magnetic-memory
-    // extras until the core transfer matches the reference family.
-    state.tapeFlux[sp][ch] = 0.0f;
+    // Flutter/head-bump remain out for now, but keep tapeFlux alive so Rabbit
+    // can use a mild memory compression stage instead of sounding like a plain
+    // static level boost.
     state.bumpZ1[sp][ch] = 0.0f;
     state.bumpZ2[sp][ch] = 0.0f;
     if (ch == 0)
         state.flutterPhase = 0.0f;
 
     const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float m = detail::clampF (mod,   0.0f, 1.0f);
+    const float rabbitMod = 1.0f - m;
 
-    // Endpoint fits derived from comparison renders:
-    //   50%  -> tanh(pre*x)/pre with pre ~= 3.184 and gain ~= 1.0625
-    //   100% -> tanh(pre*x)/pre with pre ~= 24.649 and gain ~= 3.5497
-    constexpr float baseGain = 1.1438f;       // matches the 0% reference lift
-    constexpr float pre0     = 1.0f;          // keeps ADAA bounded and nearly linear
-    constexpr float pre50    = 3.30f;
-    constexpr float pre100   = 22.50f;
-    constexpr float mu50     = 0.95f;         // gain50 / baseGain
-    constexpr float mu100    = 3.00f;         // gain100 / baseGain
-
-    float pregain = pre0;
-    float makeup = 1.0f;
-
-    if (d <= 0.5f)
+    // Tape A: current smoother family (MOD=100%)
+    float pregainA;
+    float totalGainA;
     {
-        const float t = detail::smoothStep01 (d * 2.0f);
-        pregain = juce::jmap (t, pre0, pre50);
-        makeup = juce::jmap (t, 1.0f, mu50);
-    }
-    else
-    {
-        const float u = (d - 0.5f) * 2.0f;
-        const float t = detail::smoothStep01 (u);
-        pregain = juce::jmap (t, pre50, pre100);
-        makeup = juce::jmap (t, mu50, mu100);
+        constexpr float baseGainA = 1.1438f;
+        constexpr float pre0A     = 1.0f;
+        constexpr float pre50A    = 3.30f;
+        constexpr float pre100A   = 22.50f;
+        constexpr float mu50A     = 0.95f;
+        constexpr float mu100A    = 3.00f;
+
+        float makeupA = 1.0f;
+        if (d <= 0.5f)
+        {
+            const float t = detail::smoothStep01 (d * 2.0f);
+            pregainA = juce::jmap (t, pre0A, pre50A);
+            makeupA = juce::jmap (t, 1.0f, mu50A);
+        }
+        else
+        {
+            const float u = (d - 0.5f) * 2.0f;
+            const float t = detail::smoothStep01 (u);
+            pregainA = juce::jmap (t, pre50A, pre100A);
+            makeupA = juce::jmap (t, mu50A, mu100A);
+        }
+        totalGainA = baseGainA * makeupA;
     }
 
-    // Keep bias subtle in this base fit so the comparison path remains mostly
-    // symmetric with default controls.
-    const float biasShift = bias * (0.0015f + d * 0.0025f);
-    const float satIn = (x + biasShift) * pregain;
+    // Tape B: Rabbit-style family measured from the second reference (MOD=0%).
+    const float pregainB = detail::interpDrive5 (d,
+                                                 0.78f, 1.02f, 1.55f, 2.00f, 2.55f);
+    const float totalGainB = detail::interpDrive5 (d,
+                                                   2.35f, 2.28f, 2.20f, 2.14f, 2.10f);
+
+    const float pregain = juce::jmap (rabbitMod, pregainA, pregainB);
+    const float totalGain = juce::jmap (rabbitMod, totalGainA, totalGainB);
+
+    // Tape bias is better treated as under/over-bias behaviour than as a plain
+    // DC offset. Negative values under-bias the record stage (brighter, grittier);
+    // positive values over-bias it (smoother, slightly softer, less HF aggression).
+    const float biasClamped = detail::clampF (bias, -1.0f, 1.0f);
+    const float underBias = std::max (-biasClamped, 0.0f);
+    const float overBias  = std::max ( biasClamped, 0.0f);
+    const float biasShift = biasClamped * (0.0005f + d * 0.0010f);
+    float satIn = (x + biasShift) * pregain;
+    satIn *= 1.0f + underBias * (0.04f + d * 0.08f)
+                  - overBias  * (0.03f + d * 0.05f);
+    if (underBias > 0.0001f)
+    {
+        const float oddBias = satIn * std::abs (satIn);
+        satIn += oddBias * underBias * (0.004f + d * 0.012f);
+    }
+
+    // Tape B needs a different transfer feel, not only different gain. Morph
+    // the drive shape itself so MOD becomes audible even at identical drive.
+    if (rabbitMod > 0.0001f)
+    {
+        const float rabbit = rabbitMod * rabbitMod;
+        const float hiTaper = 1.0f - 0.06f * detail::smoothStep01 ((d - 0.58f) * 1.55f);
+        const float odd2 = satIn * std::abs (satIn);
+        const float cubic = satIn * satIn * satIn;
+        satIn += odd2 * rabbit * (0.042f + d * 0.110f) * hiTaper;
+        satIn += cubic * rabbit * (0.0060f + d * 0.032f) * hiTaper;
+    }
 
     // Use a fixed tanh ADAA kernel. Varying k inside the ADAA state was a
     // likely source of the pathological spikes seen in the diagnostics.
-    const float raw = adaaState.process (satIn, 1.0f);
-    return raw * (baseGain * makeup / pregain);
+    float raw = adaaState.process (satIn, 1.0f);
+
+    if (underBias > 0.0001f)
+    {
+        const float oddBias = raw * std::abs (raw);
+        raw += oddBias * underBias * (0.006f + d * 0.015f);
+    }
+    if (overBias > 0.0001f)
+    {
+        const float oddBias = raw * std::abs (raw);
+        raw -= oddBias * overBias * (0.004f + d * 0.010f);
+        raw *= 1.0f - overBias * (0.02f + d * 0.03f);
+    }
+
+    if (rabbitMod > 0.0001f)
+    {
+        // Rabbit's drive curve is better described by a fitted odd-polynomial
+        // family than by the manual post-core boosts we were using before.
+        // These coefficients were extracted from comparison2 relative to
+        // Rabbit's own 0% drive path.
+        const float rabbit = rabbitMod * rabbitMod;
+        const float a1 = detail::interpDrive5 (d,
+                                               1.00000f, 1.21111f, 1.33567f, 1.35707f, 1.31288f);
+        const float a3 = detail::interpDrive5 (d,
+                                               0.00000f, -0.65204f, -1.19988f, -1.61318f, -1.83975f);
+        const float a5 = detail::interpDrive5 (d,
+                                               0.00000f, 0.50839f, 0.96282f, 1.34735f, 1.56277f);
+        const float raw2 = raw * raw;
+        const float rabbitRaw = a1 * raw + a3 * raw * raw2 + a5 * raw * raw2 * raw2;
+        raw = juce::jmap (rabbit, raw, rabbitRaw);
+
+        // Rabbit's perceived drive comes more from density/compression than
+        // from simply adding output. A light stateful squeeze keeps peaks under
+        // control while lifting sustain and small-signal material.
+        const float envIn = std::abs (raw);
+        const float atk = detail::onePoleCoeff (900.0f + d * 2200.0f, sr);
+        const float rel = detail::onePoleCoeff (3.0f + d * 5.0f, sr);
+        float& flux = state.tapeFlux[sp][ch];
+        const float envCoeff = envIn > flux ? atk : rel;
+        flux += (envIn - flux) * envCoeff;
+
+        const float squeeze = 1.0f / (1.0f + flux * (0.55f + d * 0.40f));
+        const float sustainLift = 1.0f + rabbit * (0.36f - d * 0.10f);
+        raw *= juce::jmap (rabbit, 1.0f, squeeze * sustainLift);
+
+        const float oddHard = raw * std::abs (raw);
+        raw += oddHard * rabbit * (0.010f + d * 0.022f);
+    }
+
+    float out = raw * (totalGain / pregain);
+
+    if (rabbitMod > 0.0001f)
+    {
+        const float rabbit = rabbitMod * rabbitMod;
+        const float rabbitMakeup = detail::interpDrive5 (d,
+                                                         1.24f, 1.20f, 1.16f, 1.13f, 1.10f);
+        out *= juce::jmap (rabbit, 1.0f, rabbitMakeup);
+    }
+
+    return out;
 }
 
 // FUZZ: Fuzz Face — 2-stage CE topology with global feedback
@@ -1851,8 +2090,9 @@ inline void processBlock (State& state,
             emphCoeffs.postLP = detail::onePoleCoeff (723.0f,  sampleRate);
             break;
         case Model::Tape:
-            emphCoeffs.preHP  = detail::onePoleCoeff (28.0f,   sampleRate);
-            emphCoeffs.postLP = detail::onePoleCoeff (12500.0f, sampleRate);
+            emphCoeffs.preHP  = detail::onePoleCoeff (24.0f,   sampleRate);
+            emphCoeffs.preSh  = detail::onePoleCoeff (2400.0f, sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (14500.0f, sampleRate);
             break;
         case Model::Fuzz:
             emphCoeffs.preHP  = detail::onePoleCoeff (14.0f,   sampleRate);  // C1 HPF
@@ -1912,13 +2152,17 @@ inline void processBlock (State& state,
 
     if (model == Model::Tape)
     {
-        const bool tapeActive = driveCurved > 0.001f;
+        const bool tapeActive = driveCurved > 0.001f || modParam < 0.999f;
         const bool driveJump = std::abs (driveCurved - state.lastTapeDrive) > 0.15f;
         if (driveJump || tapeActive != state.tapeWasActive)
         {
             for (int ch = 0; ch < 2; ++ch)
             {
                 state.emphasis[ch].reset();
+                state.tapeComp[ch].reset();
+                state.react[ch].reset();
+                state.mbReact[ch].reset();
+                state.sagEnvelope[ch] = 0.0f;
                 state.dcX[ch] = state.dcY[ch] = 0.0f;
                 for (int sp = 0; sp < kMaxSeries; ++sp)
                 {
@@ -2157,9 +2401,17 @@ inline void processBlock (State& state,
                             sagPre  = 1.0f + sagEnv * react * 0.5f;
                             break;
                         case Model::Tape:
-                            sagPre  = 1.0f + sagEnv * react * 1.0f;
-                            sagPost = 1.0f / (1.0f + sagEnv * react * 2.5f);
+                        {
+                            const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
+                            const TapeCompResult comp = processTapeComp (
+                                x, state.tapeComp[ch], react, effDrive, program, sampleRate);
+                            x = comp.sample;
+                            sagPre = 1.0f;
+                            sagPost = 1.0f;
+                            effDrive = std::min (effDrive * comp.driveLift, 1.0f);
+                            state.sagEnvelope[ch] = comp.amount;
                             break;
+                        }
                         case Model::Fuzz:
                         case Model::Doom:
                         case Model::Destroy:
@@ -2168,6 +2420,13 @@ inline void processBlock (State& state,
                             break;
                         default: break;
                     }
+                }
+                else if (isFirst && model == Model::Tape)
+                {
+                    state.tapeComp[ch].gain = 1.0f;
+                    state.tapeComp[ch].env *= 0.5f;
+                    state.tapeComp[ch].hfEnv *= 0.5f;
+                    state.sagEnvelope[ch] = 0.0f;
                 }
 
                 // Apply pre-sag boost + bias drift (first pass only)
@@ -2277,8 +2536,11 @@ inline void processBlock (State& state,
                 // (was: pitch-tracked sine at f/2, gated by react + Fuzz/Doom/Destroy/Tundra)
                 // To re-enable: restore doSubOctave logic and set needsYin = true for these models
 
-                // ── GIRTH (all passes, with per-pass ADAA) ──
-                x = applyGirth (x, girth, state.girthAdaa[sp][ch]);
+                // ── GIRTH (all passes) ──
+                if (model == Model::Tape)
+                    x = applyTapeGirth (x, girth);
+                else
+                    x = applyGirth (x, girth, state.girthAdaa[sp][ch]);
 
                 // ── Inter-stage filtering (between series passes, always active) ──
                 // Analogous to Miller capacitance + coupling caps between tube stages.

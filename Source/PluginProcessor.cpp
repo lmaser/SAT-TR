@@ -2183,7 +2183,8 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 	}
 
 	// 3. SATURATION (with optional oversampling + series chaining)
-	if (model != SatEngine::Model::Clean && satDrive > 0.001f)
+	if (model != SatEngine::Model::Clean
+	    && (satDrive > 0.001f || (model == SatEngine::Model::Tape && satMod < 0.999f)))
 	{
 #if SAT_DSP_DIAG
 		// Capture pre-saturation peak (L channel)
