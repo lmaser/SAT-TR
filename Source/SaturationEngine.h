@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <atomic>
 #include "SatDspDiag.h"
 
 // ══════════════════════════════════════════════════════════════
@@ -27,16 +28,22 @@ enum class Model : int
 {
     Clean     = 0,   // Bypass — 1:1 pass-through (no saturation)
     Tape      = 1,   // Tape stage — soft magnetic compression + losses
-    Triode    = 2,   // 12AX7-style preamp stage
-    PushPull  = 3,   // Power stage — hybrid EL34/6L6 class AB feel
+    Triode    = 2,   // TUBE — 12AX7 -> EL34/6L6-inspired morph via MOD
+    PushPull  = 3,   // Legacy power stage — retained for compatibility
     Cascade   = 4,   // Cascaded triode stages (1-4, fractional crossfade)
     Diode     = 5,   // Shockley diode clipper — Ge/Si blend
     Tundra    = 6,   // Metal Zone→Modern morph — dual-stage cascaded clipping
     Fuzz      = 7,   // Transistor fuzz — Ge/Si stages with bias starving
     Doom      = 8,   // Multi-stage doom fuzz — Big Muff inspired wall-of-sound
     Destroy   = 9,   // Ring-fuzz — pitch-tracked ring modulation + feedback
-    NumModels = 10
+    Clipper   = 10,  // Broadband/pedal clipper — classic -> TS -> Klon voice
+    NumModels = 11
 };
+
+inline constexpr Model canonicalizeModel (Model model) noexcept
+{
+    return model == Model::PushPull ? Model::Triode : model;
+}
 
 // ──────────────────────────────────────────────────────────────
 //  Constants
@@ -48,6 +55,7 @@ static constexpr float kInvPi      = 0.31830988618379067154f;
 static constexpr float kLn2        = 0.69314718055994530942f;
 static constexpr float kSmoothCoeff = 0.995f;   // ~10ms @ 48kHz
 static constexpr int   kReactBufSize = 8192;
+static constexpr int   kTriodeSagBufSize = 512;
 static constexpr int   kMaxCascade   = 4;
 static constexpr int   kMaxSeries    = 4;
 
@@ -186,6 +194,8 @@ namespace adaa
         }
     };
 
+    using StableTanhADAA = TapeTanhADAA;
+
     // Generic ADAA1 processor for sin(pi*x) wavefolding
     struct SinFoldADAA
     {
@@ -206,6 +216,106 @@ namespace adaa
         }
 
         void reset() noexcept { prev = 0.0f; ad1Prev = 0.0f; }
+    };
+
+    struct ClipperADAA
+    {
+        float prev = 0.0f;
+        float ad1Prev = 0.0f;
+        bool initialised = false;
+
+        static inline float clipPositive (float x, float threshold, float knee) noexcept
+        {
+            const float T = std::max (threshold, 1.0e-4f);
+            const float W = std::max (knee, 1.0e-5f);
+            const float L = std::max (0.0f, T - W);
+            const float H = T + W;
+
+            if (x <= L)
+                return x;
+            if (x >= H)
+                return T;
+
+            const float z = x - L;
+            return x - (z * z) / (4.0f * W);
+        }
+
+        static inline float clipPositiveAD1 (float x, float threshold, float knee) noexcept
+        {
+            const float T = std::max (threshold, 1.0e-4f);
+            const float W = std::max (knee, 1.0e-5f);
+            const float L = std::max (0.0f, T - W);
+            const float H = T + W;
+
+            if (x <= L)
+                return 0.5f * x * x;
+
+            if (x >= H)
+            {
+                const float zH = H - L;
+                const float FH = 0.5f * H * H - (zH * zH * zH) / (12.0f * W);
+                return FH + T * (x - H);
+            }
+
+            const float z = x - L;
+            return 0.5f * x * x - (z * z * z) / (12.0f * W);
+        }
+
+        static inline float clip (float x,
+                                  float thresholdPos, float thresholdNeg,
+                                  float kneePos, float kneeNeg) noexcept
+        {
+            if (x >= 0.0f)
+                return clipPositive (x, thresholdPos, kneePos);
+
+            return -clipPositive (-x, thresholdNeg, kneeNeg);
+        }
+
+        static inline float clipAD1 (float x,
+                                     float thresholdPos, float thresholdNeg,
+                                     float kneePos, float kneeNeg) noexcept
+        {
+            if (x >= 0.0f)
+                return clipPositiveAD1 (x, thresholdPos, kneePos);
+
+            return clipPositiveAD1 (-x, thresholdNeg, kneeNeg);
+        }
+
+        inline float process (float x,
+                              float thresholdPos, float thresholdNeg,
+                              float kneePos, float kneeNeg) noexcept
+        {
+            constexpr float kTol = 1.0e-5f;
+
+            const float direct = clip (x, thresholdPos, thresholdNeg, kneePos, kneeNeg);
+
+            if (! initialised || ! std::isfinite (prev) || ! std::isfinite (ad1Prev))
+            {
+                prev = x;
+                ad1Prev = clipAD1 (x, thresholdPos, thresholdNeg, kneePos, kneeNeg);
+                initialised = true;
+                return direct;
+            }
+
+            const float ad1 = clipAD1 (x, thresholdPos, thresholdNeg, kneePos, kneeNeg);
+            const float dx = x - prev;
+            const float mid = clip (0.5f * (x + prev), thresholdPos, thresholdNeg, kneePos, kneeNeg);
+            float y = (std::abs (dx) < kTol) ? mid : (ad1 - ad1Prev) / dx;
+
+            if (! std::isfinite (y))
+                y = direct;
+
+            prev = x;
+            ad1Prev = ad1;
+            return y;
+        }
+
+        void reset() noexcept
+        {
+            prev = 0.0f;
+            ad1Prev = 0.0f;
+            initialised = false;
+        }
     };
 
     // ──────────────────────────────────────────────────────────────
@@ -390,6 +500,28 @@ struct TapeCompState
     }
 };
 
+struct TriodeReactState
+{
+    float sagBuf[kTriodeSagBufSize] = {};
+    float control = 0.0f;
+    int   gcount = 0;
+    float prevIn = 0.0f;
+    float prevOut = 0.0f;
+    float prevHyst = 0.0f;
+    float lastSag = 0.0f;
+    float lastSupply = 1.0f;
+
+    void reset() noexcept
+    {
+        std::memset (sagBuf, 0, sizeof (sagBuf));
+        control = 0.0f;
+        gcount = 0;
+        prevIn = prevOut = prevHyst = 0.0f;
+        lastSag = 0.0f;
+        lastSupply = 1.0f;
+    }
+};
+
 inline void multibandReactSplit (MultibandReactState& mb, float x,
                                  float coeffSub, float coeffAir,
                                  float& outSub, float& outMid, float& outAir) noexcept
@@ -525,6 +657,12 @@ struct VariationState
     }
 };
 
+inline uint32_t nextVariationSeed() noexcept
+{
+    static std::atomic<uint32_t> counter { 0x5A54'5231u };
+    return counter.fetch_add (0x9E37'79B9u, std::memory_order_relaxed);
+}
+
 // ──────────────────────────────────────────────────────────────
 //  Internal emphasis/de-emphasis EQ state (1st-order filters)
 // ──────────────────────────────────────────────────────────────
@@ -554,22 +692,20 @@ struct SafetyLPF
 // ──────────────────────────────────────────────────────────────
 struct State
 {
-    // REACT energy tracker (per-channel)
-    ReactState react[2];
-
-    // REACT sag envelope follower (per-channel, asymmetric attack/release)
-    float sagEnvelope[2] = {};
-
-    // TAPE REACT/COMP state (per-channel)
-    TapeCompState tapeComp[2];
+    // Per-stage dynamic state. Series should replicate the internal stage
+    // black box, so these states must not be shared across passes.
+    ReactState react[kMaxSeries][2];
+    float sagEnvelope[kMaxSeries][2] = {};
+    TapeCompState tapeComp[kMaxSeries][2];
+    TriodeReactState triodeReact[kMaxSeries][2];
 
     // CASCADE per-stage DC accumulation (coupling cap model)
     // [series pass][stage][channel]
     float cascadeDC[kMaxSeries][kMaxCascade][2] = {};
 
-    // DC blocker (1st-order HPF, post-saturation)
-    float dcX[2] = {};
-    float dcY[2] = {};
+    // Per-stage DC blocker (1st-order HPF, post-saturation)
+    float dcX[kMaxSeries][2] = {};
+    float dcY[kMaxSeries][2] = {};
 
     // TAPE flutter LFO phase
     float flutterPhase = 0.0f;
@@ -584,12 +720,14 @@ struct State
     float powerSag[kMaxSeries][2]    = {};   // supply compression memory
     float tapeFlux[kMaxSeries][2]    = {};   // magnetic remanence proxy
 
-    // Internal emphasis/de-emphasis (per-channel)
-    EmphasisState emphasis[2];
+    // Internal emphasis/de-emphasis (per-stage / per-channel)
+    EmphasisState emphasis[kMaxSeries][2];
 
     // ADAA states — main waveshaper [series pass][channel]
     adaa::TanhADAA wsAdaa[kMaxSeries][2];
+    adaa::StableTanhADAA triodeAdaa[kMaxSeries][2];
     adaa::TapeTanhADAA tapeAdaa[kMaxSeries][2];
+    adaa::ClipperADAA clipperAdaa[kMaxSeries][2];
     // ADAA-2 states — hard clippers (Fuzz/Doom/Destroy) [series pass][channel]
     adaa::TanhADAA2 wsAdaa2[kMaxSeries][2];
     // FUZZ Q2 second ADAA-2 stage [series pass][channel]
@@ -603,9 +741,10 @@ struct State
 
     // VARIATION drift
     VariationState variation;
+    uint32_t variationSeed = 0;
 
-    // Multiband REACT (per-channel)
-    MultibandReactState mbReact[2];
+    // Multiband REACT (per-stage / per-channel)
+    MultibandReactState mbReact[kMaxSeries][2];
 
     // Safety LPF (per-channel, for ×1 mode)
     SafetyLPF safetyLpf[2];
@@ -653,8 +792,9 @@ struct State
     float subOscEnv[2] = {};        // per-channel envelope follower
     float subOscLPF[2] = {};        // per-channel output LPF (~250 Hz)
 
-    // Current series pass index (set by processBlock before waveshapers)
+    // Current series pass / total series count (set by processBlock before waveshapers)
     int currentSeriesPass = 0;
+    int currentSeriesCount = 1;
 
     // Model-switch detection (reset filters/feedback on change to prevent transients)
     Model lastModel = Model::Clean;
@@ -688,21 +828,24 @@ struct State
     {
         for (int ch = 0; ch < 2; ++ch)
         {
-            react[ch].reset();
-            mbReact[ch].reset();
-            sagEnvelope[ch] = 0.0f;
-            tapeComp[ch].reset();
-            dcX[ch] = dcY[ch] = 0.0f;
-            emphasis[ch].reset();
             safetyLpf[ch].reset();
             for (int sp = 0; sp < kMaxSeries; ++sp)
             {
+                react[sp][ch].reset();
+                mbReact[sp][ch].reset();
+                sagEnvelope[sp][ch] = 0.0f;
+                tapeComp[sp][ch].reset();
+                triodeReact[sp][ch].reset();
+                dcX[sp][ch] = dcY[sp][ch] = 0.0f;
+                emphasis[sp][ch].reset();
                 bumpZ1[sp][ch] = bumpZ2[sp][ch] = 0.0f;
                 triodeBlock[sp][ch] = 0.0f;
                 powerSag[sp][ch] = 0.0f;
                 tapeFlux[sp][ch] = 0.0f;
                 wsAdaa[sp][ch].reset();
+                triodeAdaa[sp][ch].reset();
                 tapeAdaa[sp][ch].reset();
+                clipperAdaa[sp][ch].reset();
                 wsAdaa2[sp][ch].reset();
                 fuzzAdaa2Q2[sp][ch].reset();
                 doomAdaa2S2[sp][ch].reset();
@@ -742,6 +885,7 @@ struct State
         subOscEnv[0] = subOscEnv[1] = 0.0f;
         subOscLPF[0] = subOscLPF[1] = 0.0f;
         currentSeriesPass = 0;
+        currentSeriesCount = 1;
         lastModel = Model::Clean;
         variation.reset();
         sDrive = sGirth = sBias = sReact = sMod = sVar = 0.0f;
@@ -757,6 +901,23 @@ struct State
         {
             for (int sp = 0; sp < kMaxSeries; ++sp)
             {
+                fl (sagEnvelope[sp][ch]);
+                fl (dcX[sp][ch]);
+                fl (dcY[sp][ch]);
+                fl (emphasis[sp][ch].preHP);
+                fl (emphasis[sp][ch].preSh);
+                fl (emphasis[sp][ch].postHP);
+                fl (emphasis[sp][ch].postLP);
+                fl (tapeComp[sp][ch].scLP);
+                fl (tapeComp[sp][ch].env);
+                fl (tapeComp[sp][ch].hfEnv);
+                fl (tapeComp[sp][ch].gain);
+                fl (triodeReact[sp][ch].control);
+                fl (triodeReact[sp][ch].prevIn);
+                fl (triodeReact[sp][ch].prevOut);
+                fl (triodeReact[sp][ch].prevHyst);
+                fl (triodeReact[sp][ch].lastSag);
+                fl (triodeReact[sp][ch].lastSupply);
                 for (int f = 0; f < 6; ++f) fl (doomDC[sp][f][ch]);
                 fl (doomFeedback[sp][ch]);
                 fl (fuzzFeedback[sp][ch]);
@@ -778,17 +939,8 @@ struct State
                 fl (powerSag[sp][ch]);
                 fl (tapeFlux[sp][ch]);
             }
-            fl (emphasis[ch].preHP);
-            fl (emphasis[ch].preSh);
-            fl (emphasis[ch].postHP);
-            fl (emphasis[ch].postLP);
-            fl (tapeComp[ch].scLP);
-            fl (tapeComp[ch].env);
-            fl (tapeComp[ch].hfEnv);
-            fl (tapeComp[ch].gain);
             fl (subOscEnv[ch]);
             fl (subOscLPF[ch]);
-            fl (sagEnvelope[ch]);
         }
     }
 };
@@ -829,6 +981,36 @@ namespace detail
     {
         const float s = std::max (softness, 1.0e-6f);
         return 0.5f * (x / std::sqrt (x * x + s * s) + 1.0f);
+    }
+
+    inline float tube2AsymSection (float x, float asymPad, float amount) noexcept
+    {
+        const float pad = std::max (asymPad, 1.0f);
+        float s = clampF (x / pad, -1.25f, 1.25f);
+        float sharpen = -s;
+        if (sharpen > 0.0f)
+            sharpen = 1.0f + std::sqrt (sharpen);
+        else
+            sharpen = 1.0f - std::sqrt (-sharpen);
+
+        s -= s * std::abs (s) * sharpen * amount;
+        return s * pad;
+    }
+
+    inline float airwindowsTubeCurve (float x, int powerFactor) noexcept
+    {
+        const int pf = juce::jlimit (1, 12, powerFactor);
+        x = clampF (x, -1.0f, 1.0f);
+        float factor = x;
+        for (int i = 0; i < pf; ++i)
+            factor *= x;
+
+        if ((pf & 1) == 1 && std::abs (x) > 1.0e-8f)
+            factor = (factor / x) * std::abs (x);
+
+        const float gainScaling = 1.0f / (float) (pf + 1);
+        const float outputScaling = 1.0f + 1.0f / (float) pf;
+        return (x - factor * gainScaling) * outputScaling;
     }
 
     inline float normalizeSmallSignal (float raw, float raw0, float slope0) noexcept
@@ -872,6 +1054,14 @@ struct TapeCompResult
 {
     float sample    = 0.0f;
     float driveLift = 1.0f;
+    float amount    = 0.0f;
+};
+
+struct TriodeReactResult
+{
+    float sample    = 0.0f;
+    float supply    = 1.0f;
+    float biasShift = 0.0f;
     float amount    = 0.0f;
 };
 
@@ -949,6 +1139,109 @@ inline TapeCompResult processTapeComp (float x, TapeCompState& st,
     return r;
 }
 
+inline float getTriodeSagSenseInput (float x) noexcept
+{
+    // Sense the actual signal arriving at the stage. Keep headroom for
+    // already-hot material so sag follows real input energy.
+    return juce::jlimit (-12.0f, 12.0f, x);
+}
+
+inline TriodeReactResult processTriodeReact (float sample, float sense,
+                                             TriodeReactState& st,
+                                             float react,
+                                             float sr) noexcept
+{
+    TriodeReactResult r;
+    r.sample = sample;
+
+    if (react <= 0.0001f)
+        return r;
+
+    // Airwindows-style power sag: short energy memory that directly deforms
+    // the sample before it hits the Tube2-style stage. In this plugin the
+    // SAG control is the depth control, so we have to map it much more
+    // assertively than the fixed-intensity desk context Chris uses.
+    const float depth = detail::clampF (react, 0.0f, 1.0f);
+    const float depth2 = depth * depth;
+    // Pro-style sag controls are usually subtle in the lower half and get
+    // much steeper near the top. Keep 0-30% gentle, but make 100% clearly
+    // more extreme than the old near-linear mapping.
+    const float depthCurve = juce::jlimit (0.0f, 1.5f,
+                                           depth * (0.18f + depth * 1.18f));
+    const float overallscale = sr / 44100.0f;
+    const int offset = juce::jlimit (1, kTriodeSagBufSize - 2,
+                                     (int) std::round (2.42f * overallscale));
+
+    if (st.gcount < 0 || st.gcount >= kTriodeSagBufSize)
+        st.gcount = kTriodeSagBufSize - 1;
+
+    const int idx = st.gcount;
+    int oldIdx = idx + offset;
+    if (oldIdx >= kTriodeSagBufSize) oldIdx -= kTriodeSagBufSize;
+
+    // Current draw must rise faster than linearly with hot input, otherwise
+    // +6 dB or +12 dB material does not feel dramatically more sagged.
+    const float senseMag = std::abs (sense);
+    const float senseNorm = juce::jlimit (0.0f, 4.0f, senseMag);
+    const float currentDraw = senseNorm * (0.55f + 0.30f * std::min (1.0f, senseNorm))
+                            + (senseNorm * senseNorm) * (0.18f + 0.22f * depth);
+
+    const float intensity = 0.0445556f * (0.12f + depthCurve * 1.65f);
+    const float powerSag = 0.0033002237f;
+    const float rawContrib = currentDraw * (intensity - (st.control * powerSag));
+    const float contrib = std::max (0.0f, rawContrib);
+    const float old = st.sagBuf[oldIdx];
+    st.sagBuf[idx] = contrib;
+    st.control += (contrib / (float) offset);
+    st.control -= (old / (float) offset);
+    st.gcount--;
+
+    // Tiny leakage keeps the stage from sticking forever.
+    st.control -= 1.0e-6f * overallscale;
+    if (st.control < 0.0f)
+        st.control = 0.0f;
+
+    // The raw Airwindows control is subtle in its original desk context.
+    // Here we remap it with depth so SAG=100% is genuinely extreme.
+    float control = st.control * (0.45f + depthCurve * 7.50f + depth2 * 4.00f);
+    float clamp = 1.0f;
+    if (control > 1.0f)
+    {
+        clamp -= (control - 1.0f);
+        control = 1.0f;
+    }
+    if (clamp < 0.35f)
+        clamp = 0.35f;
+
+    const float effectiveControl = detail::clampF (control, 0.0f, 1.0f);
+    const float thickness = ((1.0f - effectiveControl) * 2.0f) - 1.0f;
+    const float blend = std::abs (thickness);
+    float bridgerectifier = std::abs (sample);
+    if (bridgerectifier > 1.57079633f)
+        bridgerectifier = 1.57079633f;
+    if (thickness > 0.0f)
+        bridgerectifier = std::sin (bridgerectifier);
+    else
+        bridgerectifier = 1.0f - std::cos (bridgerectifier);
+
+    float sagged = sample >= 0.0f
+                 ? (sample * (1.0f - blend)) + (bridgerectifier * blend)
+                 : (sample * (1.0f - blend)) - (bridgerectifier * blend);
+    if (clamp != 1.0f)
+        sagged *= clamp;
+
+    const float wet = juce::jlimit (0.0f, 1.0f,
+                                    depth * (0.35f + 0.85f * depth));
+    const float supply = juce::jlimit (0.5f, 1.0f, clamp);
+    r.sample = sample + (sagged - sample) * wet;
+    r.amount = effectiveControl * wet;
+    r.supply = supply;
+    r.biasShift = 0.0f;
+    st.lastSag = r.amount;
+    st.lastSupply = supply;
+    return r;
+}
+
 inline float getTapeLevelTrim (float drive, float mod, float girth, float react) noexcept
 {
     const float d = detail::clampF (drive, 0.0f, 1.0f);
@@ -966,14 +1259,30 @@ inline float getTapeLevelTrim (float drive, float mod, float girth, float react)
 
     const float girthAmt = g * g;
     const float girthTrim = 1.0f / (1.0f + girthAmt
-                                           * (0.06f + 0.12f * rabbitSq)
-                                           * (0.85f + 0.15f * d));
+                                           * (0.08f + 0.10f * rabbitSq + 0.03f * m)
+                                           * (0.82f + 0.18f * d));
 
     const float reactTrim = 1.0f / (1.0f + r
-                                           * (0.04f + 0.10f * rabbitSq)
-                                           * (0.55f + 0.45f * d));
+                                           * (0.05f + 0.12f * rabbitSq + 0.015f * m)
+                                           * (0.60f + 0.40f * d));
 
     return driveTrim * girthTrim * reactTrim;
+}
+
+inline float getTriodeLevelTrim (float drive, float mod, int seriesCount) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float tubeMorph = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
+    juce::ignoreUnused (seriesCount);
+
+    // Final post-chain trim only. Do not compensate per-series here:
+    // if the stage itself is calibrated correctly, repeating it N times
+    // should not need a special series loudness hack.
+    const float trim12AX7 = detail::interpDrive5 (d,
+                                                  1.16f, 1.13f, 1.09f, 1.04f, 0.99f);
+    const float trimPower = detail::interpDrive5 (d,
+                                                  1.08f, 1.06f, 1.03f, 1.00f, 0.97f);
+    return juce::jmap (tubeMorph, trim12AX7, trimPower);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1015,6 +1324,32 @@ inline float applyTapeGirth (float shaped, float girth) noexcept
     return juce::jmap (girthCurve, shaped, tapeLike);
 }
 
+inline float applyTriodeGirth (float shaped, float girth) noexcept
+{
+    if (girth < 0.01f) return shaped;
+
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float g2 = g * g;
+    const float density = detail::fastTanh (shaped * (1.0f + g * 0.50f));
+    const float body = shaped + shaped * (1.0f - std::min (1.0f, std::abs (shaped)))
+                                 * (0.035f + g * 0.045f);
+    const float oddDensity = shaped + shaped * std::abs (shaped) * (0.010f + g * 0.028f);
+    const float thick = density * 0.70f + body * 0.18f + oddDensity * 0.12f;
+    const float out = juce::jmap (g2 * 0.60f, shaped, thick);
+    return out * (1.0f - g2 * 0.08f);
+}
+
+inline float applyTriodePreGirth (float x, float girth, float drive) noexcept
+{
+    if (girth < 0.01f) return x;
+
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float g2 = g * g;
+    const float shaped = x + x * std::abs (x) * (0.045f + g * 0.100f + drive * 0.060f);
+    const float pushed = detail::fastTanh (shaped * (1.0f + g * (0.22f + 0.28f * drive)));
+    return juce::jmap (g2 * 0.78f, x, pushed);
+}
+
 // ══════════════════════════════════════════════════════════════
 //  Internal Emphasis / De-emphasis
 // ══════════════════════════════════════════════════════════════
@@ -1025,9 +1360,25 @@ struct EmphCoeffs {
 inline float preEmphasize (float x, EmphasisState& st, Model model,
                            float drive, float mod, const EmphCoeffs& ec) noexcept
 {
+    model = canonicalizeModel (model);
     switch (model)
     {
         case Model::Triode:
+        {
+            st.preHP += (x - st.preHP) * ec.preHP;
+            float hp = x - st.preHP;
+            st.preSh += (hp - st.preSh) * ec.preSh;
+            const float edge = hp - st.preSh;
+            const float tubeMorph = detail::smoothStep01 (mod);
+            const float edgeMix12AX7 = 0.005f + drive * 0.015f;
+            const float edgeMixPower = 0.0015f + drive * 0.0045f;
+            const float edgeMix = juce::jmap (tubeMorph, edgeMix12AX7, edgeMixPower);
+            const float body12AX7 = 1.0f + drive * 0.006f;
+            const float bodyPower = 1.004f + drive * 0.020f;
+            const float body = juce::jmap (tubeMorph, body12AX7, bodyPower);
+            const float bloom = st.preSh * tubeMorph * (0.004f + drive * 0.010f);
+            return hp * body + edge * edgeMix + bloom;
+        }
         case Model::Cascade:
         {
             st.preHP += (x - st.preHP) * ec.preHP;
@@ -1042,6 +1393,29 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
         {
             st.preHP += (x - st.preHP) * ec.preHP;
             return x - st.preHP;
+        }
+        case Model::Clipper:
+        {
+            st.preHP += (x - st.preHP) * ec.preHP;
+            const float hp = x - st.preHP;
+            st.preSh += (hp - st.preSh) * ec.preSh;
+            const float edge = hp - st.preSh;
+            const float voice = detail::clampF (mod, 0.0f, 1.0f);
+
+            const float tsEdge = 0.050f + drive * 0.080f;
+            const float ts = hp + edge * tsEdge;
+
+            if (voice <= 0.5f)
+            {
+                const float t = detail::smoothStep01 (voice * 2.0f);
+                return juce::jmap (t, x, ts);
+            }
+
+            const float u = detail::smoothStep01 ((voice - 0.5f) * 2.0f);
+            const float lowRetain = 0.28f + drive * 0.12f;
+            const float klon = juce::jmap (lowRetain, x, hp)
+                             + edge * (0.012f + drive * 0.035f);
+            return juce::jmap (u, ts, klon);
         }
         case Model::Tape:
         {
@@ -1089,16 +1463,24 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
 inline float deEmphasize (float y, EmphasisState& st, Model model,
                           float drive, float mod, const EmphCoeffs& ec) noexcept
 {
+    model = canonicalizeModel (model);
     switch (model)
     {
         case Model::Triode:
+        {
+            st.postLP += (y - st.postLP) * ec.postLP;
+            const float tubeMorph = detail::smoothStep01 (mod);
+            const float lpMix12AX7 = 0.025f + drive * 0.085f;
+            const float lpMixPower = 0.065f + drive * 0.140f;
+            const float lpMix = juce::jmap (tubeMorph, lpMix12AX7, lpMixPower);
+            const float softened = y + (st.postLP - y) * lpMix;
+            const float bright = y - st.postLP;
+            const float brightKeep = (1.0f - tubeMorph) * (0.015f + drive * 0.025f);
+            const float powerDamp = tubeMorph * (0.010f + drive * 0.025f);
+            return softened + bright * (brightKeep - powerDamp);
+        }
         case Model::Cascade:
         {
-            // LPF at 3500Hz: undo the pre-emphasis treble boost.
-            // NO HPF here — previous postLP-postHP bandpass caused 40-65%
-            // overshoot at guitar frequencies due to slow postHP (70Hz)
-            // accumulating DC from asymmetry, then releasing at zero crossings.
-            // The 5Hz DC blocker downstream handles any DC from asymmetry.
             st.postLP += (y - st.postLP) * ec.postLP;
             const float lpMix = 0.05f + drive * (0.18f + mod * 0.10f);
             return y + (st.postLP - y) * lpMix;
@@ -1113,6 +1495,24 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
         {
             st.postLP += (y - st.postLP) * ec.postLP;
             return st.postLP;
+        }
+        case Model::Clipper:
+        {
+            st.postLP += (y - st.postLP) * ec.postLP;
+            const float voice = detail::clampF (mod, 0.0f, 1.0f);
+            const float ts = y + (st.postLP - y) * (0.22f + drive * 0.36f);
+
+            if (voice <= 0.5f)
+            {
+                const float t = detail::smoothStep01 (voice * 2.0f);
+                return juce::jmap (t, y, ts);
+            }
+
+            const float u = detail::smoothStep01 ((voice - 0.5f) * 2.0f);
+            const float klonBase = y + (st.postLP - y) * (0.08f + drive * 0.16f);
+            const float bright = y - st.postLP;
+            const float klon = klonBase + bright * (0.010f + (1.0f - drive) * 0.015f);
+            return juce::jmap (u, ts, klon);
         }
         case Model::Tape:
         {
@@ -1166,48 +1566,177 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
 //  Per-sample waveshaper functions (new models)
 // ══════════════════════════════════════════════════════════════
 
-// TRIODE: 12AX7-style preamp stage with normalized small-signal behavior
-inline float processTriode (float x, float drive, float bias, float mod,
+// TUBE: 12AX7 -> EL34/6L6-inspired stage morph with Tube2-style core
+inline float processTriode (float x, float drive, float girth, float bias, float mod,
+                            float react, bool rawMode,
                             State& state, int ch, float sr,
-                            adaa::TanhADAA& adaaState) noexcept
+                            adaa::StableTanhADAA& adaaState) noexcept
 {
     const int sp = state.currentSeriesPass;
-    const float gain = 1.0f + drive * (3.2f + mod * 1.3f);
-    const float biasShift = bias * 0.055f + drive * (0.010f + mod * 0.015f);
-    const float k = 0.95f + drive * (2.2f + mod * 1.1f);
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float m = detail::clampF (mod,   0.0f, 1.0f);
+    const float b = detail::clampF (bias, -1.0f, 1.0f);
+    const float tubeMorph = detail::smoothStep01 (m);
+    const float tubeMorph2 = tubeMorph * tubeMorph;
+    juce::ignoreUnused (g);
+    auto& triodeSag = state.triodeReact[sp][ch];
+    float xStage = x;
+    float bEff = b;
 
-    // Positive grid conduction charges the coupling network and gently moves
-    // the operating point during hard hits, but it should stay invisible at
-    // low drive and in the sustain tail.
-    const float conduction = std::max (0.0f, x * gain + biasShift - (0.32f - drive * 0.08f));
-    const float attack = detail::onePoleCoeff (250.0f + drive * 350.0f, sr);
-    const float release = detail::onePoleCoeff (2.5f + drive * 4.0f, sr);
-    const float targetBlock = conduction * (0.10f + drive * 0.18f);
-    if (targetBlock > state.triodeBlock[sp][ch])
-        state.triodeBlock[sp][ch] += (targetBlock - state.triodeBlock[sp][ch]) * attack;
+    if (!rawMode && react > 0.0001f)
+    {
+        const float sagSense = getTriodeSagSenseInput (xStage);
+        const TriodeReactResult triodeComp = processTriodeReact (
+            xStage, sagSense, triodeSag, react, sr);
+        xStage = triodeComp.sample;
+        state.sagEnvelope[sp][ch] = triodeComp.amount;
+    }
     else
-        state.triodeBlock[sp][ch] += (targetBlock - state.triodeBlock[sp][ch]) * release;
+    {
+        triodeSag.control *= 0.5f;
+        triodeSag.lastSag *= 0.5f;
+        triodeSag.lastSupply += (1.0f - triodeSag.lastSupply) * 0.25f;
+        state.sagEnvelope[sp][ch] = 0.0f;
+    }
 
-    const float blockBias = state.triodeBlock[sp][ch];
-    const float opBias = biasShift - blockBias;
-    const float s = x * gain + opBias;
+    // Tube2 semantics are much closer to an input pad plus a shape control
+    // than to an internal preamp boost. Using drive as a straight gain boost
+    // overheats the repeated series stages and buries sag, because later
+    // passes hit the same hard ceiling even at drive=0.
+    const float inputPad12AX7 = detail::interpDrive5 (d,
+                                                      0.42f, 0.52f, 0.66f, 0.82f, 1.00f);
+    const float inputPadPower = detail::interpDrive5 (d,
+                                                      0.48f, 0.58f, 0.72f, 0.90f, 1.08f);
+    const float inputPad = juce::jmap (tubeMorph, inputPad12AX7, inputPadPower);
+    xStage *= inputPad;
+    const float sagAmt = triodeSag.lastSag;
+    const float sagCore = detail::smoothStep01 (juce::jlimit (0.0f, 1.0f, sagAmt));
 
-    const float raw = adaaState.process (s, k);
-    const float raw0 = std::tanh (k * opBias);
-    const float raw0t = std::tanh (k * opBias);
-    const float slope0 = gain * k * detail::sech2FromTanh (raw0t);
-    float out = detail::normalizeSmallSignal (raw, raw0, slope0);
+    // Tube2-style stage inside the black box. MOD/GIRTH stay mostly outside
+    // for now so we can match the core behavior first.
+    const float overallscale = sr / 44100.0f;
+    float s = xStage;
 
-    // Plate load asymmetry / even harmonics, constructed so the derivative at
-    // zero stays unchanged.
-    const float driveDelta = x * gain;
-    const float even = driveDelta * std::abs (driveDelta);
-    out += even * (0.020f + drive * 0.060f) * (0.4f + 0.6f * (bias * 0.5f + 0.5f));
+    if (!rawMode && overallscale > 1.9f)
+    {
+        const float stored = s;
+        s = 0.5f * (s + triodeSag.prevIn);
+        triodeSag.prevIn = stored;
+    }
+    else
+    {
+        triodeSag.prevIn = s;
+    }
 
-    return out;
+    // Supply starvation should alter the actual stage conditions, not only a
+    // pre-distortion input waveform. If we only deform the input and then hit
+    // the same hard ceiling, the effect becomes inaudible. Sag therefore also
+    // tightens headroom and shifts the operating point of the Tube2-style core.
+    const float biasPos = std::max (0.0f, bEff);
+    const float biasNeg = std::max (0.0f, -bEff);
+    const float stageBias12AX7 = bEff * 0.050f - sagCore * 0.095f;
+    const float stageBiasPower = bEff * 0.028f - sagCore * 0.072f;
+    const float stageBias = juce::jmap (tubeMorph, stageBias12AX7, stageBiasPower);
+
+    const float headroom12AX7 = juce::jlimit (0.54f, 1.0f,
+                                              1.0f - sagCore * 0.40f
+                                                    - biasPos * 0.05f + biasNeg * 0.02f);
+    const float headroomPower = juce::jlimit (0.58f, 1.08f,
+                                              1.04f - sagCore * 0.28f
+                                                     - biasPos * 0.08f + biasNeg * 0.05f);
+    const float stageHeadroom = juce::jmap (tubeMorph, headroom12AX7, headroomPower);
+    s += stageBias;
+    s = detail::clampF (s, -stageHeadroom, stageHeadroom);
+    s /= stageHeadroom;
+
+    const float iterations12AX7 = 1.0f - d;
+    const float iterationsPower = juce::jlimit (0.0f, 1.0f, 1.0f - d * 0.82f);
+    const float iterations = juce::jmap (tubeMorph, iterations12AX7, iterationsPower);
+    const int powerFactorBase = juce::jlimit (1, 10, 1 + (int) std::floor (9.0f * iterations));
+    const int sagPowerDrop = juce::jlimit (0, 4, (int) std::floor (sagCore * juce::jmap (tubeMorph, 4.0f, 2.5f) + 0.35f));
+    const int powerFactor = juce::jlimit (1, 10, powerFactorBase - sagPowerDrop);
+    const float asymPad = (float) powerFactor;
+    const float gainScaling = 1.0f / (float) (powerFactor + 1);
+
+    // First Tube2 asymmetry section.
+    const float asymAmt12AX7 = 0.25f + sagCore * 0.36f + biasPos * 0.08f;
+    const float asymAmtPower = 0.14f + sagCore * 0.20f + biasNeg * 0.06f;
+    const float asymAmt = juce::jmap (tubeMorph, asymAmt12AX7, asymAmtPower);
+    s = detail::tube2AsymSection (s, asymPad, asymAmt);
+    // Original Tube curve.
+    s = detail::airwindowsTubeCurve (s, powerFactor);
+
+    if (tubeMorph > 0.001f)
+    {
+        const float hotness = detail::clampF (0.55f + bEff * 0.35f, 0.0f, 1.0f);
+        const float idleBias = 0.010f + hotness * (0.012f + d * 0.010f);
+        const float crossover = 0.010f + (1.0f - hotness) * (0.012f + d * 0.008f);
+        const float powerGain = 1.0f + d * (0.70f + tubeMorph * 0.55f);
+
+        const float posV = s * powerGain + idleBias;
+        const float negV = -s * powerGain + idleBias;
+        const float posC = detail::smoothRect (posV, crossover);
+        const float negC = detail::smoothRect (negV, crossover);
+
+        float powerShape = posC - negC;
+        powerShape += s * std::abs (s) * (0.010f + tubeMorph * 0.035f);
+        powerShape = detail::clampF (powerShape * (0.92f + hotness * 0.08f), -1.20f, 1.20f);
+
+        const float satDrive = 1.0f + tubeMorph * (0.10f + 0.18f * d);
+        const float satK = 0.85f + d * (0.55f + 0.25f * tubeMorph);
+        const float satRaw = adaaState.process (powerShape * satDrive, satK);
+        const float satNorm = detail::normalizeSmallSignal (satRaw, 0.0f, satK * satDrive);
+        const float powerMix = tubeMorph * (0.35f + 0.35f * d);
+        s = juce::jmap (powerMix, s, satNorm);
+    }
+
+    if (!rawMode && overallscale > 1.9f)
+    {
+        const float stored = s;
+        s = 0.5f * (s + triodeSag.prevOut);
+        triodeSag.prevOut = stored;
+    }
+    else
+    {
+        triodeSag.prevOut = s;
+    }
+
+    // Tube2 hysteresis / spiky fuzz layer.
+    float slew = 1.0f;
+    if (!rawMode)
+    {
+        slew = triodeSag.prevHyst - s;
+        if (overallscale > 1.9f)
+        {
+            const float stored = s;
+            s = 0.5f * (s + triodeSag.prevHyst);
+            triodeSag.prevHyst = stored;
+        }
+        else
+        {
+            triodeSag.prevHyst = s;
+        }
+
+        if (slew > 0.0f)
+            slew = 1.0f + (std::sqrt (slew) * 0.5f);
+        else
+            slew = 1.0f - (std::sqrt (-slew) * 0.5f);
+
+        const float hystAmt = juce::jmap (tubeMorph, 1.0f + sagCore * 1.80f,
+                                                     0.65f + sagCore * 0.95f);
+        s -= s * std::abs (s) * slew * gainScaling * hystAmt;
+    }
+
+    const float ceiling = juce::jmap (tubeMorph2, 0.52f, 0.62f);
+    s = detail::clampF (s, -ceiling, ceiling);
+    s *= 1.0f / ceiling;
+
+    state.triodeBlock[sp][ch] = 0.0f;
+    return s;
 }
 
-// POWER: Hybrid 6L6/EL34 class-AB output stage
+// POWER: Legacy hybrid 6L6/EL34 class-AB output stage
 inline float processPushPull (float x, float drive, float bias, float mod,
                               State& state, int ch, float sr,
                               adaa::TanhADAA& adaaState) noexcept
@@ -1319,13 +1848,68 @@ inline float processDiode (float x, float drive, float bias, float mod,
     return shaped;
 }
 
+// CLIPPER: threshold-driven clipper with continuous soft->hard knee control
+// and a voice morph from broadband classic -> TS-style -> Klon-style.
+inline float processClipper (float x, float drive, float girth, float bias, float mod,
+                             adaa::ClipperADAA& adaaState) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float k = detail::clampF (girth, 0.0f, 1.0f);
+    const float b = detail::clampF (bias, -1.0f, 1.0f);
+    const float m = detail::clampF (mod, 0.0f, 1.0f);
+
+    // DRIVE sets the clipping threshold, but we keep a fixed clip ceiling.
+    // This makes the control behave like a real threshold while preserving a
+    // practical output range similar to pro clippers and pedal stages.
+    const float threshold = detail::interpDrive5 (d,
+                                                  1.00f, 0.86f, 0.68f, 0.46f, 0.24f);
+
+    float voiceScale = 1.0f;
+    float cleanBlend = 0.0f;
+    if (m <= 0.5f)
+    {
+        const float t = detail::smoothStep01 (m * 2.0f);
+        voiceScale = juce::jmap (t, 1.00f, 1.08f); // TS gets slightly tighter
+    }
+    else
+    {
+        const float u = detail::smoothStep01 ((m - 0.5f) * 2.0f);
+        voiceScale = juce::jmap (u, 1.08f, 0.92f); // Klon opens back up
+        cleanBlend = 0.18f * u;
+    }
+
+    const float clipIn = x * (voiceScale / std::max (threshold, 0.05f));
+
+    // BIAS becomes symmetry / mismatch: shifts positive and negative clip
+    // thresholds independently, but keep their mean around unity.
+    const float thresholdPos = detail::clampF (1.0f + b * 0.45f, 0.45f, 1.55f);
+    const float thresholdNeg = detail::clampF (1.0f - b * 0.45f, 0.45f, 1.55f);
+    const float kneeSoft = 0.01f + (1.0f - k) * 0.98f;
+    const float kneePos = std::max (1.0e-4f, thresholdPos * kneeSoft);
+    const float kneeNeg = std::max (1.0e-4f, thresholdNeg * kneeSoft);
+
+    float clipped = adaaState.process (clipIn, thresholdPos, thresholdNeg,
+                                       kneePos, kneeNeg);
+
+    // Preserve average ceiling when asymmetry moves thresholds apart.
+    clipped *= 2.0f / (thresholdPos + thresholdNeg);
+
+    if (cleanBlend > 0.0001f)
+    {
+        const float clean = detail::clampF (x * (0.90f + 0.10f * voiceScale), -1.25f, 1.25f);
+        clipped = juce::jmap (cleanBlend, clipped, clean);
+    }
+
+    return clipped * juce::jmap (d, 0.98f, 0.92f);
+}
+
 // TAPE: ADAA tape stage with two fitted families:
 //   MOD=0   -> Rabbit-style grittier tape reference
 //   MOD=1   -> current smoother tape reference
 // Interpolate parameters, not outputs, so the mode remains a single cohesive
 // nonlinear path instead of behaving like a parallel blend.
 inline float processTape (float x, float drive, float bias, float mod,
-                          State& state, int ch, float sr,
+                          bool rawMode, State& state, int ch, float sr,
                           adaa::TapeTanhADAA& adaaState,
                           bool advanceOsc = true) noexcept
 {
@@ -1426,7 +2010,7 @@ inline float processTape (float x, float drive, float bias, float mod,
         raw *= 1.0f - overBias * (0.02f + d * 0.03f);
     }
 
-    if (rabbitMod > 0.0001f)
+    if (!rawMode && rabbitMod > 0.0001f)
     {
         // Rabbit's drive curve is better described by a fitted odd-polynomial
         // family than by the manual post-core boosts we were using before.
@@ -1857,15 +2441,17 @@ inline float processTundra (float x, float drive, float bias, float mod,
 // ══════════════════════════════════════════════════════════════
 inline float applyDriveCurve (float driveParam, Model model) noexcept
 {
+    model = canonicalizeModel (model);
     // Per-model exponent: gentle models use lower exponent, aggressive
     // cascaded models use higher exponent to spread usable range.
     float exp;
     switch (model)
     {
-        case Model::Triode:     exp = 2.0f; break;  // make low-drive range cleaner and wider
+        case Model::Triode:     exp = 1.85f; break; // TUBE should wake up slightly earlier than legacy power/cascade
         case Model::PushPull:   exp = 2.0f; break;  // power stage should stay cleaner early on
         case Model::Cascade:    exp = 2.0f; break;  // multi-stage, gain compounds
         case Model::Diode:      exp = 1.8f; break;  // single stage, high gain (×40)
+        case Model::Clipper:    exp = 1.0f; break;  // threshold should track the UI directly
         case Model::Tape:       exp = 1.0f; break;  // Tape fitting is done directly in UI-drive space
         case Model::Fuzz:       exp = 2.5f; break;  // feedback controls gain range naturally
         case Model::Doom:       exp = 3.0f; break;  // 2 cascaded BMP clipping stages
@@ -1885,13 +2471,18 @@ inline float applyDriveCurve (float driveParam, Model model) noexcept
 // inside each processFoo() function.
 inline float getAutoGain (Model model, float drive) noexcept
 {
+    model = canonicalizeModel (model);
     float peakOut = 1.0f;
     switch (model)
     {
         case Model::Triode:
         {
-            const float peak = 1.0f + drive * 0.28f;
-            peakOut = 1.0f + (peak - 1.0f) * detail::clampF (drive * 2.5f, 0.0f, 1.0f);
+            peakOut = 1.0f;
+            break;
+        }
+        case Model::Clipper:
+        {
+            peakOut = 1.0f;
             break;
         }
         case Model::PushPull:
@@ -2011,6 +2602,8 @@ inline void processBlock (State& state,
                           bool  rawMode = false,
                           SatDiag::Collector* diagCollector = nullptr) noexcept
 {
+    model = canonicalizeModel (model);
+
     // CLEAN model: 1:1 pass-through — no saturation processing at all
     if (model == Model::Clean)
         return;
@@ -2020,12 +2613,19 @@ inline void processBlock (State& state,
     {
         for (int ch = 0; ch < 2; ++ch)
         {
-            state.emphasis[ch].reset();
-            state.dcX[ch] = state.dcY[ch] = 0.0f;
             for (int sp = 0; sp < kMaxSeries; ++sp)
             {
+                state.react[sp][ch].reset();
+                state.mbReact[sp][ch].reset();
+                state.sagEnvelope[sp][ch] = 0.0f;
+                state.tapeComp[sp][ch].reset();
+                state.triodeReact[sp][ch].reset();
+                state.emphasis[sp][ch].reset();
+                state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
                 state.wsAdaa[sp][ch].reset();
+                state.triodeAdaa[sp][ch].reset();
                 state.tapeAdaa[sp][ch].reset();
+                state.clipperAdaa[sp][ch].reset();
                 state.wsAdaa2[sp][ch].reset();
                 state.fuzzAdaa2Q2[sp][ch].reset();
                 state.doomAdaa2S2[sp][ch].reset();
@@ -2071,6 +2671,7 @@ inline void processBlock (State& state,
         case Model::PushPull: reactBaseWindow = 4096; break;
         case Model::Cascade:  reactBaseWindow = 512;  break;
         case Model::Diode:    reactBaseWindow = 4096; break;
+        case Model::Clipper:  reactBaseWindow = 2048; break;
         case Model::Tape:     reactBaseWindow = 2048; break;
         case Model::Fuzz:     reactBaseWindow = 4096; break;
         case Model::Doom:     reactBaseWindow = 4096; break;
@@ -2079,30 +2680,16 @@ inline void processBlock (State& state,
         default: break;
     }
 
-    // Inter-stage LPF: model-dependent Miller-cap roll-off between series passes
-    float interStageFreq = 6000.0f;
-    switch (model)
-    {
-        case Model::Triode:   interStageFreq = 6500.0f; break;
-        case Model::PushPull: interStageFreq = 7500.0f; break;
-        case Model::Cascade:  interStageFreq = 5000.0f; break;
-        case Model::Diode:    interStageFreq = 5000.0f; break;
-        case Model::Tape:     interStageFreq = 9000.0f; break;
-        case Model::Fuzz:     interStageFreq = 6000.0f; break;
-        case Model::Doom:     interStageFreq = 4000.0f; break;
-        case Model::Destroy:  interStageFreq = 10000.0f; break;
-        case Model::Tundra:   interStageFreq = 5000.0f; break;
-        default: break;
-    }
-    const float interStageCoeff = detail::onePoleCoeff (interStageFreq, sampleRate);
-    // Inter-stage DC blocker (coupling cap HPF, same as output DC blocker)
-    const float interStageDCR = 1.0f - (kTwoPi * 30.0f / sampleRate);
-
     // Precomputed emphasis/de-emphasis coefficients (hoisted from per-sample)
     EmphCoeffs emphCoeffs;
     switch (model)
     {
         case Model::Triode:
+            emphCoeffs.preHP  = detail::onePoleCoeff (20.0f,   sampleRate);
+            emphCoeffs.preSh  = detail::onePoleCoeff (3800.0f, sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (9500.0f, sampleRate);
+            emphCoeffs.postHP = detail::onePoleCoeff (30.0f,   sampleRate);
+            break;
         case Model::Cascade:
             emphCoeffs.preHP  = detail::onePoleCoeff (22.0f,   sampleRate);
             emphCoeffs.preSh  = detail::onePoleCoeff (1600.0f, sampleRate);
@@ -2115,6 +2702,11 @@ inline void processBlock (State& state,
         case Model::Diode:
             emphCoeffs.preHP  = detail::onePoleCoeff (720.0f,  sampleRate);
             emphCoeffs.postLP = detail::onePoleCoeff (723.0f,  sampleRate);
+            break;
+        case Model::Clipper:
+            emphCoeffs.preHP  = detail::onePoleCoeff (720.0f,  sampleRate);
+            emphCoeffs.preSh  = detail::onePoleCoeff (1800.0f, sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (2200.0f, sampleRate);
             break;
         case Model::Tape:
             emphCoeffs.preHP  = detail::onePoleCoeff (24.0f,   sampleRate);
@@ -2185,15 +2777,18 @@ inline void processBlock (State& state,
         {
             for (int ch = 0; ch < 2; ++ch)
             {
-                state.emphasis[ch].reset();
-                state.tapeComp[ch].reset();
-                state.react[ch].reset();
-                state.mbReact[ch].reset();
-                state.sagEnvelope[ch] = 0.0f;
-                state.dcX[ch] = state.dcY[ch] = 0.0f;
                 for (int sp = 0; sp < kMaxSeries; ++sp)
                 {
+                    state.react[sp][ch].reset();
+                    state.mbReact[sp][ch].reset();
+                    state.sagEnvelope[sp][ch] = 0.0f;
+                    state.emphasis[sp][ch].reset();
+                    state.tapeComp[sp][ch].reset();
+                    state.triodeReact[sp][ch].reset();
+                    state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
+                    state.triodeAdaa[sp][ch].reset();
                     state.tapeAdaa[sp][ch].reset();
+                    state.clipperAdaa[sp][ch].reset();
                     state.interStageDCx[sp][ch] = 0.0f;
                     state.interStageDCy[sp][ch] = 0.0f;
                     state.interStageLPF[sp][ch] = 0.0f;
@@ -2229,6 +2824,38 @@ inline void processBlock (State& state,
     // (sub-osc and ring mod are currently disabled for testing)
     const bool needsYin = false;  // disabled: sub-osc + ring mod removed for testing
 
+    state.currentSeriesCount = juce::jlimit (1, kMaxSeries, seriesCount);
+    const bool rawStripFilters = rawMode && (model == Model::Tape || model == Model::Triode || model == Model::Clipper);
+
+    if (rawMode)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+            state.safetyLpf[ch].reset();
+
+        for (int sp = 0; sp < state.currentSeriesCount; ++sp)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                state.emphasis[sp][ch].reset();
+                state.dcX[sp][ch] = 0.0f;
+                state.dcY[sp][ch] = 0.0f;
+                state.sagEnvelope[sp][ch] = 0.0f;
+
+                if (model == Model::Tape)
+                {
+                    state.tapeComp[sp][ch].reset();
+                    state.tapeFlux[sp][ch] = 0.0f;
+                }
+
+                if (model == Model::Clipper)
+                    state.tapeComp[sp][ch].reset();
+
+                if (model == Model::Triode)
+                    state.triodeReact[sp][ch].reset();
+            }
+        }
+    }
+
     for (int i = 0; i < numSamples; ++i)
     {
         // ── Parameter smoothing (once per actual sample, NOT per series pass) ──
@@ -2253,9 +2880,14 @@ inline void processBlock (State& state,
         float driveMod = 1.0f, biasMod = 0.0f, shapeMod = 0.0f, asymMod = 0.0f;
         if (var > 0.001f)
         {
-            // Init static tolerances once (deterministic seed → same "unit" every session)
+            // Init static tolerances once per loader instance.
             if (! state.variation.tolerancesReady)
-                state.variation.initTolerances (0x5A54'5231u);  // fixed seed = one specific amp unit
+            {
+                if (state.variationSeed == 0)
+                    state.variationSeed = nextVariationSeed();
+
+                state.variation.initTolerances (state.variationSeed);
+            }
 
             // Very slow thermal drift: 0.03-0.15 Hz (one full cycle per 7-33 seconds)
             const float rate = 0.03f + var * 0.12f;
@@ -2271,7 +2903,12 @@ inline void processBlock (State& state,
             asymMod  =        state.variation.asymDrift.output  * 0.025f; // ±2.5% L/R (matched pair mismatch)
         }
 
-        // ── Per-sample series passes (inner loop — proper cascading) ──
+        // ── Per-sample series passes ──
+        // Series replicates the model's internal black-box stage N times.
+        // Loader-level flow (ENV/FILTER/DELAY/etc.) stays outside SatEngine,
+        // and there is no generic interstage colouring here. If a future
+        // model needs explicit coupling between stages, that coupling should
+        // live inside that model's own processFoo() implementation.
         for (int sp = 0; sp < seriesCount; ++sp)
         {
             state.currentSeriesPass = sp;
@@ -2282,9 +2919,17 @@ inline void processBlock (State& state,
             {
                 float& sample = (ch == 0) ? left[i] : right[i];
                 float x = sample;
+                auto& stageReact = state.react[sp][ch];
+                auto& stageMbReact = state.mbReact[sp][ch];
+                auto& stageSagEnvelope = state.sagEnvelope[sp][ch];
+                auto& stageTapeComp = state.tapeComp[sp][ch];
+                auto& stageTriodeReact = state.triodeReact[sp][ch];
+                auto& stageEmphasis = state.emphasis[sp][ch];
+                auto& stageDcX = state.dcX[sp][ch];
+                auto& stageDcY = state.dcY[sp][ch];
 
                 // ── Safety LPF (first pass only, ×1 mode) ──
-                if (isSafetyLpfOn && isFirst)
+                if (isSafetyLpfOn && isFirst && !rawMode)
                     x = processSafetyLPF (state.safetyLpf[ch], x, safetyCoeffs);
 
                 // ── YIN pitch tracker on CLEAN input (ch0, first pass only) ──
@@ -2377,11 +3022,11 @@ inline void processBlock (State& state,
                 float effBias  = bias  + biasMod + (ch == 0 ? asymMod : -asymMod);
                 float effMod   = detail::clampF (mod + shapeMod, 0.0f, 1.0f);
 
-                // ── INTERNAL PRE-EMPHASIS (first pass only, unless rawMode) ──
-                if (isFirst && !rawMode)
-                    x = preEmphasize (x, state.emphasis[ch], model, effDrive, effMod, emphCoeffs);
+                // ── INTERNAL PRE-EMPHASIS (per series pass, unless rawMode) ──
+                if (!rawMode)
+                    x = preEmphasize (x, stageEmphasis, model, effDrive, effMod, emphCoeffs);
 
-                // ── REACT: energy tracking + per-model processing (first pass only) ──
+                // ── REACT: per-stage energy tracking + model processing ──
                 float sagPre  = 1.0f;
                 float sagPost = 1.0f;
                 float sagBias = 0.0f;
@@ -2389,31 +3034,31 @@ inline void processBlock (State& state,
                 MultibandSagResult mbSag;
                 bool useMbSag = false;
 
-                if (isFirst && react > 0.001f)
+                if (react > 0.001f && model != Model::Triode
+                    && !(rawStripFilters && (model == Model::Tape || model == Model::Clipper)))
                 {
                     const int window = std::min (
                         (int) ((float) reactBaseWindow * (1.0f + react * 3.0f) * sampleRate / 44100.0f),
                         kReactBufSize - 1);
 
-                    reactTrackEnergy (state.react[ch], x, window);
-                    const float depletion = reactGetDepletion (state.react[ch], window);
+                    reactTrackEnergy (stageReact, x, window);
+                    const float depletion = reactGetDepletion (stageReact, window);
 
-                    if (depletion > state.sagEnvelope[ch])
-                        state.sagEnvelope[ch] += (depletion - state.sagEnvelope[ch]) * reactAttCoeff;
+                    if (depletion > stageSagEnvelope)
+                        stageSagEnvelope += (depletion - stageSagEnvelope) * reactAttCoeff;
                     else
-                        state.sagEnvelope[ch] += (depletion - state.sagEnvelope[ch]) * reactRelCoeff;
+                        stageSagEnvelope += (depletion - stageSagEnvelope) * reactRelCoeff;
 
-                    const float sagEnv = state.sagEnvelope[ch];
+                    const float sagEnv = stageSagEnvelope;
 
                     switch (model)
                     {
-                        case Model::Triode:
                         case Model::PushPull:
                         case Model::Cascade:
                         {
                             // Multiband REACT: frequency-dependent sag (bass sags more)
                             mbSag = multibandReactProcess (
-                                state.mbReact[ch], x, mbSubCoeff, mbAirCoeff,
+                                stageMbReact, x, mbSubCoeff, mbAirCoeff,
                                 window, react, reactAttCoeff, reactRelCoeff);
                             useMbSag = true;
 
@@ -2431,12 +3076,23 @@ inline void processBlock (State& state,
                         {
                             const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
                             const TapeCompResult comp = processTapeComp (
-                                x, state.tapeComp[ch], react, effDrive, program, sampleRate);
+                                x, stageTapeComp, react, effDrive, program, sampleRate);
                             x = comp.sample;
                             sagPre = 1.0f;
                             sagPost = 1.0f;
                             effDrive = std::min (effDrive * comp.driveLift, 1.0f);
-                            state.sagEnvelope[ch] = comp.amount;
+                            stageSagEnvelope = comp.amount;
+                            break;
+                        }
+                        case Model::Clipper:
+                        {
+                            const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
+                            const TapeCompResult comp = processTapeComp (
+                                x, stageTapeComp, react, effDrive, program, sampleRate);
+                            x = comp.sample;
+                            sagPre = 1.0f;
+                            sagPost = 1.0f;
+                            stageSagEnvelope = comp.amount;
                             break;
                         }
                         case Model::Fuzz:
@@ -2448,22 +3104,35 @@ inline void processBlock (State& state,
                         default: break;
                     }
                 }
-                else if (isFirst && model == Model::Tape)
+                else if (model == Model::Tape)
                 {
-                    state.tapeComp[ch].gain = 1.0f;
-                    state.tapeComp[ch].env *= 0.5f;
-                    state.tapeComp[ch].hfEnv *= 0.5f;
-                    state.sagEnvelope[ch] = 0.0f;
+                    stageTapeComp.gain = 1.0f;
+                    stageTapeComp.env *= 0.5f;
+                    stageTapeComp.hfEnv *= 0.5f;
+                    stageSagEnvelope = 0.0f;
+                }
+                else if (model == Model::Clipper)
+                {
+                    stageTapeComp.gain = 1.0f;
+                    stageTapeComp.env *= 0.5f;
+                    stageTapeComp.hfEnv *= 0.5f;
+                    stageSagEnvelope = 0.0f;
+                }
+                else if (model == Model::Triode && react <= 0.001f)
+                {
+                    stageTriodeReact.control *= 0.5f;
+                    stageTriodeReact.lastSag *= 0.5f;
+                    stageTriodeReact.lastSupply += (1.0f - stageTriodeReact.lastSupply) * 0.25f;
+                    stageSagEnvelope = 0.0f;
                 }
 
-                // Apply pre-sag boost + bias drift (first pass only)
-                if (isFirst)
+                // Apply stage-local pre-sag boost + bias drift.
                 {
                     if (useMbSag)
                     {
                         // Apply multiband pre-sag: split→boost per band→recombine
                         float subSig, midSig, airSig;
-                        multibandReactSplit (state.mbReact[ch], x, mbSubCoeff, mbAirCoeff,
+                        multibandReactSplit (stageMbReact, x, mbSubCoeff, mbAirCoeff,
                                             subSig, midSig, airSig);
                         x = subSig * mbSag.sagPreSub + midSig * mbSag.sagPreMid + airSig * mbSag.sagPreAir;
                     }
@@ -2474,13 +3143,26 @@ inline void processBlock (State& state,
                     effBias += sagBias;
                 }
 
+                if (model == Model::Triode && girth > 0.001f)
+                {
+                    const float preGirth = girth * (0.28f + effDrive * 0.16f);
+                    x = applyTriodePreGirth (x, juce::jlimit (0.0f, 1.0f, preGirth), effDrive);
+                }
+
                 // ── WAVESHAPER (all passes, with per-pass ADAA state) ──
+                if (diagCollector != nullptr && isLast && ch == 0)
+                {
+                    diagCollector->feedLastPassIn (x);
+                    if (model == Model::Triode)
+                        diagCollector->feedTriodeBlock (state.triodeBlock[sp][ch]);
+                }
+
                 switch (model)
                 {
                     case Model::Triode:
-                        x = processTriode (x, effDrive, effBias, effMod,
+                        x = processTriode (x, effDrive, girth, effBias, effMod, react, rawMode,
                                            state, ch, sampleRate,
-                                           state.wsAdaa[sp][ch]);
+                                           state.triodeAdaa[sp][ch]);
                         break;
                     case Model::PushPull:
                         x = processPushPull (x, effDrive, effBias, effMod,
@@ -2496,9 +3178,13 @@ inline void processBlock (State& state,
                                           state.wsAdaa[sp][ch]);
                         break;
                     case Model::Tape:
-                        x = processTape (x, effDrive, effBias, effMod,
+                        x = processTape (x, effDrive, effBias, effMod, rawMode,
                                          state, ch, sampleRate,
                                          state.tapeAdaa[sp][ch], isFirst);
+                        break;
+                    case Model::Clipper:
+                        x = processClipper (x, effDrive, girth, effBias, effMod,
+                                            state.clipperAdaa[sp][ch]);
                         break;
                     case Model::Fuzz:
                         x = processFuzz (x, effDrive, effBias, effMod,
@@ -2525,8 +3211,8 @@ inline void processBlock (State& state,
                     default: break;
                 }
 
-                if (diagCollector != nullptr && model == Model::Tape && isLast && ch == 0)
-                    diagCollector->feedTapeCore (x);
+                if (diagCollector != nullptr && isLast && ch == 0)
+                    diagCollector->feedCore (x);
 
                 // ── Intermediate safety: prevent extreme values entering girth/filters ──
                 // Soft clip: transparent below ±2, asymptotic to ±3
@@ -2539,17 +3225,16 @@ inline void processBlock (State& state,
                     }
                 }
 
-                if (diagCollector != nullptr && model == Model::Tape && isLast && ch == 0)
-                    diagCollector->feedTapeClip (x);
+                if (diagCollector != nullptr && isLast && ch == 0)
+                    diagCollector->feedClip (x);
 
-                // ── Post-sag ceiling (first pass only) ──
-                if (isFirst)
+                // ── Post-sag ceiling (per series pass) ──
                 {
                     if (useMbSag)
                     {
                         // Multiband post-sag: split→attenuate per band→recombine
                         float subSig, midSig, airSig;
-                        multibandReactSplit (state.mbReact[ch], x, mbSubCoeff, mbAirCoeff,
+                        multibandReactSplit (stageMbReact, x, mbSubCoeff, mbAirCoeff,
                                             subSig, midSig, airSig);
                         x = subSig * mbSag.sagPostSub + midSig * mbSag.sagPostMid + airSig * mbSag.sagPostAir;
                     }
@@ -2567,53 +3252,51 @@ inline void processBlock (State& state,
                 if (model == Model::Tape)
                 {
                     x = applyTapeGirth (x, girth);
-                    x *= getTapeLevelTrim (drive, effMod, girth, react);
+                }
+                else if (model == Model::Triode)
+                {
+                    x = applyTriodeGirth (x, girth);
+                }
+                else if (model == Model::Clipper)
+                {
+                    // GIRTH is already the clipper knee.
                 }
                 else
                     x = applyGirth (x, girth, state.girthAdaa[sp][ch]);
 
-                // ── Inter-stage filtering (between series passes, always active) ──
-                // Analogous to Miller capacitance + coupling caps between tube stages.
-                // LPF prevents cascaded harmonic aliasing; DC blocker removes
-                // accumulated DC offset from bias (prevents silence at high series).
-                if (! isLast && seriesCount > 1)
-                {
-                    // Miller-cap LPF (model-dependent frequency)
-                    state.interStageLPF[sp][ch] += (x - state.interStageLPF[sp][ch]) * interStageCoeff;
-                    x = state.interStageLPF[sp][ch];
+                // ── INTERNAL DE-EMPHASIS (per series pass, unless rawMode) ──
+                if (!rawMode)
+                    x = deEmphasize (x, stageEmphasis, model, effDrive, effMod, emphCoeffs);
 
-                    // Coupling-cap DC blocker (HPF ~30Hz)
-                    const float dcOut = x - state.interStageDCx[sp][ch]
-                                      + interStageDCR * state.interStageDCy[sp][ch];
-                    state.interStageDCx[sp][ch] = x;
-                    state.interStageDCy[sp][ch] = dcOut;
+                // ── DC BLOCKER (1st-order HPF at 5Hz, per series pass) ──
+                if (!rawMode)
+                {
+                    const float dcOut = x - stageDcX + dcR * stageDcY;
+                    stageDcX = x;
+                    stageDcY = dcOut;
                     x = dcOut;
                 }
 
-                // ── INTERNAL DE-EMPHASIS (last pass only, unless rawMode) ──
-                if (isLast && !rawMode)
-                    x = deEmphasize (x, state.emphasis[ch], model, effDrive, effMod, emphCoeffs);
+                if (diagCollector != nullptr && isLast && ch == 0)
+                    diagCollector->feedDc (x);
 
-                // ── DC BLOCKER (1st-order HPF at 5Hz, last pass only) ──
+                // ── AUTO-GAIN COMPENSATION (per series pass, unless skipped) ──
                 if (isLast)
                 {
-                    const float dcOut = x - state.dcX[ch] + dcR * state.dcY[ch];
-                    state.dcX[ch] = x;
-                    state.dcY[ch] = dcOut;
-                    x = dcOut;
+                    if (model == Model::Tape)
+                        x *= getTapeLevelTrim (drive, mod, girth, react);
+                    else if (model == Model::Triode)
+                        x *= getTriodeLevelTrim (drive, mod, state.currentSeriesCount);
+
+                    if (!skipAutoGain)
+                        x *= state.blockCoeffs.autoGain;
                 }
-
-                if (diagCollector != nullptr && model == Model::Tape && isLast && ch == 0)
-                    diagCollector->feedTapeDc (x);
-
-                // ── AUTO-GAIN COMPENSATION (last pass only, precomputed per-block) ──
-                if (isLast && !skipAutoGain)
-                    x *= state.blockCoeffs.autoGain;
 
                 // ── Final safety soft-limiter (AFTER auto-gain) ──
                 // Transparent below ±1.5, smooth compression above, max ±2.5
                 // Prevents auto-gain from amplifying clamped signal past safe levels
                 // and eliminates hard-clip discontinuities that cause audible clicks.
+                if (isLast)
                 {
                     const float absX = std::abs (x);
                     if (absX > 1.5f)
@@ -2623,8 +3306,8 @@ inline void processBlock (State& state,
                     }
                 }
 
-                if (diagCollector != nullptr && model == Model::Tape && isLast && ch == 0)
-                    diagCollector->feedTapeLim (x);
+                if (diagCollector != nullptr && isLast && ch == 0)
+                    diagCollector->feedLim (x);
 
                 sample = x;
             }

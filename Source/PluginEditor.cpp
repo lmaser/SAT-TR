@@ -37,6 +37,45 @@ static constexpr std::array<const char*, 10> kUiMirrorParamIds {
 // ══════════════════════════════════════════════════════════════
 namespace
 {
+	constexpr int legacyPowerLegModelIndex = static_cast<int> (SatEngine::Model::PushPull);
+
+	constexpr int satTypeModelToVisibleComboId (int modelIndex) noexcept
+	{
+		switch (modelIndex)
+		{
+			case 0: return 1;  // CLEAN
+			case 1: return 2;  // TAPE
+			case 2: return 3;  // TUBE
+			case 3: return 3;  // legacy POWER LEG -> TUBE
+			case 10: return 4; // CLIPPER
+			case 4: return 5;  // CASCADE
+			case 5: return 6;  // DIODE
+			case 6: return 7;  // TUNDRA
+			case 7: return 8;  // FUZZ
+			case 8: return 9;  // DOOM
+			case 9: return 10; // DESTROY
+			default: return 1;
+		}
+	}
+
+	constexpr int visibleComboIdToSatTypeModel (int comboId) noexcept
+	{
+		switch (comboId)
+		{
+			case 1:  return 0; // CLEAN
+			case 2:  return 1; // TAPE
+			case 3:  return 2; // TUBE
+			case 4:  return 10; // CLIPPER
+			case 5:  return 4; // CASCADE
+			case 6:  return 5; // DIODE
+			case 7:  return 6; // TUNDRA
+			case 8:  return 7; // FUZZ
+			case 9:  return 8; // DOOM
+			case 10: return 9; // DESTROY
+			default: return 0;
+		}
+	}
+
 	struct PopupSwatchButton final : public juce::TextButton
 	{
 		std::function<void()> onLeftClick;
@@ -1338,9 +1377,9 @@ void CABTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 	{
 		addAndMakeVisible (r.satType);
 		r.satType.addItem ("CLEAN",     1);
-    r.satType.addItem ("TAPE",      2);
-    r.satType.addItem ("TRIODE",    3);
-    r.satType.addItem ("POWER",     4);
+		r.satType.addItem ("TAPE",      2);
+		r.satType.addItem ("TUBE",      3);
+		r.satType.addItem ("CLIPPER",   4);
 		r.satType.addItem ("CASCADE",   5);
 		r.satType.addItem ("DIODE",     6);
 		r.satType.addItem ("TUNDRA",    7);
@@ -1392,7 +1431,7 @@ void CABTRAudioProcessorEditor::createLoaderAttachments (juce::AudioProcessorVal
 	a.filterPosAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (params, ids.filterPos, ui.filterPos);
 	a.mixAtt     = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (params, ids.mix,     ui.mix);
 
-	a.satTypeAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (params, ids.satType,  ui.satType);
+	a.satTypeAtt.reset();
 	a.rawAtt      = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>   (params, ids.satRaw,   ui.raw);
 	a.satDriveAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (params, ids.satDrive, ui.satDrive);
 	a.satGirthAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (params, ids.satGirth, ui.satGirth);
@@ -1406,6 +1445,41 @@ void CABTRAudioProcessorEditor::createLoaderAttachments (juce::AudioProcessorVal
 	ui.hp.setSkewFactor (0.35);
 	ui.lp.setSkewFactor (0.35);
 	ui.out.setSkewFactor (3.23);
+}
+
+int CABTRAudioProcessorEditor::getSelectedSatTypeModelIndex (const juce::ComboBox& combo) const noexcept
+{
+	return visibleComboIdToSatTypeModel (combo.getSelectedId());
+}
+
+void CABTRAudioProcessorEditor::syncSatTypeComboSelection (int loaderIndex)
+{
+	auto refs = getLoaderRefs (loaderIndex);
+	const char* paramId = loaderIndex == 0 ? CABTRAudioProcessor::kParamSatTypeA
+	                     : loaderIndex == 1 ? CABTRAudioProcessor::kParamSatTypeB
+	                                        : CABTRAudioProcessor::kParamSatTypeC;
+
+	if (auto* raw = audioProcessor.getValueTreeState().getRawParameterValue (paramId))
+	{
+		int modelIndex = juce::roundToInt (raw->load());
+		if (modelIndex == legacyPowerLegModelIndex)
+			modelIndex = static_cast<int> (SatEngine::Model::Triode);
+		refs.satType.setSelectedId (satTypeModelToVisibleComboId (modelIndex), juce::dontSendNotification);
+	}
+}
+
+void CABTRAudioProcessorEditor::commitSatTypeComboSelection (int loaderIndex)
+{
+	auto refs = getLoaderRefs (loaderIndex);
+	const char* paramId = loaderIndex == 0 ? CABTRAudioProcessor::kParamSatTypeA
+	                     : loaderIndex == 1 ? CABTRAudioProcessor::kParamSatTypeB
+	                                        : CABTRAudioProcessor::kParamSatTypeC;
+
+	if (auto* param = audioProcessor.getValueTreeState().getParameter (paramId))
+	{
+		const float modelIndex = static_cast<float> (getSelectedSatTypeModelIndex (refs.satType));
+		param->setValueNotifyingHost (param->convertTo0to1 (modelIndex));
+	}
 }
 
 //==============================================================================
@@ -1515,6 +1589,9 @@ CABTRAudioProcessorEditor::CABTRAudioProcessorEditor (CABTRAudioProcessor& p)
 	// Create per-loader parameter attachments
 	for (int i = 0; i < 3; ++i)
 		createLoaderAttachments (params, i, getLoaderRefs (i), getAttachRefs (i));
+
+	for (int i = 0; i < 3; ++i)
+		syncSatTypeComboSelection (i);
 
 	// Global parameter attachments
 	routeAttach = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
@@ -2316,9 +2393,7 @@ void CABTRAudioProcessorEditor::updateSatControlsEnabledState (int loaderIndex)
 	// Check if the loader itself is enabled first
 	const bool loaderEnabled = r.enableBtn.getToggleState();
 
-	// Read current sat type: index 0 = CLEAN
-	const int satTypeIdx = r.satType.getSelectedItemIndex();
-	const bool isClean = (satTypeIdx == 0);
+	const bool isClean = (getSelectedSatTypeModelIndex (r.satType) == static_cast<int> (SatEngine::Model::Clean));
 
 	// Sat-specific controls should be interactive only when loader enabled AND not CLEAN
 	const bool satInteractive = loaderEnabled && ! isClean && ! promptOverlayActive;
@@ -2390,7 +2465,12 @@ void CABTRAudioProcessorEditor::buttonClicked (juce::Button* button)
 
 void CABTRAudioProcessorEditor::comboBoxChanged (juce::ComboBox* combo)
 {
-	juce::ignoreUnused (combo);
+	if (combo == &satTypeComboA) { commitSatTypeComboSelection (0); updateSatControlsEnabledState (0); }
+	else if (combo == &satTypeComboB) { commitSatTypeComboSelection (1); updateSatControlsEnabledState (1); }
+	else if (combo == &satTypeComboC) { commitSatTypeComboSelection (2); updateSatControlsEnabledState (2); }
+
+	legendDirty = true;
+	repaint();
 }
 
 void CABTRAudioProcessorEditor::parameterChanged (const juce::String& paramID, float newValue)
@@ -2430,7 +2510,10 @@ void CABTRAudioProcessorEditor::parameterChanged (const juce::String& paramID, f
 			juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<CABTRAudioProcessorEditor> (this), idx] ()
 			{
 				if (safeThis != nullptr)
+				{
+					safeThis->syncSatTypeComboSelection (idx);
 					safeThis->updateSatControlsEnabledState (idx);
+				}
 			});
 			return;
 		}
@@ -2615,19 +2698,33 @@ bool CABTRAudioProcessorEditor::refreshLegendTextCache()
 
 	// Labels and format types: 0=freq, 1=dB, 2=ms, 3=percent, 4=pan, 5=tilt(dB), 6=bipolar%, 7=intX(series)
 	struct ParamFmt { int type; const char* label; };
-	// React label depends on current algorithm per loader
+	// Dynamic legend labels depend on current algorithm per loader
+	const char* driveLabels[3];
+	const char* girthLabels[3];
+	const char* modLabels[3];
+	const char* biasLabels[3];
 	const char* reactLabels[3];
 	for (int l = 0; l < 3; ++l)
 	{
 		auto lr = getLoaderRefs (l);
-		const int satIdx = lr.satType.getSelectedItemIndex();
-		switch (satIdx)
+		const int satModel = getSelectedSatTypeModelIndex (lr.satType);
+		driveLabels[l] = "DRIVE";
+		girthLabels[l] = "GIRTH";
+		modLabels[l]   = "MOD";
+		biasLabels[l]  = "BIAS";
+		switch (satModel)
 		{
 			case 1:                          reactLabels[l] = "COMP";  break; // Tape
-			case 2: case 3: case 4:          reactLabels[l] = "SAG";   break; // Triode, PushPull, Cascade
+			case 2: case 4:                  reactLabels[l] = "SAG";   break; // Tube, Cascade
+			case 10:
+				driveLabels[l] = "THR";
+				girthLabels[l] = "KNEE";
+				modLabels[l]   = "VOICE";
+				biasLabels[l]  = "SYM";
+				reactLabels[l] = "COMP";
+				break;
 			case 5:                          reactLabels[l] = "DRIFT"; break; // Diode
-			case 6:                          reactLabels[l] = "OCT";   break; // Tundra
-			case 7: case 8: case 9:          reactLabels[l] = "OCT";   break; // Fuzz/Doom/Destroy
+			case 6: case 7: case 8: case 9: reactLabels[l] = "OCT";   break; // Tundra/Fuzz/Doom/Destroy
 			default:                         reactLabels[l] = "RCT";   break; // Clean/unknown
 		}
 	}
@@ -2640,7 +2737,10 @@ bool CABTRAudioProcessorEditor::refreshLegendTextCache()
 
 	for (int loader = 0; loader < 3; ++loader)
 	{
-		// Update react label per loader based on current algorithm
+		fmts[10].label = driveLabels[loader];
+		fmts[11].label = girthLabels[loader];
+		fmts[12].label = modLabels[loader];
+		fmts[13].label = biasLabels[loader];
 		fmts[14].label = reactLabels[loader];
 
 		auto refs = getLoaderRefs (loader);

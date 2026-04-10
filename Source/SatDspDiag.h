@@ -24,7 +24,7 @@ namespace SatDiag
 // ── Per-block snapshot ──────────────────────────────────────────────────────
 struct BlockSnap
 {
-    int      implRev        = 24040813;
+int      implRev        = 24041005;
 
     // Timing
     double   blockTimeUs    = 0.0;   // wall-clock time for processBlock (µs)
@@ -51,7 +51,9 @@ struct BlockSnap
     float    peakFinal      = 0.0f;  // final output (post all processing)
     float    satDeltaPeak   = 0.0f;  // peak |processed loader - loader input|
     float    autoGainVal    = 1.0f;  // precomputed auto-gain multiplier
-    float    tapeCorePeak   = 0.0f;  // direct output of processTape() on last series pass
+    float    tapeCorePeak   = 0.0f;  // direct output of the model core on last series pass
+    float    lastPassInPeak = 0.0f;  // signal entering the last series pass
+    float    triodeBlockPeak = 0.0f; // peak triode blocking memory on the last series pass
     float    tapeClipPeak   = 0.0f;  // after intermediate safety clip
     float    tapeDcPeak     = 0.0f;  // after final DC blocker
     float    tapeLimPeak    = 0.0f;  // after final safety limiter
@@ -92,6 +94,7 @@ struct BlockSnap
 
     // REACT / sag
     float    sagEnvelope    = 0.0f;
+    float    sagLastPass    = 0.0f;
     float    yinFreq        = 0.0f;
 
     // Timestamp
@@ -136,6 +139,8 @@ struct Collector
     float  peakOut      = 0.0f;
     float  peakPreAG    = 0.0f;   // pre-auto-gain peak (raw waveshaper + filters)
     float  tapeCorePeak = 0.0f;
+    float  lastPassInPeak = 0.0f;
+    float  triodeBlockPeak = 0.0f;
     float  tapeClipPeak = 0.0f;
     float  tapeDcPeak   = 0.0f;
     float  tapeLimPeak  = 0.0f;
@@ -157,7 +162,7 @@ struct Collector
     void reset() noexcept
     {
         peakIn = peakOut = peakPreAG = prevSample = maxDelta = lastDx = lastK = 0.0f;
-        tapeCorePeak = tapeClipPeak = tapeDcPeak = tapeLimPeak = 0.0f;
+        tapeCorePeak = lastPassInPeak = triodeBlockPeak = tapeClipPeak = tapeDcPeak = tapeLimPeak = 0.0f;
         clickCount = nanCount = infCount = denormals = 0;
         adaaFB = adaaBlend = adaaFull = 0;
         started = false;
@@ -202,11 +207,27 @@ struct Collector
         if (a > tapeCorePeak) tapeCorePeak = a;
     }
 
+    void feedCore (float x) noexcept { feedTapeCore (x); }
+
+    void feedLastPassIn (float x) noexcept
+    {
+        const float a = std::abs (x);
+        if (a > lastPassInPeak) lastPassInPeak = a;
+    }
+
+    void feedTriodeBlock (float x) noexcept
+    {
+        const float a = std::abs (x);
+        if (a > triodeBlockPeak) triodeBlockPeak = a;
+    }
+
     void feedTapeClip (float x) noexcept
     {
         const float a = std::abs (x);
         if (a > tapeClipPeak) tapeClipPeak = a;
     }
+
+    void feedClip (float x) noexcept { feedTapeClip (x); }
 
     void feedTapeDc (float x) noexcept
     {
@@ -214,11 +235,15 @@ struct Collector
         if (a > tapeDcPeak) tapeDcPeak = a;
     }
 
+    void feedDc (float x) noexcept { feedTapeDc (x); }
+
     void feedTapeLim (float x) noexcept
     {
         const float a = std::abs (x);
         if (a > tapeLimPeak) tapeLimPeak = a;
     }
+
+    void feedLim (float x) noexcept { feedTapeLim (x); }
 
     void feedAdaa (float dx, float k, int path) noexcept
     {
@@ -312,28 +337,28 @@ private:
 
         if (! isInteresting) return;
 
-        char buf[760];
+        char buf[900];
         std::snprintf (buf, sizeof (buf),
             "[%lld] rev=%d cpu=%.1f%%  m=%d ld=%d rt=%d en=%d sr=%.0f blk=%d os=%d ser=%d"
             " | drv=%.3f gir=%.3f mod=%.3f bias=%.3f react=%.3f"
             " | pkI=%.4f pkO=%.4f pkPre=%.4f pkF=%.4f dSat=%.4f ag=%.4f"
-            " | tCore=%.4f tClip=%.4f tDc=%.4f tLim=%.4f"
+            " | tIn=%.4f tBlk=%.4f tCore=%.4f tClip=%.4f tDc=%.4f tLim=%.4f"
             " | gMix=%.3f mA=%.3f mB=%.3f mC=%.3f"
             " | dlt=%.4f clk=%d"
             " | nan=%d inf=%d dnrm=%d"
             " | aFB=%d aBl=%d aFl=%d dx=%.2e k=%.1f"
-            " | fzFB=%.4f dmFB=%.4f dsFB=%.4f filt=%.2e dc=%.2e sag=%.3f yin=%.1f\n",
+            " | fzFB=%.4f dmFB=%.4f dsFB=%.4f filt=%.2e dc=%.2e sag=%.3f sagL=%.3f yin=%.1f\n",
             (long long) s.timestampMs, s.implRev, s.cpuPercent,
             s.model, s.diagLoader, s.route, s.enableMask, s.sampleRate, s.numSamples, s.osOrder, s.seriesCount,
             s.drive, s.girth, s.mod, s.bias, s.react,
             s.peakIn, s.peakOut, s.peakPreAG, s.peakFinal, s.satDeltaPeak, s.autoGainVal,
-            s.tapeCorePeak, s.tapeClipPeak, s.tapeDcPeak, s.tapeLimPeak,
+            s.lastPassInPeak, s.triodeBlockPeak, s.tapeCorePeak, s.tapeClipPeak, s.tapeDcPeak, s.tapeLimPeak,
             s.globalMix, s.mixA, s.mixB, s.mixC,
             s.maxDelta, s.clickCount,
             s.nanCount, s.infCount, s.denormalCount,
             s.adaaFallbacks, s.adaaBlends, s.adaaFull, s.adaaLastDx, s.adaaLastK,
             s.fuzzFeedback, s.doomFeedback, s.destroyFeedback,
-            s.maxFilterState, s.maxDcState, s.sagEnvelope, s.yinFreq);
+            s.maxFilterState, s.maxDcState, s.sagEnvelope, s.sagLastPass, s.yinFreq);
 
         file_.appendText (juce::String (buf));
     }

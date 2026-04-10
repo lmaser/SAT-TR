@@ -46,6 +46,9 @@ private:
 	void layoutLoaderSection (juce::Rectangle<int> area, int loaderIndex);
 	void updateLoaderEnabledState (int loaderIndex);
 	void updateSatControlsEnabledState (int loaderIndex);
+	void syncSatTypeComboSelection (int loaderIndex);
+	void commitSatTypeComboSelection (int loaderIndex);
+	int getSelectedSatTypeModelIndex (const juce::ComboBox& combo) const noexcept;
 	juce::String getMixText() const;
 	juce::String getMixTextShort() const;
 
