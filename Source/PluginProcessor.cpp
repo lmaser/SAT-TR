@@ -1771,7 +1771,6 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			loadRelaxedInt (diagPick (pSatTypeA, pSatTypeB, pSatTypeC)))));
 		snap.seriesCount  = juce::jlimit (1, 4, loadRelaxedInt (diagPick (pSeriesA, pSeriesB, pSeriesC)));
 		snap.osOrder      = loadRelaxedInt (pOversample);
-		snap.drive        = loadRelaxed (diagPick (pSatDriveA, pSatDriveB, pSatDriveC));
 		snap.girth        = loadRelaxed (diagPick (pSatGirthA, pSatGirthB, pSatGirthC));
 		snap.mod          = loadRelaxed (diagPick (pSatModA,   pSatModB,   pSatModC));
 		snap.bias         = loadRelaxed (diagPick (pSatBiasA,  pSatBiasB,  pSatBiasC));
@@ -1786,10 +1785,22 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		snap.satDeltaPeak = diagSatDeltaPeak;
 
 		const auto& ss = activeState->satState;
+		snap.drive = ss.sDrive;
 		snap.fuzzFeedback    = ss.fuzzFeedback[0][0];
 		snap.doomFeedback    = ss.doomFeedback[0][0];
 		snap.destroyFeedback = ss.destroyFeedback[0][0];
 		snap.autoGainVal     = ss.blockCoeffs.autoGain;
+		const int dbgPass = juce::jlimit (0, SatEngine::kMaxSeries - 1,
+		                                  snap.seriesCount - 1);
+		snap.transPrePeak    = ss.transistorDbgPre[dbgPass][0];
+		snap.transCoreInPeak = ss.transistorDbgCoreIn[dbgPass][0];
+		snap.transCoreOutPeak = ss.transistorDbgCoreOut[dbgPass][0];
+		snap.transRailInPeak = ss.transistorDbgRailIn[dbgPass][0];
+		snap.transRailOutPeak = ss.transistorDbgRailOut[dbgPass][0];
+		snap.transPostPeak   = ss.transistorDbgPost[dbgPass][0];
+		snap.transInputPad   = ss.transistorDbgInputPad[dbgPass][0];
+		snap.transSatK       = ss.transistorDbgSatK[dbgPass][0];
+		snap.transRailThresh = ss.transistorDbgRailThresh[dbgPass][0];
 		// Now compute pkPreAG = pkOut / autoGain (the peak before gain compensation)
 		if (snap.autoGainVal > 0.001f)
 			snap.peakPreAG = snap.peakOut / snap.autoGainVal;
@@ -1797,8 +1808,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		for (int sp = 0; sp < SatEngine::kMaxSeries; ++sp)
 			maxSagEnv = std::max (maxSagEnv, ss.sagEnvelope[sp][0]);
 		snap.sagEnvelope     = maxSagEnv;
-		snap.sagLastPass     = ss.sagEnvelope[juce::jlimit (0, SatEngine::kMaxSeries - 1,
-                                                            snap.seriesCount - 1)][0];
+		snap.sagLastPass     = ss.sagEnvelope[dbgPass][0];
 		snap.yinFreq         = ss.yinSmoothedFreq;
 
 		// Max filter state magnitude (check for stuck/denormal filters)
@@ -2486,10 +2496,10 @@ void CABTRAudioProcessor::calculateAutoAlignment()
 				ec.postLP = SatEngine::detail::onePoleCoeff (14000.0f, sr);
 				break;
 			case SatEngine::Model::Tundra:
-				ec.preHP  = SatEngine::detail::onePoleCoeff (80.0f,   sr);
-				ec.preSh  = SatEngine::detail::onePoleCoeff (2000.0f, sr);
+				ec.preHP  = SatEngine::detail::onePoleCoeff (70.0f,   sr);
+				ec.preSh  = SatEngine::detail::onePoleCoeff (2300.0f, sr);
 				ec.postHP = SatEngine::detail::onePoleCoeff (35.0f,   sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (6000.0f, sr);
+				ec.postLP = SatEngine::detail::onePoleCoeff (5800.0f, sr);
 				break;
 			default: break;
 		}

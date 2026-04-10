@@ -2736,7 +2736,14 @@ bool CABTRAudioProcessorEditor::refreshLegendTextCache()
 				biasLabels[l]  = "SYM";
 				reactLabels[l] = "COMP";
 				break;
-			case 6: case 7: case 8: case 9: reactLabels[l] = "OCT";   break; // Tundra/Fuzz/Doom/Destroy
+			case 6:
+				driveLabels[l] = "GAIN";
+				girthLabels[l] = "COLOR";
+				modLabels[l]   = "VOICE";
+				biasLabels[l]  = "FOCUS";
+				reactLabels[l] = "TIGHT";
+				break;
+			case 7: case 8: case 9: reactLabels[l] = "OCT";   break; // Fuzz/Doom/Destroy
 			default:                         reactLabels[l] = "RCT";   break; // Clean/unknown
 		}
 	}

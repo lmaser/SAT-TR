@@ -24,7 +24,7 @@ namespace SatDiag
 // ── Per-block snapshot ──────────────────────────────────────────────────────
 struct BlockSnap
 {
-int      implRev        = 24041009;
+    int      implRev        = 24041022;
 
     // Timing
     double   blockTimeUs    = 0.0;   // wall-clock time for processBlock (µs)
@@ -57,6 +57,15 @@ int      implRev        = 24041009;
     float    tapeClipPeak   = 0.0f;  // after intermediate safety clip
     float    tapeDcPeak     = 0.0f;  // after final DC blocker
     float    tapeLimPeak    = 0.0f;  // after final safety limiter
+    float    transPrePeak   = 0.0f;  // TRANSISTOR: pre-core signal after internal conditioning
+    float    transCoreInPeak = 0.0f; // TRANSISTOR: signal entering the main ADAA core
+    float    transCoreOutPeak = 0.0f;// TRANSISTOR: output of the main ADAA core
+    float    transRailInPeak = 0.0f; // TRANSISTOR: signal entering the rail clipper
+    float    transRailOutPeak = 0.0f;// TRANSISTOR: output of the rail clipper
+    float    transPostPeak  = 0.0f;  // TRANSISTOR: final output before outer clip/DC/lim
+    float    transInputPad  = 0.0f;  // TRANSISTOR: effective input pad for the current block
+    float    transSatK      = 0.0f;  // TRANSISTOR: main tanh k
+    float    transRailThresh = 0.0f; // TRANSISTOR: average rail threshold
 
     // Routing / context
     int      route          = 0;
@@ -337,12 +346,14 @@ private:
 
         if (! isInteresting) return;
 
-        char buf[900];
+        char buf[1200];
         std::snprintf (buf, sizeof (buf),
             "[%lld] rev=%d cpu=%.1f%%  m=%d ld=%d rt=%d en=%d sr=%.0f blk=%d os=%d ser=%d"
             " | drv=%.3f gir=%.3f mod=%.3f bias=%.3f react=%.3f"
             " | pkI=%.4f pkO=%.4f pkPre=%.4f pkF=%.4f dSat=%.4f ag=%.4f"
             " | tIn=%.4f tBlk=%.4f tCore=%.4f tClip=%.4f tDc=%.4f tLim=%.4f"
+            " | trPre=%.4f trCin=%.4f trCout=%.4f trRin=%.4f trRout=%.4f trPost=%.4f"
+            " | trPad=%.3f trK=%.3f trTh=%.3f"
             " | gMix=%.3f mA=%.3f mB=%.3f mC=%.3f"
             " | dlt=%.4f clk=%d"
             " | nan=%d inf=%d dnrm=%d"
@@ -353,6 +364,8 @@ private:
             s.drive, s.girth, s.mod, s.bias, s.react,
             s.peakIn, s.peakOut, s.peakPreAG, s.peakFinal, s.satDeltaPeak, s.autoGainVal,
             s.lastPassInPeak, s.triodeBlockPeak, s.tapeCorePeak, s.tapeClipPeak, s.tapeDcPeak, s.tapeLimPeak,
+            s.transPrePeak, s.transCoreInPeak, s.transCoreOutPeak, s.transRailInPeak, s.transRailOutPeak, s.transPostPeak,
+            s.transInputPad, s.transSatK, s.transRailThresh,
             s.globalMix, s.mixA, s.mixB, s.mixC,
             s.maxDelta, s.clickCount,
             s.nanCount, s.infCount, s.denormalCount,

@@ -32,7 +32,7 @@ enum class Model : int
     PushPull  = 3,   // Legacy power stage — retained for compatibility
     Cascade   = 4,   // TRANSISTOR â€” legacy slot repurposed for BJT <-> FET stages
     Diode     = 5,   // DIODE — feedback/hard/open diode clipper topologies
-    Tundra    = 6,   // Metal Zone→Modern morph — dual-stage cascaded clipping
+    Tundra    = 6,   // TUNDRA — modern metal boost/preamp -> HM-2-ish chainsaw
     Fuzz      = 7,   // Transistor fuzz — Ge/Si stages with bias starving
     Doom      = 8,   // Multi-stage doom fuzz — Big Muff inspired wall-of-sound
     Destroy   = 9,   // Ring-fuzz — pitch-tracked ring modulation + feedback
@@ -56,7 +56,6 @@ static constexpr float kLn2        = 0.69314718055994530942f;
 static constexpr float kSmoothCoeff = 0.995f;   // ~10ms @ 48kHz
 static constexpr int   kReactBufSize = 8192;
 static constexpr int   kTriodeSagBufSize = 512;
-static constexpr int   kMaxCascade   = 4;
 static constexpr int   kMaxSeries    = 4;
 
 // ──────────────────────────────────────────────────────────────
@@ -292,9 +291,13 @@ namespace adaa
                               float thresholdPos, float thresholdNeg,
                               float kneePos, float kneeNeg) noexcept
         {
-            constexpr float kTol = 1.0e-5f;
+            constexpr float smallDx = 1.0e-4f;
+            constexpr float blendDx = 2.0e-3f;
+            constexpr float jumpReset = 8.0f;
 
             const float direct = clip (x, thresholdPos, thresholdNeg, kneePos, kneeNeg);
+            const float posCeil = std::max (thresholdPos + kneePos + 0.25f, 0.5f);
+            const float negCeil = std::max (thresholdNeg + kneeNeg + 0.25f, 0.5f);
 
             if (! initialised || ! std::isfinite (prev) || ! std::isfinite (ad1Prev))
             {
@@ -304,17 +307,40 @@ namespace adaa
                 return direct;
             }
 
+            if (std::abs (x - prev) > jumpReset)
+            {
+                prev = x;
+                ad1Prev = clipAD1 (x, thresholdPos, thresholdNeg, kneePos, kneeNeg);
+                return direct;
+            }
+
             const float ad1 = clipAD1 (x, thresholdPos, thresholdNeg, kneePos, kneeNeg);
             const float dx = x - prev;
             const float mid = clip (0.5f * (x + prev), thresholdPos, thresholdNeg, kneePos, kneeNeg);
-            float y = (std::abs (dx) < kTol) ? mid : (ad1 - ad1Prev) / dx;
+            const float adx = std::abs (dx);
+            float y = mid;
 
-            if (! std::isfinite (y))
+            if (adx > smallDx)
+            {
+                const float adaaY = (ad1 - ad1Prev) / dx;
+                if (adx >= blendDx)
+                {
+                    y = adaaY;
+                }
+                else
+                {
+                    const float t = (adx - smallDx) / (blendDx - smallDx);
+                    const float s = t * t * (3.0f - 2.0f * t);
+                    y = mid + (adaaY - mid) * s;
+                }
+            }
+
+            if (! std::isfinite (y) || y > posCeil || y < -negCeil)
                 y = direct;
 
             prev = x;
             ad1Prev = ad1;
-            return y;
+            return juce::jlimit (-negCeil, posCeil, y);
         }
 
         void reset() noexcept
@@ -706,10 +732,6 @@ struct State
     TapeCompState tapeComp[kMaxSeries][2];
     TriodeReactState triodeReact[kMaxSeries][2];
 
-    // CASCADE per-stage DC accumulation (coupling cap model)
-    // [series pass][stage][channel]
-    float cascadeDC[kMaxSeries][kMaxCascade][2] = {};
-
     // Per-stage DC blocker (1st-order HPF, post-saturation)
     float dcX[kMaxSeries][2] = {};
     float dcY[kMaxSeries][2] = {};
@@ -741,8 +763,6 @@ struct State
     adaa::TanhADAA2 fuzzAdaa2Q2[kMaxSeries][2];
     // DOOM S2 second ADAA-2 stage [series pass][channel]
     adaa::TanhADAA2 doomAdaa2S2[kMaxSeries][2];
-    // CASCADE per-stage ADAA [series pass][stage][channel]
-    adaa::TanhADAA cascadeAdaa[kMaxSeries][kMaxCascade][2];
     // GIRTH wavefolder ADAA [series pass][channel]
     adaa::SinFoldADAA girthAdaa[kMaxSeries][2];
 
@@ -787,6 +807,20 @@ struct State
     float tundraPresZ1[kMaxSeries][2] = {};
     float tundraPresZ2[kMaxSeries][2] = {};
 
+    // TRANSISTOR black-box filters [series pass][channel]
+    float transistorPreHP[kMaxSeries][2] = {};
+    float transistorPreEdge[kMaxSeries][2] = {};
+    float transistorPostLP[kMaxSeries][2] = {};
+    float transistorDbgPre[kMaxSeries][2] = {};
+    float transistorDbgCoreIn[kMaxSeries][2] = {};
+    float transistorDbgCoreOut[kMaxSeries][2] = {};
+    float transistorDbgRailIn[kMaxSeries][2] = {};
+    float transistorDbgRailOut[kMaxSeries][2] = {};
+    float transistorDbgPost[kMaxSeries][2] = {};
+    float transistorDbgInputPad[kMaxSeries][2] = {};
+    float transistorDbgSatK[kMaxSeries][2] = {};
+    float transistorDbgRailThresh[kMaxSeries][2] = {};
+
     // Inter-stage LPF for series chaining (one-pole per pass per channel)
     float interStageLPF[kMaxSeries][2] = {};
 
@@ -830,6 +864,20 @@ struct State
     float sVar   = 0.0f;
     float lastTapeDrive = 0.0f;
     bool tapeWasActive = false;
+    float lastCascadeDrive = 0.0f;
+    float lastCascadeGirth = 0.0f;
+    float lastCascadeMod = 0.0f;
+    float lastCascadeBias = 0.0f;
+    float lastCascadeReact = 0.0f;
+    float lastCascadeShape = 0.0f;
+    bool cascadeWasActive = false;
+    float lastTundraDrive = 0.0f;
+    float lastTundraGirth = 0.0f;
+    float lastTundraMod = 0.0f;
+    float lastTundraBias = 0.0f;
+    float lastTundraReact = 0.0f;
+    float lastTundraShape = 0.0f;
+    bool tundraWasActive = false;
 
     void reset()
     {
@@ -874,11 +922,18 @@ struct State
                 tundraTightHP[sp][ch] = 0.0f;
                 tundraPresZ1[sp][ch] = 0.0f;
                 tundraPresZ2[sp][ch] = 0.0f;
-                for (int s = 0; s < kMaxCascade; ++s)
-                {
-                    cascadeDC[sp][s][ch] = 0.0f;
-                    cascadeAdaa[sp][s][ch].reset();
-                }
+                transistorPreHP[sp][ch] = 0.0f;
+                transistorPreEdge[sp][ch] = 0.0f;
+                transistorPostLP[sp][ch] = 0.0f;
+                transistorDbgPre[sp][ch] = 0.0f;
+                transistorDbgCoreIn[sp][ch] = 0.0f;
+                transistorDbgCoreOut[sp][ch] = 0.0f;
+                transistorDbgRailIn[sp][ch] = 0.0f;
+                transistorDbgRailOut[sp][ch] = 0.0f;
+                transistorDbgPost[sp][ch] = 0.0f;
+                transistorDbgInputPad[sp][ch] = 0.0f;
+                transistorDbgSatK[sp][ch] = 0.0f;
+                transistorDbgRailThresh[sp][ch] = 0.0f;
             }
         }
         flutterPhase = 0.0f;
@@ -898,6 +953,20 @@ struct State
         sDrive = sGirth = sBias = sReact = sMod = sVar = 0.0f;
         lastTapeDrive = 0.0f;
         tapeWasActive = false;
+        lastCascadeDrive = 0.0f;
+        lastCascadeGirth = 0.0f;
+        lastCascadeMod = 0.0f;
+        lastCascadeBias = 0.0f;
+        lastCascadeReact = 0.0f;
+        lastCascadeShape = 0.0f;
+        cascadeWasActive = false;
+        lastTundraDrive = 0.0f;
+        lastTundraGirth = 0.0f;
+        lastTundraMod = 0.0f;
+        lastTundraBias = 0.0f;
+        lastTundraReact = 0.0f;
+        lastTundraShape = 0.0f;
+        tundraWasActive = false;
     }
 
     // Flush denormal-prone filter state to zero (call once per block)
@@ -937,6 +1006,18 @@ struct State
                 fl (tundraTightHP[sp][ch]);
                 fl (tundraPresZ1[sp][ch]);
                 fl (tundraPresZ2[sp][ch]);
+                fl (transistorPreHP[sp][ch]);
+                fl (transistorPreEdge[sp][ch]);
+                fl (transistorPostLP[sp][ch]);
+                fl (transistorDbgPre[sp][ch]);
+                fl (transistorDbgCoreIn[sp][ch]);
+                fl (transistorDbgCoreOut[sp][ch]);
+                fl (transistorDbgRailIn[sp][ch]);
+                fl (transistorDbgRailOut[sp][ch]);
+                fl (transistorDbgPost[sp][ch]);
+                fl (transistorDbgInputPad[sp][ch]);
+                fl (transistorDbgSatK[sp][ch]);
+                fl (transistorDbgRailThresh[sp][ch]);
                 fl (interStageLPF[sp][ch]);
                 fl (interStageDCx[sp][ch]);
                 fl (interStageDCy[sp][ch]);
@@ -1030,6 +1111,15 @@ namespace detail
     {
         t = clampF (t, 0.0f, 1.0f);
         return t * t * (3.0f - 2.0f * t);
+    }
+
+    inline float morphThreeWay (float t, float a, float b, float c) noexcept
+    {
+        t = clampF (t, 0.0f, 1.0f);
+        if (t <= 0.5f)
+            return juce::jmap (smoothStep01 (t * 2.0f), a, b);
+
+        return juce::jmap (smoothStep01 ((t - 0.5f) * 2.0f), b, c);
     }
 
     inline float interpDrive5 (float d, float p0, float p25, float p50,
@@ -1143,6 +1233,70 @@ inline TapeCompResult processTapeComp (float x, TapeCompState& st,
     r.sample = (low + high * hfGain) * st.gain;
     r.driveLift = 1.0f + (1.0f - compGain) * react * (0.06f + 0.06f * program);
     r.amount = 1.0f - compGain;
+    return r;
+}
+
+inline TapeCompResult processTransistorComp (float x, TapeCompState& st,
+                                             float react, float drive, float type,
+                                             float sr) noexcept
+{
+    TapeCompResult r;
+    r.sample = x;
+
+    if (react <= 0.0001f)
+        return r;
+
+    const float det = std::abs (x);
+    const float detectorTilt = juce::jmap (type, 1.05f, 1.10f);
+    const float detector = det * detectorTilt;
+
+    const float attackHz = juce::jmap (type,
+                                       1200.0f + react * 2500.0f,
+                                       1350.0f + react * 2800.0f);
+    const float releaseHz = juce::jmap (type,
+                                        1.8f + react * 6.8f,
+                                        1.9f + react * 7.4f)
+                          + detector * juce::jmap (type, 2.8f, 3.2f);
+    const float atk = detail::onePoleCoeff (attackHz, sr);
+    const float rel = detail::onePoleCoeff (releaseHz, sr);
+
+    if (detector > st.env)
+        st.env += (detector - st.env) * atk;
+    else
+        st.env += (detector - st.env) * rel;
+
+    const float threshold = juce::jmap (type,
+                                        juce::jmap (react, 0.36f, 0.095f),
+                                        juce::jmap (react, 0.35f, 0.090f))
+                          * juce::jmap (drive, 1.02f, 0.78f);
+    const float ratio = juce::jmap (type,
+                                    juce::jmap (react, 7.0f, 13.5f),
+                                    juce::jmap (react, 7.5f, 14.0f));
+    const float over = st.env / std::max (threshold, 1.0e-4f);
+
+    float compGain = 1.0f;
+    if (over > 1.0f)
+        compGain = std::pow (over, -(ratio - 1.0f) / ratio);
+
+    const float allButtons = detail::smoothStep01 ((react - 0.82f) / 0.18f) * type;
+    compGain *= 1.0f - allButtons * detail::smoothStep01 ((over - 1.0f) / 1.8f) * 0.10f;
+    compGain = juce::jlimit (0.18f, 1.0f, compGain);
+
+    const float makeup = 1.0f + (1.0f - compGain) * juce::jmap (type, 0.00f, 0.02f);
+    const float targetGain = juce::jlimit (0.18f, 1.0f, compGain * makeup);
+    const float gainAtk = detail::onePoleCoeff (attackHz * juce::jmap (type, 1.35f, 1.55f), sr);
+    const float gainRel = detail::onePoleCoeff (releaseHz, sr);
+
+    if (targetGain < st.gain)
+        st.gain += (targetGain - st.gain) * gainAtk;
+    else
+        st.gain += (targetGain - st.gain) * gainRel;
+
+    st.scLP = detector;
+    st.hfEnv += (detector - st.hfEnv) * detail::onePoleCoeff (releaseHz * 0.7f + 0.5f, sr);
+
+    r.sample = x * st.gain;
+    r.amount = 1.0f - st.gain;
     return r;
 }
 
@@ -1480,10 +1634,18 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
         case Model::Tundra:
         {
             st.preHP += (x - st.preHP) * ec.preHP;
-            float hp = x - st.preHP;
+            const float hp = x - st.preHP;
             st.preSh += (hp - st.preSh) * ec.preSh;
-            float treble = hp - st.preSh;
-            return hp + treble * 0.3f;
+            const float edge = hp - st.preSh;
+            const float voice = detail::clampF (mod, 0.0f, 1.0f);
+
+            const float modern = juce::jmap (0.66f + drive * 0.10f, x, hp)
+                               + edge * (0.055f + drive * 0.045f);
+            const float mt = juce::jmap (0.54f + drive * 0.08f, x, hp)
+                           + edge * (0.082f + drive * 0.060f);
+            const float hm = juce::jmap (0.30f + drive * 0.06f, x, hp)
+                           + edge * (0.125f + drive * 0.090f);
+            return detail::morphThreeWay (voice, modern, mt, hm);
         }
         default: return x;
     }
@@ -1602,9 +1764,18 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
         case Model::Tundra:
         {
             st.postHP += (y - st.postHP) * ec.postHP;
-            float hp = y - st.postHP;
+            const float hp = y - st.postHP;
             st.postLP += (hp - st.postLP) * ec.postLP;
-            return st.postLP;
+            const float bright = hp - st.postLP;
+            const float voice = detail::clampF (mod, 0.0f, 1.0f);
+
+            const float modern = hp + (st.postLP - hp) * (0.10f + drive * 0.14f)
+                               + bright * (0.040f + (1.0f - drive) * 0.016f);
+            const float mt = hp + (st.postLP - hp) * (0.20f + drive * 0.24f)
+                           + bright * (0.016f + (1.0f - drive) * 0.010f);
+            const float hm = hp + (st.postLP - hp) * (0.06f + drive * 0.09f)
+                           + bright * (0.095f + drive * 0.030f);
+            return detail::morphThreeWay (voice, modern, mt, hm);
         }
         default: return y;
     }
@@ -1817,139 +1988,196 @@ inline float processPushPull (float x, float drive, float bias, float mod,
     return detail::normalizeSmallSignal (raw, 0.0f, slope0);
 }
 
-// CASCADE: single-stage helper
-inline float processCascadeSingle (float x, float drivePerStage, float bias,
-                                   float dcAccum[][2], int ch,
-                                   adaa::TanhADAA cascAdaa[][2],
-                                   int numStages, float capBleed) noexcept
-{
-    float s = x;
-    const float k = 1.0f + drivePerStage * 3.0f;
-
-    for (int stage = 0; stage < numStages; ++stage)
-    {
-        s *= (1.0f + drivePerStage * 12.0f);
-        s += bias * 0.1f + dcAccum[stage][ch];
-        s = cascAdaa[stage][ch].process (s, k);
-        dcAccum[stage][ch] = dcAccum[stage][ch] * capBleed + s * (1.0f - capBleed) * 0.1f;
-        s *= 0.8f;
-    }
-    return s;
-}
-
-// CASCADE: N cascaded triode stages with fractional crossfade
-inline float processCascade (float x, float drive, float bias, float mod,
-                             State& state, int ch, float capBleed) noexcept
-{
-    // MOD maps to continuous stage range: MOD=0 → 4 stages, MOD=1 → 1 stage
-    const float stagesF = 4.0f - mod * 3.0f;
-    const int nLo = std::max (1, (int) stagesF);
-    const int nHi = std::min (nLo + 1, kMaxCascade);
-    const float frac = stagesF - (float) nLo;
-
-    const float drivePerStage = drive / std::sqrt ((float) nHi);
-
-    const int sp = state.currentSeriesPass;
-
-    float outLo = processCascadeSingle (x, drivePerStage, bias,
-                                        state.cascadeDC[sp], ch,
-                                        state.cascadeAdaa[sp],
-                                        nLo, capBleed);
-
-    float outHi = outLo;
-    if (nHi > nLo)
-    {
-        float sExtra = outLo * (1.0f + drivePerStage * 12.0f);
-        sExtra += bias * 0.1f;
-        const float k = 1.0f + drivePerStage * 3.0f;
-        sExtra = state.cascadeAdaa[sp][nLo][ch].process (sExtra, k);
-        sExtra *= 0.8f;
-        outHi = sExtra;
-    }
-
-    return outLo * (1.0f - frac) + outHi * frac;
-}
-
 // DIODE: Shockley equation diode clipper — Ge/Si blend
 inline float getTransistorLevelTrim (float drive, float mod) noexcept
 {
+    juce::ignoreUnused (drive, mod);
+    return 1.0f;
+}
+
+inline float getTundraLevelTrim (float drive, float mod, float girth) noexcept
+{
     const float d = detail::clampF (drive, 0.0f, 1.0f);
-    const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
-    const float bjtTrim = detail::interpDrive5 (d,
-                                                1.02f, 1.01f, 0.99f, 0.97f, 0.95f);
-    const float fetTrim = detail::interpDrive5 (d,
-                                                1.06f, 1.04f, 1.01f, 0.98f, 0.96f);
-    return juce::jmap (type, bjtTrim, fetTrim);
+    const float voice = detail::clampF (mod, 0.0f, 1.0f);
+    const float color = 1.0f - std::pow (1.0f - detail::clampF (girth, 0.0f, 1.0f), 1.45f);
+
+    const float modern = detail::interpDrive5 (d,
+                                               1.02f, 1.00f, 0.99f, 0.97f, 0.95f);
+    const float mt = detail::interpDrive5 (d,
+                                           1.02f, 1.00f, 0.98f, 0.95f, 0.92f);
+    const float hm = detail::interpDrive5 (d,
+                                           1.01f, 0.99f, 0.97f, 0.94f, 0.91f);
+    const float voiceTrim = detail::morphThreeWay (voice, modern, mt, hm);
+    return voiceTrim * juce::jmap (color, 1.0f, 0.96f);
 }
 
 // TRANSISTOR: common-emitter/common-source inspired black box.
 // MOD morphs BJT punch into softer FET behaviour while GIRTH/BODY relaxes
 // degeneration and lets more low-mid energy hit the nonlinear stage.
 inline float processTransistorStage (float x, float drive, float girth, float bias, float mod,
-                                     State& state, int ch,
+                                     float react, bool rawMode,
+                                     State& state, int ch, float sr,
                                      adaa::TanhADAA& satAdaa,
                                      adaa::ClipperADAA& clipAdaa) noexcept
 {
+    const int sp = state.currentSeriesPass;
+    auto& preHP = state.transistorPreHP[sp][ch];
+    auto& preEdge = state.transistorPreEdge[sp][ch];
+    auto& postLP = state.transistorPostLP[sp][ch];
+    auto& compState = state.tapeComp[sp][ch];
+
     const float d = detail::clampF (drive, 0.0f, 1.0f);
     const float body = detail::clampF (girth, 0.0f, 1.0f);
     const float b = detail::clampF (bias, -1.0f, 1.0f);
     const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
     const float bodyCurve = 1.0f - std::pow (1.0f - body, 1.55f);
+    juce::ignoreUnused (satAdaa);
+    auto trackDbg = [] (float& dst, float v) noexcept
+    {
+        dst = std::max (dst, std::abs (v));
+    };
 
-    const int sp = state.currentSeriesPass;
-    float& dyn = state.powerSag[sp][ch];
-    const float dynTarget = x * (0.030f + type * 0.015f);
-    dyn += (dynTarget - dyn) * (0.010f + d * 0.018f);
+    if (!rawMode)
+    {
+        const float hpHz = juce::jmap (type,
+                                       34.0f + bodyCurve * 14.0f,
+                                       22.0f + bodyCurve * 10.0f);
+        const float hpC = detail::onePoleCoeff (hpHz, sr);
+        preHP += (x - preHP) * hpC;
+        const float hp = x - preHP;
 
-    const float bjtDrive = detail::interpDrive5 (d,
-                                                 0.92f, 1.25f, 2.05f, 3.60f, 5.80f)
-                         * juce::jmap (bodyCurve, 0.92f, 1.35f);
-    const float fetDrive = detail::interpDrive5 (d,
-                                                 0.96f, 1.18f, 1.70f, 2.45f, 3.75f)
-                         * juce::jmap (bodyCurve, 0.98f, 1.22f);
-    const float driveGain = juce::jmap (type, bjtDrive, fetDrive);
+        const float edgeHz = juce::jmap (type,
+                                         2100.0f + d * 1200.0f,
+                                         1200.0f + d * 650.0f);
+        const float edgeC = detail::onePoleCoeff (edgeHz, sr);
+        preEdge += (hp - preEdge) * edgeC;
+        const float edge = hp - preEdge;
 
-    const float bjtBias = 0.015f + b * 0.28f + dyn * 0.11f;
-    const float fetBias = 0.040f + b * 0.17f + dyn * 0.07f;
-    const float opBias = juce::jmap (type, bjtBias, fetBias);
+        const float lowRetain = juce::jmap (type,
+                                            0.12f + bodyCurve * 0.12f,
+                                            0.28f + bodyCurve * 0.16f);
+        const float edgeAmt = juce::jmap (type,
+                                          0.010f + d * 0.050f,
+                                          0.004f + d * 0.025f);
+        x = juce::jmap (lowRetain, x, hp) + edge * edgeAmt;
+    }
+    else
+    {
+        preHP = preEdge = postLP = 0.0f;
+    }
 
-    float s = x * driveGain + opBias;
-    const float oddBjt = s * std::abs (s) * (0.028f + bodyCurve * 0.120f);
-    const float oddFet = -s * std::abs (s) * (0.020f + bodyCurve * 0.060f);
-    const float cubicBjt = s * s * s * (0.018f + d * 0.050f);
-    const float cubicFet = s * s * s * (0.030f + d * 0.040f);
-    s += juce::jmap (type, oddBjt, oddFet);
-    s += juce::jmap (type, cubicBjt, cubicFet);
+    if (react > 0.001f && !rawMode)
+    {
+        const float compAmt = detail::clampF (react, 0.0f, 1.0f);
+        const TapeCompResult comp = processTransistorComp (x, compState, compAmt, d, type, sr);
+        x = comp.sample;
+    }
+    else
+    {
+        compState.gain = 1.0f;
+        compState.env *= 0.5f;
+        compState.hfEnv *= 0.5f;
+    }
+
+    const float inputPadBjt = detail::interpDrive5 (d,
+                                                    0.14f, 0.30f, 0.68f, 1.32f, 2.75f)
+                            * juce::jmap (bodyCurve, 1.00f, 1.18f);
+    const float inputPadFet = detail::interpDrive5 (d,
+                                                    0.18f, 0.36f, 0.74f, 1.26f, 2.20f)
+                            * juce::jmap (bodyCurve, 1.00f, 1.10f);
+    const float inputPad = juce::jmap (type, inputPadBjt, inputPadFet);
+    x *= inputPad;
+    state.transistorDbgInputPad[sp][ch] = inputPad;
+    trackDbg (state.transistorDbgPre[sp][ch], x);
+
+    const float headroomBjt = juce::jlimit (0.48f, 1.14f,
+                                            1.10f - d * 0.60f
+                                                  - bodyCurve * 0.09f
+                                                  - juce::jmax (0.0f, b) * 0.11f
+                                                  + juce::jmax (0.0f, -b) * 0.05f);
+    const float headroomFet = juce::jlimit (0.50f, 1.16f,
+                                            1.10f - d * 0.44f
+                                                  - bodyCurve * 0.06f
+                                                  - juce::jmax (0.0f, b) * 0.08f
+                                                  + juce::jmax (0.0f, -b) * 0.03f);
+    const float headroom = juce::jmap (type, headroomBjt, headroomFet);
+
+    const float opBias = juce::jmap (type, b * 0.16f, b * 0.10f);
+    const float oddAmt = juce::jmap (type,
+                                     0.018f + bodyCurve * 0.022f + d * 0.040f,
+                                    -0.006f - bodyCurve * 0.010f - d * 0.012f);
+    const float cubicAmt = juce::jmap (type,
+                                       0.008f + d * 0.038f,
+                                       0.014f + d * 0.020f);
+
+    auto applyCoreShape = [oddAmt, cubicAmt] (float v) noexcept
+    {
+        return v
+             + v * std::abs (v) * oddAmt
+             + v * v * v * cubicAmt;
+    };
+
+    const float biasNorm = detail::clampF (opBias, -headroom, headroom) / headroom;
+    float z = x + opBias;
+    z = detail::clampF (z, -headroom, headroom);
+    z /= headroom;
+    trackDbg (state.transistorDbgCoreIn[sp][ch], z);
+
+    const float shifted = applyCoreShape (z);
+    const float z0 = applyCoreShape (biasNorm);
+    const float preDeriv0 = 1.0f
+                          + 2.0f * std::abs (biasNorm) * oddAmt
+                          + 3.0f * biasNorm * biasNorm * cubicAmt;
 
     const float satK = juce::jmap (type,
-                                   0.95f + d * (0.75f + bodyCurve * 0.25f),
-                                   0.80f + d * (0.40f + bodyCurve * 0.18f));
-    const float raw = satAdaa.process (s, satK);
-    const float slope0 = satK * driveGain * juce::jmap (type, 1.00f, 0.92f);
-    const float norm = detail::normalizeSmallSignal (raw, 0.0f, slope0);
+                                   0.98f + d * (2.24f + bodyCurve * 0.46f),
+                                   0.84f + d * (1.55f + bodyCurve * 0.26f));
+    state.transistorDbgSatK[sp][ch] = satK;
+    const float raw = std::tanh (satK * shifted);
+    const float raw0 = std::tanh (satK * z0);
+    const float slopeRef = satK * (1.0f - raw0 * raw0);
+    const float slope0 = std::max (1.0e-4f, slopeRef * preDeriv0 * (1.0f / headroom));
+    float core = detail::normalizeSmallSignal (raw, raw0, slope0);
+    trackDbg (state.transistorDbgCoreOut[sp][ch], core);
 
-    const float clipDrive = juce::jmap (type,
-                                        1.00f + d * 0.28f,
-                                        0.94f + d * 0.15f);
-    const float posThrBase = juce::jmap (type,
-                                         juce::jmap (bodyCurve, 0.92f, 1.14f),
-                                         juce::jmap (bodyCurve, 1.00f, 1.20f));
-    const float negThrBase = juce::jmap (type,
-                                         juce::jmap (bodyCurve, 0.80f, 1.00f),
-                                         juce::jmap (bodyCurve, 0.92f, 1.10f));
-    const float posThresh = posThrBase * (1.0f - juce::jmax (0.0f, b) * juce::jmap (type, 0.16f, 0.08f));
-    const float negThresh = negThrBase * (1.0f - juce::jmax (0.0f, -b) * juce::jmap (type, 0.20f, 0.12f));
-    const float knee = juce::jmap (type,
-                                   juce::jmap (bodyCurve, 0.26f, 0.10f),
-                                   juce::jmap (bodyCurve, 0.30f, 0.16f));
-    const float clip = clipAdaa.process (norm * clipDrive,
-                                         posThresh, negThresh,
-                                         knee, knee * juce::jmap (type, 0.92f, 1.08f));
-    const float clipMix = juce::jmap (type,
-                                      0.24f + d * 0.16f,
-                                      0.14f + d * 0.12f);
-    float out = juce::jmap (clipMix, norm, clip);
-    out *= juce::jmap (type, 1.00f, 0.98f);
+    const float railDrive = juce::jmap (type,
+                                        1.02f + d * 1.02f,
+                                        0.96f + d * 0.68f)
+                          * juce::jmap (bodyCurve, 1.00f, 1.05f);
+    const float posThresh = juce::jmap (type, 1.24f - d * 0.24f,
+                                              1.34f - d * 0.14f)
+                          * (1.0f - juce::jmax (0.0f, b) * 0.18f
+                                   + juce::jmax (0.0f, -b) * 0.04f);
+    const float negThresh = juce::jmap (type, 1.16f - d * 0.22f,
+                                              1.28f - d * 0.12f)
+                          * (1.0f - juce::jmax (0.0f, -b) * 0.18f
+                                   + juce::jmax (0.0f,  b) * 0.04f);
+    const float kneeBase = juce::jmap (type,
+                                       juce::jmap (bodyCurve, 0.24f, 0.12f),
+                                       juce::jmap (bodyCurve, 0.30f, 0.16f));
+    const float kneePos = std::max (1.0e-4f, kneeBase * (1.0f - d * 0.10f));
+    const float kneeNeg = std::max (1.0e-4f, kneeBase * juce::jmap (type, 0.95f, 1.08f) * (1.0f - d * 0.08f));
+    state.transistorDbgRailThresh[sp][ch] = 0.5f * (posThresh + negThresh);
+
+    const float railIn = core * railDrive;
+    trackDbg (state.transistorDbgRailIn[sp][ch], railIn);
+    float out = clipAdaa.process (railIn, posThresh, negThresh, kneePos, kneeNeg);
+    trackDbg (state.transistorDbgRailOut[sp][ch], out);
+
+    if (!rawMode)
+    {
+        const float lpHz = juce::jmap (type,
+                                       9800.0f - d * 2600.0f,
+                                       6200.0f - d * 1700.0f);
+        const float lpC = detail::onePoleCoeff (detail::clampF (lpHz, 1800.0f, 12000.0f), sr);
+        postLP += (out - postLP) * lpC;
+        const float lpMix = juce::jmap (type,
+                                        0.03f + d * 0.08f,
+                                        0.08f + d * 0.12f);
+        out = out + (postLP - out) * lpMix;
+    }
+
+    trackDbg (state.transistorDbgPost[sp][ch], out);
     return out;
 }
 
@@ -2565,80 +2793,147 @@ inline float processDestroy (float x, float drive, float bias, float mod,
     return s;
 }
 
-// TUNDRA: Metal Zone → Modern high‐gain morph (dual‐stage cascaded clipping)
-// Stage 1: op‐amp gain + ADAA tanh soft clip (MT-2 first diode stage)
-// Stage 2: exponential→algebraic hard clip morph (MT-2→modern tight)
-// MOD = Metal Zone classic (0) ↔ Modern tight (1)
-// BIAS = clipping asymmetry (even‐harmonic injection)
-inline float processTundra (float x, float drive, float bias, float mod,
+// TUNDRA: modern metal boost/preamp -> MT-style metal pedal -> HM-2-ish chainsaw.
+// DRIVE  = GAIN
+// GIRTH  = COLOR (more contour / pedal coloration)
+// MOD    = VOICE (modern -> MT -> HM)
+// BIAS   = FOCUS (negative = thicker, positive = tighter/attackier)
+// REACT  = TIGHT (handled outside as per-stage pre-compression)
+inline float processTundra (float x, float drive, float girth, float bias, float mod,
+                            bool rawMode,
                             State& state, int ch, float sr,
-                            adaa::TanhADAA& adaaState) noexcept
+                            adaa::TanhADAA& softAdaa,
+                            adaa::ClipperADAA& clipAdaa) noexcept
 {
     const int sp = state.currentSeriesPass;
 
-    // ── Input tightness filter: MOD‐dependent HPF (50Hz@MZ → 120Hz@Modern) ──
-    const float tightFreq = 50.0f + mod * 70.0f;
-    const float tightC = detail::onePoleCoeff (tightFreq, sr);
-    state.tundraTightHP[sp][ch] += (x - state.tundraTightHP[sp][ch]) * tightC;
-    x -= state.tundraTightHP[sp][ch];
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float color = detail::clampF (girth, 0.0f, 1.0f);
+    const float focus = detail::clampF (bias, -1.0f, 1.0f);
+    const float voice = detail::clampF (mod, 0.0f, 1.0f);
+    const float colorCurve = 1.0f - std::pow (1.0f - color, 1.45f);
+    const float focusPos = juce::jmax (0.0f, focus);
+    const float focusNeg = juce::jmax (0.0f, -focus);
 
-    // ── Stage 1: Op‐amp gain + soft clip (ADAA tanh) ──
-    const float gain1 = 1.0f + drive * (20.0f + mod * 8.0f);
-    float s = x * gain1;
-    const float k1 = 1.5f + drive * 4.0f + mod * 2.0f;
-    s = adaaState.process (s, k1);
-
-    // Asymmetry: even‐harmonic injection via bias
-    s += bias * 0.15f * s * std::abs (s);
-
-    // ── Inter‐stage coupling cap HPF ~80Hz ──
-    const float coupC = state.blockCoeffs.tundraCoupC;
-    state.tundraInterHP[sp][ch] += (s - state.tundraInterHP[sp][ch]) * coupC;
-    s -= state.tundraInterHP[sp][ch];
-
-    // ── Stage 2: Hard clip — exponential (MT-2) ↔ algebraic (modern) morph ──
-    const float gain2 = 1.0f + drive * (12.0f + mod * 5.0f);
-    s *= gain2;
-    const float k2 = 1.5f + drive * 6.0f;
-
-    // Exponential clip (MT-2 diode character)
+    auto voiceMix = [voice] (float modern, float mt, float hm) noexcept
     {
-        const float a = s * k2;
-        const float sgn = a >= 0.0f ? 1.0f : -1.0f;
-        const float expClip = sgn * (1.0f - std::exp (-std::abs (a)));
+        return detail::morphThreeWay (voice, modern, mt, hm);
+    };
 
-        // Algebraic clip (modern tight character)
-        const float algClip = s / (1.0f + std::abs (s) * k2);
-
-        // Morph between the two clipping styles
-        s = expClip * (1.0f - mod) + algClip * mod;
+    if (rawMode)
+    {
+        state.tundraInterHP[sp][ch] = 0.0f;
+        state.tundraTightHP[sp][ch] = 0.0f;
+        state.tundraPresZ1[sp][ch] = 0.0f;
+        state.tundraPresZ2[sp][ch] = 0.0f;
     }
 
-    // ── Presence spike: 2.5kHz resonant bump (MT-2 gyrator emulation) ──
-    // Decreases with MOD for cleaner modern tone
-    const float presAmount = (1.0f - mod) * 0.3f;
-    if (presAmount > 0.01f)
+    const float gainA = voiceMix (
+        detail::interpDrive5 (d, 0.88f, 1.08f, 1.72f, 2.62f, 3.70f),
+        detail::interpDrive5 (d, 0.88f, 1.16f, 1.92f, 2.96f, 4.10f),
+        detail::interpDrive5 (d, 0.90f, 1.12f, 1.84f, 2.78f, 3.90f))
+        * juce::jmap (colorCurve, 0.99f, 1.14f);
+
+    const float biasA = focusPos * voiceMix (0.008f, 0.014f, 0.010f)
+                      - focusNeg * voiceMix (0.020f, 0.012f, 0.006f);
+    float stageAIn = x * gainA;
+    float stageAShaped = stageAIn + biasA;
+    stageAShaped += stageAShaped * std::abs (stageAShaped)
+             * voiceMix (0.010f, 0.016f, 0.020f)
+             * (0.30f + colorCurve * 0.70f);
+
+    const float kA = voiceMix (
+        0.80f + d * (0.52f + colorCurve * 0.12f),
+        0.90f + d * (0.62f + colorCurve * 0.16f),
+        0.78f + d * (0.50f + colorCurve * 0.14f));
+    const float rawA = softAdaa.process (stageAShaped, kA);
+    const float rawA0 = std::tanh (kA * biasA);
+    const float slopeARef = kA * (1.0f - rawA0 * rawA0);
+    const float slopeA = std::max (1.0e-4f, gainA * slopeARef);
+    float stageA = detail::normalizeSmallSignal (rawA, rawA0, slopeA);
+
+    float stageBIn = stageA;
+    if (!rawMode)
     {
-        const float presFreq = 2500.0f;
-        const float presQ = 1.5f;
-        const float w0 = kTwoPi * presFreq / sr;
-        const float alpha = std::sin (w0) / (2.0f * presQ);
-        const float cosW = std::cos (w0);
-        const float a0 = 1.0f + alpha;
-        const float b0 =  alpha / a0;
-        const float b2 = -alpha / a0;
-        const float a1n = -2.0f * cosW / a0;
-        const float a2n = (1.0f - alpha) / a0;
+        const float interHz = detail::clampF (
+            voiceMix (125.0f + focusPos * 55.0f - colorCurve * 22.0f,
+                      90.0f + focusPos * 38.0f - colorCurve * 18.0f,
+                      55.0f + focusPos * 18.0f - colorCurve * 8.0f),
+            25.0f, 180.0f);
+        const float interC = detail::onePoleCoeff (interHz, sr);
+        state.tundraInterHP[sp][ch] += (stageA - state.tundraInterHP[sp][ch]) * interC;
+        stageBIn = stageA - state.tundraInterHP[sp][ch];
 
-        const float pres = b0 * s + b2 * state.tundraPresZ2[sp][ch]
-                         - a1n * state.tundraPresZ1[sp][ch] - a2n * state.tundraPresZ2[sp][ch];
-        state.tundraPresZ2[sp][ch] = state.tundraPresZ1[sp][ch];
-        state.tundraPresZ1[sp][ch] = pres;
-
-        s += pres * presAmount;
+        const float bodyReturn = detail::clampF (
+            voiceMix (0.00f, 0.018f, 0.050f)
+                * (0.45f + colorCurve * 0.35f + focusNeg * 0.20f)
+                * (1.0f - d * 0.75f),
+            0.0f, 0.08f);
+        stageBIn = juce::jmap (bodyReturn, stageBIn, stageA);
     }
 
-    return s;
+    const float gainB = voiceMix (
+        detail::interpDrive5 (d, 0.90f, 1.20f, 1.95f, 2.95f, 3.95f),
+        detail::interpDrive5 (d, 0.90f, 1.28f, 2.25f, 3.45f, 4.70f),
+        detail::interpDrive5 (d, 0.92f, 1.22f, 2.05f, 3.00f, 4.05f))
+        * juce::jmap (colorCurve, 1.00f, 1.16f)
+        * (1.0f + focusPos * 0.06f);
+
+    float clipIn = stageBIn * gainB;
+    clipIn += stageBIn * std::abs (stageBIn)
+           * voiceMix (0.020f, 0.028f, 0.034f)
+           * (0.35f + colorCurve * 0.65f);
+
+    const float thresholdBase = voiceMix (
+        juce::jmap (colorCurve, 1.08f, 0.98f),
+        juce::jmap (colorCurve, 1.02f, 0.88f),
+        juce::jmap (colorCurve, 0.98f, 0.82f));
+    const float threshold = thresholdBase * (1.08f - d * 0.22f);
+    const float kneeBase = voiceMix (
+        juce::jmap (colorCurve, 0.30f, 0.18f),
+        juce::jmap (colorCurve, 0.24f, 0.12f),
+        juce::jmap (colorCurve, 0.28f, 0.14f));
+    const float knee = kneeBase * (1.25f - d * 0.35f);
+
+    const float thresholdPos = detail::clampF (
+        threshold * (1.0f - focusPos * 0.10f + focusNeg * 0.05f), 0.45f, 1.65f);
+    const float thresholdNeg = detail::clampF (
+        threshold * (1.0f + focusPos * 0.04f - focusNeg * 0.12f), 0.45f, 1.65f);
+    const float kneePos = std::max (1.0e-4f, knee * (1.0f - focusPos * 0.08f + focusNeg * 0.05f));
+    const float kneeNeg = std::max (1.0e-4f, knee * (1.0f + focusPos * 0.03f - focusNeg * 0.10f));
+
+    float stageB = clipAdaa.process (clipIn, thresholdPos, thresholdNeg, kneePos, kneeNeg);
+    const float avgThreshold = 0.5f * (thresholdPos + thresholdNeg);
+    stageB *= 1.0f / std::sqrt (std::max (avgThreshold, 1.0e-3f));
+
+    if (!rawMode)
+    {
+        const float edgeHz = voiceMix (2300.0f, 1800.0f, 1300.0f);
+        const float edgeC = detail::onePoleCoeff (edgeHz, sr);
+        state.tundraPresZ1[sp][ch] += (stageB - state.tundraPresZ1[sp][ch]) * edgeC;
+        const float edge = stageB - state.tundraPresZ1[sp][ch];
+
+        const float edgeAmt = voiceMix (0.030f, 0.022f, 0.090f)
+                            + colorCurve * voiceMix (0.050f, 0.045f, 0.090f)
+                            + focusPos * 0.040f;
+        stageB += edge * edgeAmt;
+
+        const float lowHz = voiceMix (190.0f, 260.0f, 160.0f);
+        const float lowC = detail::onePoleCoeff (lowHz, sr);
+        state.tundraTightHP[sp][ch] += (stageB - state.tundraTightHP[sp][ch]) * lowC;
+        const float lowBand = state.tundraTightHP[sp][ch];
+        const float lowAmt = voiceMix (-0.02f, 0.02f, 0.10f)
+                           + colorCurve * voiceMix (0.02f, 0.06f, 0.10f)
+                           + focusNeg * 0.08f
+                           - focusPos * 0.03f;
+        stageB += lowBand * lowAmt;
+    }
+
+    const float blendA = voiceMix (
+        juce::jmap (d, 0.03f, 0.0f),
+        juce::jmap (d, 0.02f, 0.0f),
+        juce::jmap (d, 0.015f, 0.0f));
+    return juce::jmap (blendA, stageB, stageA);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2656,14 +2951,14 @@ inline float applyDriveCurve (float driveParam, Model model) noexcept
     {
         case Model::Triode:     exp = 1.85f; break; // TUBE should wake up slightly earlier than legacy power/cascade
         case Model::PushPull:   exp = 2.0f; break;  // power stage should stay cleaner early on
-        case Model::Cascade:    exp = 1.45f; break; // transistor stage should wake up earlier than the old cascade
+        case Model::Cascade:    exp = 0.62f; break; // TRANSISTOR benefits from a more convex UI taper so mid-drive wakes earlier
         case Model::Diode:      exp = 1.3f; break;  // diode OD/clipper should respond more directly
         case Model::Clipper:    exp = 1.0f; break;  // threshold should track the UI directly
         case Model::Tape:       exp = 1.0f; break;  // Tape fitting is done directly in UI-drive space
         case Model::Fuzz:       exp = 2.5f; break;  // feedback controls gain range naturally
         case Model::Doom:       exp = 3.0f; break;  // 2 cascaded BMP clipping stages
         case Model::Destroy:    exp = 2.5f; break;  // plasma: fast attack, wide sustain range
-        case Model::Tundra:     exp = 3.0f; break;  // 2 stages, high combined gain
+        case Model::Tundra:     exp = 2.0f; break;  // metal preamp/pedal should wake up earlier than legacy tundra
         default:                exp = 1.5f; break;
     }
     return std::pow (driveParam, exp);
@@ -2700,12 +2995,7 @@ inline float getAutoGain (Model model, float drive) noexcept
         }
         case Model::Cascade:
         {
-            // processCascade: per-stage gain = 1 + dps*12, k = 1 + dps*3
-            // Each stage independently clips to tanh*0.8 ≈ 0.8.
-            // The cascade does NOT multiply outputs — each stage re-clips.
-            // Peak output ≈ single stage output = tanh(k*gain)*0.8.
-            peakOut = detail::interpDrive5 (drive,
-                                            1.00f, 1.00f, 1.04f, 1.12f, 1.20f);
+            peakOut = 1.0f;
             break;
         }
         case Model::Diode:
@@ -2756,13 +3046,7 @@ inline float getAutoGain (Model model, float drive) noexcept
         }
         case Model::Tundra:
         {
-            // processTundra: stage1 gain = 1+drive*(20+mod*8), stage2 gain = 1+drive*(12+mod*5)
-            // k1 = 1.5+drive*4+mod²*2, k2 = 1.5+drive*6
-            // Two cascaded clip stages (exp + algebraic morph).
-            const float k1 = 1.5f + drive * 4.0f;
-            const float k2 = 1.5f + drive * 6.0f;
-            peakOut = std::tanh (k1) * std::tanh (k2);
-            peakOut = 1.0f + (peakOut - 1.0f) * detail::clampF (drive * 10.0f, 0.0f, 1.0f);
+            peakOut = 1.0f;
             break;
         }
         default: break;
@@ -2851,8 +3135,20 @@ inline void processBlock (State& state,
                 state.tundraTightHP[sp][ch] = 0.0f;
                 state.tundraPresZ1[sp][ch] = 0.0f;
                 state.tundraPresZ2[sp][ch] = 0.0f;
+                state.transistorPreHP[sp][ch] = 0.0f;
+                state.transistorPreEdge[sp][ch] = 0.0f;
+                state.transistorPostLP[sp][ch] = 0.0f;
+                state.transistorDbgPre[sp][ch] = 0.0f;
+                state.transistorDbgCoreIn[sp][ch] = 0.0f;
+                state.transistorDbgCoreOut[sp][ch] = 0.0f;
+                state.transistorDbgRailIn[sp][ch] = 0.0f;
+                state.transistorDbgRailOut[sp][ch] = 0.0f;
+                state.transistorDbgPost[sp][ch] = 0.0f;
+                state.transistorDbgInputPad[sp][ch] = 0.0f;
+                state.transistorDbgSatK[sp][ch] = 0.0f;
+                state.transistorDbgRailThresh[sp][ch] = 0.0f;
                 state.bumpZ1[sp][ch] = state.bumpZ2[sp][ch] = 0.0f;
-                for (int s = 0; s < kMaxCascade; ++s)
+                for (int s = 0; s < 6; ++s)
                     state.doomDC[sp][s][ch] = 0.0f;
             }
         }
@@ -2880,7 +3176,7 @@ inline void processBlock (State& state,
         case Model::Fuzz:     reactBaseWindow = 4096; break;
         case Model::Doom:     reactBaseWindow = 4096; break;
         case Model::Destroy:  reactBaseWindow = 2048; break;
-        case Model::Tundra:   reactBaseWindow = 2048; break;
+        case Model::Tundra:   reactBaseWindow = 1024; break;
         default: break;
     }
 
@@ -2934,10 +3230,10 @@ inline void processBlock (State& state,
             emphCoeffs.postLP = detail::onePoleCoeff (7000.0f, sampleRate);   // transformer BW post
             break;
         case Model::Tundra:
-            emphCoeffs.preHP  = detail::onePoleCoeff (80.0f,   sampleRate);
-            emphCoeffs.preSh  = detail::onePoleCoeff (2000.0f, sampleRate);
+            emphCoeffs.preHP  = detail::onePoleCoeff (70.0f,   sampleRate);
+            emphCoeffs.preSh  = detail::onePoleCoeff (2300.0f, sampleRate);
             emphCoeffs.postHP = detail::onePoleCoeff (35.0f,   sampleRate);
-            emphCoeffs.postLP = detail::onePoleCoeff (6000.0f, sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (5800.0f, sampleRate);
             break;
         default: break;
     }
@@ -2974,6 +3270,22 @@ inline void processBlock (State& state,
     // Drive curve: std::pow only once per block (driveParam is constant within a block)
     const float driveCurved = applyDriveCurve (driveParam, model);
 
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        for (int sp = 0; sp < kMaxSeries; ++sp)
+        {
+            state.transistorDbgPre[sp][ch] = 0.0f;
+            state.transistorDbgCoreIn[sp][ch] = 0.0f;
+            state.transistorDbgCoreOut[sp][ch] = 0.0f;
+            state.transistorDbgRailIn[sp][ch] = 0.0f;
+            state.transistorDbgRailOut[sp][ch] = 0.0f;
+            state.transistorDbgPost[sp][ch] = 0.0f;
+            state.transistorDbgInputPad[sp][ch] = 0.0f;
+            state.transistorDbgSatK[sp][ch] = 0.0f;
+            state.transistorDbgRailThresh[sp][ch] = 0.0f;
+        }
+    }
+
     if (model == Model::Tape)
     {
         const bool tapeActive = driveCurved > 0.001f || modParam < 0.999f;
@@ -3006,6 +3318,81 @@ inline void processBlock (State& state,
         state.lastTapeDrive = driveCurved;
         state.tapeWasActive = tapeActive;
     }
+    else if (model == Model::Cascade || model == Model::Tundra)
+    {
+        float& lastDrive = (model == Model::Cascade) ? state.lastCascadeDrive : state.lastTundraDrive;
+        float& lastGirth = (model == Model::Cascade) ? state.lastCascadeGirth : state.lastTundraGirth;
+        float& lastMod   = (model == Model::Cascade) ? state.lastCascadeMod   : state.lastTundraMod;
+        float& lastBias  = (model == Model::Cascade) ? state.lastCascadeBias  : state.lastTundraBias;
+        float& lastReact = (model == Model::Cascade) ? state.lastCascadeReact : state.lastTundraReact;
+        const float shapeSig = driveCurved
+                             + 0.35f * detail::clampF (girthParam, 0.0f, 1.0f)
+                             + 0.25f * detail::clampF (modParam, 0.0f, 1.0f)
+                             + 0.15f * std::abs (detail::clampF (biasParam, -1.0f, 1.0f))
+                             + 0.25f * detail::clampF (reactParam, 0.0f, 1.0f);
+        const bool active = shapeSig > 0.001f;
+
+        float& lastShape = (model == Model::Cascade) ? state.lastCascadeShape : state.lastTundraShape;
+        bool& wasActive = (model == Model::Cascade) ? state.cascadeWasActive : state.tundraWasActive;
+        const bool shapeJump = std::abs (shapeSig - lastShape) > 0.18f;
+        // ADAA state is only valid for the exact same transfer function.
+        // Transistor/Tundra vary tanh-k and clip thresholds with parameters,
+        // so even small shape changes must reset stage ADAA state.
+        const bool driveJump = std::abs (driveCurved - lastDrive) > 1.0e-4f;
+        const bool girthJump = std::abs (detail::clampF (girthParam, 0.0f, 1.0f) - lastGirth) > 1.0e-4f;
+        const bool modJump = std::abs (detail::clampF (modParam, 0.0f, 1.0f) - lastMod) > 1.0e-4f;
+        const bool biasJump = std::abs (detail::clampF (biasParam, -1.0f, 1.0f) - lastBias) > 1.0e-4f;
+        const bool reactJump = std::abs (detail::clampF (reactParam, 0.0f, 1.0f) - lastReact) > 1.0e-4f;
+
+        if (shapeJump || driveJump || girthJump || modJump || biasJump || reactJump || active != wasActive)
+        {
+            state.sDrive = driveCurved;
+            state.sGirth = detail::clampF (girthParam, 0.0f, 1.0f);
+            state.sMod   = detail::clampF (modParam, 0.0f, 1.0f);
+            state.sBias  = detail::clampF (biasParam, -1.0f, 1.0f);
+            state.sReact = detail::clampF (reactParam, 0.0f, 1.0f);
+            state.sVar   = detail::clampF (varParam, 0.0f, 1.0f);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                for (int sp = 0; sp < kMaxSeries; ++sp)
+                {
+                    state.react[sp][ch].reset();
+                    state.mbReact[sp][ch].reset();
+                    state.sagEnvelope[sp][ch] = 0.0f;
+                    state.tapeComp[sp][ch].reset();
+                    state.emphasis[sp][ch].reset();
+                    state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
+                    state.wsAdaa[sp][ch].reset();
+                    state.clipperAdaa[sp][ch].reset();
+                    state.powerSag[sp][ch] = 0.0f;
+                    state.tundraInterHP[sp][ch] = 0.0f;
+                    state.tundraTightHP[sp][ch] = 0.0f;
+                    state.tundraPresZ1[sp][ch] = 0.0f;
+                    state.tundraPresZ2[sp][ch] = 0.0f;
+                    state.transistorPreHP[sp][ch] = 0.0f;
+                    state.transistorPreEdge[sp][ch] = 0.0f;
+                    state.transistorPostLP[sp][ch] = 0.0f;
+                    state.transistorDbgPre[sp][ch] = 0.0f;
+                    state.transistorDbgCoreIn[sp][ch] = 0.0f;
+                    state.transistorDbgCoreOut[sp][ch] = 0.0f;
+                    state.transistorDbgRailIn[sp][ch] = 0.0f;
+                    state.transistorDbgRailOut[sp][ch] = 0.0f;
+                    state.transistorDbgPost[sp][ch] = 0.0f;
+                    state.transistorDbgInputPad[sp][ch] = 0.0f;
+                    state.transistorDbgSatK[sp][ch] = 0.0f;
+                    state.transistorDbgRailThresh[sp][ch] = 0.0f;
+                }
+            }
+        }
+
+        lastDrive = driveCurved;
+        lastGirth = detail::clampF (girthParam, 0.0f, 1.0f);
+        lastMod   = detail::clampF (modParam, 0.0f, 1.0f);
+        lastBias  = detail::clampF (biasParam, -1.0f, 1.0f);
+        lastReact = detail::clampF (reactParam, 0.0f, 1.0f);
+        lastShape = shapeSig;
+        wasActive = active;
+    }
 
     // Auto-gain: precompute with target drive (std::tanh per-block, not per-sample)
     const float preAutoGain = skipAutoGain ? 1.0f : getAutoGain (model, driveCurved);
@@ -3032,7 +3419,8 @@ inline void processBlock (State& state,
     state.currentSeriesCount = juce::jlimit (1, kMaxSeries, seriesCount);
     const bool rawStripFilters = rawMode && (model == Model::Tape || model == Model::Triode
                                           || model == Model::Cascade
-                                          || model == Model::Clipper || model == Model::Diode);
+                                          || model == Model::Clipper || model == Model::Diode
+                                          || model == Model::Tundra);
 
     if (rawMode)
     {
@@ -3066,12 +3454,25 @@ inline void processBlock (State& state,
     for (int i = 0; i < numSamples; ++i)
     {
         // ── Parameter smoothing (once per actual sample, NOT per series pass) ──
-        state.sDrive += (driveCurved - state.sDrive) * oneMinusSmooth;
-        state.sGirth += (girthParam  - state.sGirth) * oneMinusSmooth;
-        state.sMod   += (modParam   - state.sMod)   * oneMinusSmooth;
-        state.sBias  += (biasParam  - state.sBias)  * oneMinusSmooth;
-        state.sReact += (reactParam - state.sReact) * oneMinusSmooth;
-        state.sVar   += (varParam   - state.sVar)   * oneMinusSmooth;
+        const bool freezeBlackBoxParams = (model == Model::Cascade);
+        if (freezeBlackBoxParams)
+        {
+            state.sDrive = driveCurved;
+            state.sGirth = girthParam;
+            state.sMod   = modParam;
+            state.sBias  = biasParam;
+            state.sReact = reactParam;
+            state.sVar   = varParam;
+        }
+        else
+        {
+            state.sDrive += (driveCurved - state.sDrive) * oneMinusSmooth;
+            state.sGirth += (girthParam  - state.sGirth) * oneMinusSmooth;
+            state.sMod   += (modParam   - state.sMod)   * oneMinusSmooth;
+            state.sBias  += (biasParam  - state.sBias)  * oneMinusSmooth;
+            state.sReact += (reactParam - state.sReact) * oneMinusSmooth;
+            state.sVar   += (varParam   - state.sVar)   * oneMinusSmooth;
+        }
 
         const float drive = state.sDrive;
         const float girth = state.sGirth;
@@ -3230,7 +3631,7 @@ inline void processBlock (State& state,
                 float effMod   = detail::clampF (mod + shapeMod, 0.0f, 1.0f);
 
                 // ── INTERNAL PRE-EMPHASIS (per series pass, unless rawMode) ──
-                if (!rawMode)
+                if (!rawMode && model != Model::Cascade)
                     x = preEmphasize (x, stageEmphasis, model, effDrive, effMod, emphCoeffs);
 
                 // ── REACT: per-stage energy tracking + model processing ──
@@ -3241,9 +3642,10 @@ inline void processBlock (State& state,
                 MultibandSagResult mbSag;
                 bool useMbSag = false;
 
-                if (react > 0.001f && model != Model::Triode
+                if (react > 0.001f && model != Model::Triode && model != Model::Cascade
                     && !(rawStripFilters && (model == Model::Tape || model == Model::Cascade
-                                          || model == Model::Clipper || model == Model::Diode)))
+                                          || model == Model::Clipper || model == Model::Diode
+                                          || model == Model::Tundra)))
                 {
                     const int window = std::min (
                         (int) ((float) reactBaseWindow * (1.0f + react * 3.0f) * sampleRate / 44100.0f),
@@ -3273,19 +3675,6 @@ inline void processBlock (State& state,
                             const float sagSq = sagEnv * sagEnv;
                             sagBias = -sagSq * react * 0.8f;
                             effDrive = std::min (effDrive * (1.0f + sagSq * react * 2.0f), 1.0f);
-                            break;
-                        }
-                        case Model::Cascade:
-                        {
-                            const float type = detail::smoothStep01 (effMod);
-                            const float compAmt = detail::clampF (react * juce::jmap (type, 0.72f, 1.10f), 0.0f, 1.0f);
-                            const float program = detail::clampF (sagEnv * juce::jmap (type, 0.65f, 1.00f), 0.0f, 1.0f);
-                            const TapeCompResult comp = processTapeComp (
-                                x, stageTapeComp, compAmt, effDrive, program, sampleRate);
-                            x = comp.sample;
-                            sagPre = 1.0f;
-                            sagPost = 1.0f;
-                            stageSagEnvelope = comp.amount;
                             break;
                         }
                         case Model::Diode:
@@ -3322,10 +3711,29 @@ inline void processBlock (State& state,
                             stageSagEnvelope = comp.amount;
                             break;
                         }
+                        case Model::Tundra:
+                        {
+                            const float voice = detail::clampF (effMod, 0.0f, 1.0f);
+                            const float compAmt = detail::morphThreeWay (voice,
+                                                                         react * 1.10f,
+                                                                         react * 0.92f,
+                                                                         react * 0.78f);
+                            const float program = detail::clampF (
+                                sagEnv * detail::morphThreeWay (voice, 0.70f, 0.82f, 0.95f),
+                                0.0f, 1.0f);
+                            const TapeCompResult comp = processTapeComp (
+                                x, stageTapeComp,
+                                detail::clampF (compAmt, 0.0f, 1.0f),
+                                effDrive, program, sampleRate);
+                            x = comp.sample;
+                            sagPre = 1.0f;
+                            sagPost = 1.0f;
+                            stageSagEnvelope = comp.amount;
+                            break;
+                        }
                         case Model::Fuzz:
                         case Model::Doom:
                         case Model::Destroy:
-                        case Model::Tundra:
                             doSubOctave = true;
                             break;
                         default: break;
@@ -3338,11 +3746,16 @@ inline void processBlock (State& state,
                     stageTapeComp.hfEnv *= 0.5f;
                     stageSagEnvelope = 0.0f;
                 }
-                else if (model == Model::Cascade || model == Model::Clipper || model == Model::Diode)
+                else if (model == Model::Clipper
+                      || model == Model::Diode || model == Model::Tundra)
                 {
                     stageTapeComp.gain = 1.0f;
                     stageTapeComp.env *= 0.5f;
                     stageTapeComp.hfEnv *= 0.5f;
+                    stageSagEnvelope = 0.0f;
+                }
+                else if (model == Model::Cascade)
+                {
                     stageSagEnvelope = 0.0f;
                 }
                 else if (model == Model::Triode && react <= 0.001f)
@@ -3398,7 +3811,8 @@ inline void processBlock (State& state,
                         break;
                     case Model::Cascade:
                         x = processTransistorStage (x, effDrive, girth, effBias, effMod,
-                                                    state, ch,
+                                                    react, rawMode,
+                                                    state, ch, sampleRate,
                                                     state.wsAdaa[sp][ch],
                                                     state.clipperAdaa[sp][ch]);
                         break;
@@ -3433,9 +3847,10 @@ inline void processBlock (State& state,
                                              state.wsAdaa2[sp][ch], isFirst);
                         break;
                     case Model::Tundra:
-                        x = processTundra (x, effDrive, effBias, effMod,
-                                           state, ch, sampleRate,
-                                           state.wsAdaa[sp][ch]);
+                        x = processTundra (x, effDrive, girth, effBias, effMod,
+                                           rawMode, state, ch, sampleRate,
+                                           state.wsAdaa[sp][ch],
+                                           state.clipperAdaa[sp][ch]);
                         break;
                     default: break;
                 }
@@ -3486,15 +3901,16 @@ inline void processBlock (State& state,
                 {
                     x = applyTriodeGirth (x, girth);
                 }
-                else if (model == Model::Cascade || model == Model::Clipper || model == Model::Diode)
+                else if (model == Model::Cascade || model == Model::Clipper
+                      || model == Model::Diode || model == Model::Tundra)
                 {
-                    // GIRTH is already encoded inside the transistor/diode/clipper core.
+                    // GIRTH/COLOR is already encoded inside these cores.
                 }
                 else
                     x = applyGirth (x, girth, state.girthAdaa[sp][ch]);
 
                 // ── INTERNAL DE-EMPHASIS (per series pass, unless rawMode) ──
-                if (!rawMode)
+                if (!rawMode && model != Model::Cascade)
                     x = deEmphasize (x, stageEmphasis, model, effDrive, effMod, emphCoeffs);
 
                 // ── DC BLOCKER (1st-order HPF at 5Hz, per series pass) ──
@@ -3518,6 +3934,8 @@ inline void processBlock (State& state,
                         x *= getTriodeLevelTrim (drive, mod, state.currentSeriesCount);
                     else if (model == Model::Cascade)
                         x *= getTransistorLevelTrim (drive, mod);
+                    else if (model == Model::Tundra)
+                        x *= getTundraLevelTrim (drive, mod, girth);
 
                     if (!skipAutoGain)
                         x *= state.blockCoeffs.autoGain;
