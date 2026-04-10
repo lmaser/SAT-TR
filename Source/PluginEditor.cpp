@@ -48,7 +48,7 @@ namespace
 			case 2: return 3;  // TUBE
 			case 3: return 3;  // legacy POWER LEG -> TUBE
 			case 10: return 4; // CLIPPER
-			case 4: return 5;  // CASCADE
+			case 4: return 5;  // TRANSISTOR
 			case 5: return 6;  // DIODE
 			case 6: return 7;  // TUNDRA
 			case 7: return 8;  // FUZZ
@@ -66,7 +66,7 @@ namespace
 			case 2:  return 1; // TAPE
 			case 3:  return 2; // TUBE
 			case 4:  return 10; // CLIPPER
-			case 5:  return 4; // CASCADE
+			case 5:  return 4; // TRANSISTOR
 			case 6:  return 5; // DIODE
 			case 7:  return 6; // TUNDRA
 			case 8:  return 7; // FUZZ
@@ -1380,7 +1380,7 @@ void CABTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 		r.satType.addItem ("TAPE",      2);
 		r.satType.addItem ("TUBE",      3);
 		r.satType.addItem ("CLIPPER",   4);
-		r.satType.addItem ("CASCADE",   5);
+		r.satType.addItem ("TRANSISTOR", 5);
 		r.satType.addItem ("DIODE",     6);
 		r.satType.addItem ("TUNDRA",    7);
 		r.satType.addItem ("FUZZ",      8);
@@ -2715,7 +2715,14 @@ bool CABTRAudioProcessorEditor::refreshLegendTextCache()
 		switch (satModel)
 		{
 			case 1:                          reactLabels[l] = "COMP";  break; // Tape
-			case 2: case 4:                  reactLabels[l] = "SAG";   break; // Tube, Cascade
+			case 2:                          reactLabels[l] = "SAG";   break; // Tube
+			case 4:
+				driveLabels[l] = "GAIN";
+				girthLabels[l] = "BODY";
+				modLabels[l]   = "TYPE";
+				biasLabels[l]  = "BIAS";
+				reactLabels[l] = "COMP";
+				break;
 			case 10:
 				driveLabels[l] = "THR";
 				girthLabels[l] = "KNEE";
@@ -2723,7 +2730,12 @@ bool CABTRAudioProcessorEditor::refreshLegendTextCache()
 				biasLabels[l]  = "SYM";
 				reactLabels[l] = "COMP";
 				break;
-			case 5:                          reactLabels[l] = "DRIFT"; break; // Diode
+			case 5:
+				girthLabels[l] = "COND";
+				modLabels[l]   = "TOPO";
+				biasLabels[l]  = "SYM";
+				reactLabels[l] = "COMP";
+				break;
 			case 6: case 7: case 8: case 9: reactLabels[l] = "OCT";   break; // Tundra/Fuzz/Doom/Destroy
 			default:                         reactLabels[l] = "RCT";   break; // Clean/unknown
 		}

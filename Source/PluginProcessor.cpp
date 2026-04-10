@@ -250,7 +250,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamMixA, "Mix A", kGlobalMixMin, kGlobalMixMax, kGlobalMixDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSatTypeA, "Sat Type A",
-            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TUBE", "CASCADE", "DIODE", "TUNDRA", "FUZZ", "DOOM", "DESTROY", "CLIPPER" }, kSatTypeDefault));
+            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TUBE", "TRANSISTOR", "DIODE", "TUNDRA", "FUZZ", "DOOM", "DESTROY", "CLIPPER" }, kSatTypeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatDriveA, "Sat Drive A",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
@@ -388,7 +388,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamMixB, "Mix B", kGlobalMixMin, kGlobalMixMax, kGlobalMixDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSatTypeB, "Sat Type B",
-            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TUBE", "CASCADE", "DIODE", "TUNDRA", "FUZZ", "DOOM", "DESTROY", "CLIPPER" }, kSatTypeDefault));
+            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TUBE", "TRANSISTOR", "DIODE", "TUNDRA", "FUZZ", "DOOM", "DESTROY", "CLIPPER" }, kSatTypeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatDriveB, "Sat Drive B",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
@@ -526,7 +526,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamMixC, "Mix C", kGlobalMixMin, kGlobalMixMax, kGlobalMixDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSatTypeC, "Sat Type C",
-            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TUBE", "CASCADE", "DIODE", "TUNDRA", "FUZZ", "DOOM", "DESTROY", "CLIPPER" }, kSatTypeDefault));
+            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TUBE", "TRANSISTOR", "DIODE", "TUNDRA", "FUZZ", "DOOM", "DESTROY", "CLIPPER" }, kSatTypeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatDriveC, "Sat Drive C",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
@@ -2448,9 +2448,9 @@ void CABTRAudioProcessor::calculateAutoAlignment()
 				break;
 			case SatEngine::Model::Cascade:
 				ec.preHP  = SatEngine::detail::onePoleCoeff (30.0f,   sr);
-				ec.preSh  = SatEngine::detail::onePoleCoeff (800.0f,  sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (3500.0f, sr);
-				ec.postHP = SatEngine::detail::onePoleCoeff (70.0f,   sr);
+				ec.preSh  = SatEngine::detail::onePoleCoeff (2600.0f, sr);
+				ec.postLP = SatEngine::detail::onePoleCoeff (9000.0f, sr);
+				ec.postHP = SatEngine::detail::onePoleCoeff (35.0f,   sr);
 				break;
 			case SatEngine::Model::PushPull:
 				ec.postLP = SatEngine::detail::onePoleCoeff (5000.0f, sr);

@@ -30,8 +30,8 @@ enum class Model : int
     Tape      = 1,   // Tape stage — soft magnetic compression + losses
     Triode    = 2,   // TUBE — 12AX7 -> EL34/6L6-inspired morph via MOD
     PushPull  = 3,   // Legacy power stage — retained for compatibility
-    Cascade   = 4,   // Cascaded triode stages (1-4, fractional crossfade)
-    Diode     = 5,   // Shockley diode clipper — Ge/Si blend
+    Cascade   = 4,   // TRANSISTOR â€” legacy slot repurposed for BJT <-> FET stages
+    Diode     = 5,   // DIODE — feedback/hard/open diode clipper topologies
     Tundra    = 6,   // Metal Zone→Modern morph — dual-stage cascaded clipping
     Fuzz      = 7,   // Transistor fuzz — Ge/Si stages with bias starving
     Doom      = 8,   // Multi-stage doom fuzz — Big Muff inspired wall-of-sound
@@ -279,6 +279,13 @@ namespace adaa
                 return clipPositiveAD1 (x, thresholdPos, kneePos);
 
             return clipPositiveAD1 (-x, thresholdNeg, kneeNeg);
+        }
+
+        inline float process (float x, float k) noexcept
+        {
+            const float threshold = std::max (1.0e-4f, 1.0f / std::max (k, 1.0e-4f));
+            const float knee = threshold * 0.18f;
+            return process (x, threshold, threshold, knee, knee);
         }
 
         inline float process (float x,
@@ -1382,17 +1389,39 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
         case Model::Cascade:
         {
             st.preHP += (x - st.preHP) * ec.preHP;
-            float hp = x - st.preHP;
+            const float hp = x - st.preHP;
             st.preSh += (hp - st.preSh) * ec.preSh;
             const float edge = hp - st.preSh;
-            return hp + edge * (0.01f + drive * mod * 0.06f);
+            const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
+            const float bjt = hp * (0.985f + drive * 0.025f)
+                            + edge * (0.018f + drive * 0.045f);
+            const float fet = juce::jmap (0.18f + drive * 0.08f, x, hp)
+                            + edge * (0.006f + drive * 0.020f);
+            return juce::jmap (type, bjt, fet);
         }
         case Model::PushPull:
             return x;
         case Model::Diode:
         {
             st.preHP += (x - st.preHP) * ec.preHP;
-            return x - st.preHP;
+            const float hp = x - st.preHP;
+            st.preSh += (hp - st.preSh) * ec.preSh;
+            const float edge = hp - st.preSh;
+            const float topo = detail::clampF (mod, 0.0f, 1.0f);
+
+            const float feedback = hp + edge * (0.032f + drive * 0.060f);
+            const float hard = juce::jmap (0.56f, x, hp) + edge * (0.010f + drive * 0.028f);
+
+            if (topo <= 0.5f)
+            {
+                const float t = detail::smoothStep01 (topo * 2.0f);
+                return juce::jmap (t, feedback, hard);
+            }
+
+            const float u = detail::smoothStep01 ((topo - 0.5f) * 2.0f);
+            const float open = juce::jmap (0.16f + drive * 0.05f, x, hp)
+                             + edge * (0.007f + drive * 0.020f);
+            return juce::jmap (u, hard, open);
         }
         case Model::Clipper:
         {
@@ -1482,8 +1511,13 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
         case Model::Cascade:
         {
             st.postLP += (y - st.postLP) * ec.postLP;
-            const float lpMix = 0.05f + drive * (0.18f + mod * 0.10f);
-            return y + (st.postLP - y) * lpMix;
+            const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
+            const float bright = y - st.postLP;
+            const float bjt = y + (st.postLP - y) * (0.08f + drive * 0.16f)
+                            + bright * (0.010f + (1.0f - drive) * 0.012f);
+            const float fet = y + (st.postLP - y) * (0.16f + drive * 0.24f)
+                            + bright * (0.004f + (1.0f - drive) * 0.008f);
+            return juce::jmap (type, bjt, fet);
         }
         case Model::PushPull:
         {
@@ -1494,7 +1528,21 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
         case Model::Diode:
         {
             st.postLP += (y - st.postLP) * ec.postLP;
-            return st.postLP;
+            const float topo = detail::clampF (mod, 0.0f, 1.0f);
+            const float feedback = y + (st.postLP - y) * (0.18f + drive * 0.28f);
+            const float hard = y + (st.postLP - y) * (0.045f + drive * 0.14f);
+
+            if (topo <= 0.5f)
+            {
+                const float t = detail::smoothStep01 (topo * 2.0f);
+                return juce::jmap (t, feedback, hard);
+            }
+
+            const float u = detail::smoothStep01 ((topo - 0.5f) * 2.0f);
+            const float bright = y - st.postLP;
+            const float open = y + (st.postLP - y) * (0.015f + drive * 0.060f)
+                             + bright * (0.016f + (1.0f - drive) * 0.014f);
+            return juce::jmap (u, hard, open);
         }
         case Model::Clipper:
         {
@@ -1823,9 +1871,92 @@ inline float processCascade (float x, float drive, float bias, float mod,
 }
 
 // DIODE: Shockley equation diode clipper — Ge/Si blend
-inline float processDiode (float x, float drive, float bias, float mod,
-                           adaa::TanhADAA& adaaState) noexcept
+inline float getTransistorLevelTrim (float drive, float mod) noexcept
 {
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
+    const float bjtTrim = detail::interpDrive5 (d,
+                                                1.02f, 1.01f, 0.99f, 0.97f, 0.95f);
+    const float fetTrim = detail::interpDrive5 (d,
+                                                1.06f, 1.04f, 1.01f, 0.98f, 0.96f);
+    return juce::jmap (type, bjtTrim, fetTrim);
+}
+
+// TRANSISTOR: common-emitter/common-source inspired black box.
+// MOD morphs BJT punch into softer FET behaviour while GIRTH/BODY relaxes
+// degeneration and lets more low-mid energy hit the nonlinear stage.
+inline float processTransistorStage (float x, float drive, float girth, float bias, float mod,
+                                     State& state, int ch,
+                                     adaa::TanhADAA& satAdaa,
+                                     adaa::ClipperADAA& clipAdaa) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float body = detail::clampF (girth, 0.0f, 1.0f);
+    const float b = detail::clampF (bias, -1.0f, 1.0f);
+    const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
+    const float bodyCurve = 1.0f - std::pow (1.0f - body, 1.55f);
+
+    const int sp = state.currentSeriesPass;
+    float& dyn = state.powerSag[sp][ch];
+    const float dynTarget = x * (0.030f + type * 0.015f);
+    dyn += (dynTarget - dyn) * (0.010f + d * 0.018f);
+
+    const float bjtDrive = detail::interpDrive5 (d,
+                                                 0.92f, 1.25f, 2.05f, 3.60f, 5.80f)
+                         * juce::jmap (bodyCurve, 0.92f, 1.35f);
+    const float fetDrive = detail::interpDrive5 (d,
+                                                 0.96f, 1.18f, 1.70f, 2.45f, 3.75f)
+                         * juce::jmap (bodyCurve, 0.98f, 1.22f);
+    const float driveGain = juce::jmap (type, bjtDrive, fetDrive);
+
+    const float bjtBias = 0.015f + b * 0.28f + dyn * 0.11f;
+    const float fetBias = 0.040f + b * 0.17f + dyn * 0.07f;
+    const float opBias = juce::jmap (type, bjtBias, fetBias);
+
+    float s = x * driveGain + opBias;
+    const float oddBjt = s * std::abs (s) * (0.028f + bodyCurve * 0.120f);
+    const float oddFet = -s * std::abs (s) * (0.020f + bodyCurve * 0.060f);
+    const float cubicBjt = s * s * s * (0.018f + d * 0.050f);
+    const float cubicFet = s * s * s * (0.030f + d * 0.040f);
+    s += juce::jmap (type, oddBjt, oddFet);
+    s += juce::jmap (type, cubicBjt, cubicFet);
+
+    const float satK = juce::jmap (type,
+                                   0.95f + d * (0.75f + bodyCurve * 0.25f),
+                                   0.80f + d * (0.40f + bodyCurve * 0.18f));
+    const float raw = satAdaa.process (s, satK);
+    const float slope0 = satK * driveGain * juce::jmap (type, 1.00f, 0.92f);
+    const float norm = detail::normalizeSmallSignal (raw, 0.0f, slope0);
+
+    const float clipDrive = juce::jmap (type,
+                                        1.00f + d * 0.28f,
+                                        0.94f + d * 0.15f);
+    const float posThrBase = juce::jmap (type,
+                                         juce::jmap (bodyCurve, 0.92f, 1.14f),
+                                         juce::jmap (bodyCurve, 1.00f, 1.20f));
+    const float negThrBase = juce::jmap (type,
+                                         juce::jmap (bodyCurve, 0.80f, 1.00f),
+                                         juce::jmap (bodyCurve, 0.92f, 1.10f));
+    const float posThresh = posThrBase * (1.0f - juce::jmax (0.0f, b) * juce::jmap (type, 0.16f, 0.08f));
+    const float negThresh = negThrBase * (1.0f - juce::jmax (0.0f, -b) * juce::jmap (type, 0.20f, 0.12f));
+    const float knee = juce::jmap (type,
+                                   juce::jmap (bodyCurve, 0.26f, 0.10f),
+                                   juce::jmap (bodyCurve, 0.30f, 0.16f));
+    const float clip = clipAdaa.process (norm * clipDrive,
+                                         posThresh, negThresh,
+                                         knee, knee * juce::jmap (type, 0.92f, 1.08f));
+    const float clipMix = juce::jmap (type,
+                                      0.24f + d * 0.16f,
+                                      0.14f + d * 0.12f);
+    float out = juce::jmap (clipMix, norm, clip);
+    out *= juce::jmap (type, 1.00f, 0.98f);
+    return out;
+}
+
+inline float processDiode (float x, float drive, float girth, float bias, float mod,
+                           adaa::ClipperADAA& adaaState) noexcept
+{
+    juce::ignoreUnused (girth);
     const float gain = 1.0f + drive * 40.0f;
     float s = x * gain;
 
@@ -1848,6 +1979,80 @@ inline float processDiode (float x, float drive, float bias, float mod,
     return shaped;
 }
 
+inline float processDiodeStage (float x, float drive, float girth, float bias, float mod,
+                                adaa::ClipperADAA& adaaState) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float c = detail::clampF (girth, 0.0f, 1.0f);
+    const float s = detail::clampF (bias, -1.0f, 1.0f);
+    const float t = detail::clampF (mod, 0.0f, 1.0f);
+
+    const float condCurve = 1.0f - std::pow (1.0f - c, 1.7f);
+    const float condDriveCurve = 1.0f - std::pow (1.0f - c, 1.35f);
+    const float condThreshold = juce::jmap (condCurve, 0.68f, 1.14f);
+    const float condKnee = juce::jmap (condCurve, 0.24f, 0.075f);
+    const float condDrive = juce::jmap (condDriveCurve, 1.00f, 1.12f);
+
+    const float driveFb = detail::interpDrive5 (d, 1.00f, 1.45f, 2.80f, 5.80f, 9.50f);
+    const float driveHard = detail::interpDrive5 (d, 1.00f, 2.20f, 5.20f, 10.80f, 18.00f);
+    const float driveOpen = detail::interpDrive5 (d, 1.00f, 1.65f, 3.40f, 6.10f, 9.60f);
+
+    float driveGain = driveHard;
+    float thresholdMul = 1.0f;
+    float kneeMul = 1.0f;
+    float cleanBlend = 0.0f;
+    float voiceTrim = 1.0f;
+    float symRange = 0.34f;
+    float edgeShape = 0.0f;
+
+    if (t <= 0.5f)
+    {
+        const float u = detail::smoothStep01 (t * 2.0f);
+        driveGain = juce::jmap (u, driveFb, driveHard);
+        thresholdMul = juce::jmap (u, 0.92f, 0.82f);
+        kneeMul = juce::jmap (u, 1.35f, 0.58f);
+        cleanBlend = juce::jmap (u, 0.0f, 0.02f);
+        voiceTrim = juce::jmap (u, 1.00f, 0.96f);
+        symRange = juce::jmap (u, 0.28f, 0.38f);
+        edgeShape = juce::jmap (u, 0.10f, 0.03f);
+    }
+    else
+    {
+        const float u = detail::smoothStep01 ((t - 0.5f) * 2.0f);
+        driveGain = juce::jmap (u, driveHard, driveOpen);
+        thresholdMul = juce::jmap (u, 0.82f, 1.02f);
+        kneeMul = juce::jmap (u, 0.58f, 1.00f);
+        cleanBlend = juce::jmap (u, 0.02f, 0.16f);
+        voiceTrim = juce::jmap (u, 0.96f, 1.07f);
+        symRange = juce::jmap (u, 0.38f, 0.32f);
+        edgeShape = juce::jmap (u, 0.03f, 0.08f);
+    }
+
+    const float threshold = condThreshold * thresholdMul;
+    const float knee = std::max (1.0e-4f, condKnee * kneeMul);
+
+    const float thresholdPos = detail::clampF (threshold * (1.0f + s * symRange), 0.22f, 1.65f);
+    const float thresholdNeg = detail::clampF (threshold * (1.0f - s * symRange), 0.22f, 1.65f);
+    const float kneePos = std::max (1.0e-4f, knee * (1.0f - s * 0.18f));
+    const float kneeNeg = std::max (1.0e-4f, knee * (1.0f + s * 0.18f));
+
+    float clipIn = x * driveGain * condDrive;
+    clipIn += x * std::abs (x) * edgeShape;
+
+    float clipped = adaaState.process (clipIn, thresholdPos, thresholdNeg,
+                                       kneePos, kneeNeg);
+
+    clipped *= 2.0f / (thresholdPos + thresholdNeg);
+
+    if (cleanBlend > 0.0001f)
+    {
+        const float clean = detail::clampF (x * juce::jmap (c, 0.96f, 1.06f), -1.30f, 1.30f);
+        clipped = juce::jmap (cleanBlend, clipped, clean);
+    }
+
+    return clipped * voiceTrim;
+}
+
 // CLIPPER: threshold-driven clipper with continuous soft->hard knee control
 // and a voice morph from broadband classic -> TS-style -> Klon-style.
 inline float processClipper (float x, float drive, float girth, float bias, float mod,
@@ -1862,10 +2067,11 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     // This makes the control behave like a real threshold while preserving a
     // practical output range similar to pro clippers and pedal stages.
     const float threshold = detail::interpDrive5 (d,
-                                                  1.00f, 0.86f, 0.68f, 0.46f, 0.24f);
+                                                  1.08f, 0.92f, 0.72f, 0.48f, 0.24f);
 
     float voiceScale = 1.0f;
     float cleanBlend = 0.0f;
+    float voiceLift = 1.0f;
     if (m <= 0.5f)
     {
         const float t = detail::smoothStep01 (m * 2.0f);
@@ -1876,6 +2082,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
         const float u = detail::smoothStep01 ((m - 0.5f) * 2.0f);
         voiceScale = juce::jmap (u, 1.08f, 0.92f); // Klon opens back up
         cleanBlend = 0.18f * u;
+        voiceLift = juce::jmap (u, 1.0f, 1.12f);
     }
 
     const float clipIn = x * (voiceScale / std::max (threshold, 0.05f));
@@ -1884,7 +2091,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     // thresholds independently, but keep their mean around unity.
     const float thresholdPos = detail::clampF (1.0f + b * 0.45f, 0.45f, 1.55f);
     const float thresholdNeg = detail::clampF (1.0f - b * 0.45f, 0.45f, 1.55f);
-    const float kneeSoft = 0.01f + (1.0f - k) * 0.98f;
+    const float kneeSoft = 0.01f + (1.0f - k) * 0.56f;
     const float kneePos = std::max (1.0e-4f, thresholdPos * kneeSoft);
     const float kneeNeg = std::max (1.0e-4f, thresholdNeg * kneeSoft);
 
@@ -1900,7 +2107,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
         clipped = juce::jmap (cleanBlend, clipped, clean);
     }
 
-    return clipped * juce::jmap (d, 0.98f, 0.92f);
+    return clipped * voiceLift * juce::jmap (d, 0.98f, 0.92f);
 }
 
 // TAPE: ADAA tape stage with two fitted families:
@@ -2449,8 +2656,8 @@ inline float applyDriveCurve (float driveParam, Model model) noexcept
     {
         case Model::Triode:     exp = 1.85f; break; // TUBE should wake up slightly earlier than legacy power/cascade
         case Model::PushPull:   exp = 2.0f; break;  // power stage should stay cleaner early on
-        case Model::Cascade:    exp = 2.0f; break;  // multi-stage, gain compounds
-        case Model::Diode:      exp = 1.8f; break;  // single stage, high gain (×40)
+        case Model::Cascade:    exp = 1.45f; break; // transistor stage should wake up earlier than the old cascade
+        case Model::Diode:      exp = 1.3f; break;  // diode OD/clipper should respond more directly
         case Model::Clipper:    exp = 1.0f; break;  // threshold should track the UI directly
         case Model::Tape:       exp = 1.0f; break;  // Tape fitting is done directly in UI-drive space
         case Model::Fuzz:       exp = 2.5f; break;  // feedback controls gain range naturally
@@ -2497,15 +2704,12 @@ inline float getAutoGain (Model model, float drive) noexcept
             // Each stage independently clips to tanh*0.8 ≈ 0.8.
             // The cascade does NOT multiply outputs — each stage re-clips.
             // Peak output ≈ single stage output = tanh(k*gain)*0.8.
-            const float dps = drive * 0.5f;
-            const float stageGain = 1.0f + dps * 12.0f;
-            const float k = 1.0f + dps * 3.0f;
-            peakOut = std::tanh (k * std::min (stageGain, 8.0f)) * 0.8f;
-            peakOut = 1.0f + (peakOut - 1.0f) * detail::clampF (drive * 5.0f, 0.0f, 1.0f);
+            peakOut = detail::interpDrive5 (drive,
+                                            1.00f, 1.00f, 1.04f, 1.12f, 1.20f);
             break;
         }
         case Model::Diode:
-            peakOut = 0.5f + drive * 0.3f;
+            peakOut = 1.0f;
             break;
         case Model::Tape:
         {
@@ -2669,8 +2873,8 @@ inline void processBlock (State& state,
     {
         case Model::Triode:   reactBaseWindow = 1024; break;
         case Model::PushPull: reactBaseWindow = 4096; break;
-        case Model::Cascade:  reactBaseWindow = 512;  break;
-        case Model::Diode:    reactBaseWindow = 4096; break;
+        case Model::Cascade:  reactBaseWindow = 1024; break;
+        case Model::Diode:    reactBaseWindow = 2048; break;
         case Model::Clipper:  reactBaseWindow = 2048; break;
         case Model::Tape:     reactBaseWindow = 2048; break;
         case Model::Fuzz:     reactBaseWindow = 4096; break;
@@ -2691,17 +2895,18 @@ inline void processBlock (State& state,
             emphCoeffs.postHP = detail::onePoleCoeff (30.0f,   sampleRate);
             break;
         case Model::Cascade:
-            emphCoeffs.preHP  = detail::onePoleCoeff (22.0f,   sampleRate);
-            emphCoeffs.preSh  = detail::onePoleCoeff (1600.0f, sampleRate);
-            emphCoeffs.postLP = detail::onePoleCoeff (6500.0f, sampleRate);
-            emphCoeffs.postHP = detail::onePoleCoeff (40.0f,   sampleRate);
+            emphCoeffs.preHP  = detail::onePoleCoeff (30.0f,   sampleRate);
+            emphCoeffs.preSh  = detail::onePoleCoeff (2600.0f, sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (9000.0f, sampleRate);
+            emphCoeffs.postHP = detail::onePoleCoeff (35.0f,   sampleRate);
             break;
         case Model::PushPull:
             emphCoeffs.postLP = detail::onePoleCoeff (5500.0f, sampleRate);
             break;
         case Model::Diode:
             emphCoeffs.preHP  = detail::onePoleCoeff (720.0f,  sampleRate);
-            emphCoeffs.postLP = detail::onePoleCoeff (723.0f,  sampleRate);
+            emphCoeffs.preSh  = detail::onePoleCoeff (1800.0f, sampleRate);
+            emphCoeffs.postLP = detail::onePoleCoeff (3200.0f, sampleRate);
             break;
         case Model::Clipper:
             emphCoeffs.preHP  = detail::onePoleCoeff (720.0f,  sampleRate);
@@ -2745,8 +2950,8 @@ inline void processBlock (State& state,
     const float mbSubCoeff = detail::onePoleCoeff (200.0f, sampleRate);
     const float mbAirCoeff = detail::onePoleCoeff (4000.0f, sampleRate);
 
-    // Precomputed Cascade coupling-cap bleed coefficient
-    const float cascadeCapBleed = 1.0f - detail::onePoleCoeff (70.0f, sampleRate);
+    // Legacy cascade coupling term removed: TRANSISTOR now owns its colour
+    // inside the black box instead of using generic interstage coupling.
 
     // Precomputed safety LPF coefficients (constant since fc = 0.4×sr)
     SafetyLPFCoeffs safetyCoeffs;
@@ -2825,7 +3030,9 @@ inline void processBlock (State& state,
     const bool needsYin = false;  // disabled: sub-osc + ring mod removed for testing
 
     state.currentSeriesCount = juce::jlimit (1, kMaxSeries, seriesCount);
-    const bool rawStripFilters = rawMode && (model == Model::Tape || model == Model::Triode || model == Model::Clipper);
+    const bool rawStripFilters = rawMode && (model == Model::Tape || model == Model::Triode
+                                          || model == Model::Cascade
+                                          || model == Model::Clipper || model == Model::Diode);
 
     if (rawMode)
     {
@@ -2847,7 +3054,7 @@ inline void processBlock (State& state,
                     state.tapeFlux[sp][ch] = 0.0f;
                 }
 
-                if (model == Model::Clipper)
+                if (model == Model::Cascade || model == Model::Clipper || model == Model::Diode)
                     state.tapeComp[sp][ch].reset();
 
                 if (model == Model::Triode)
@@ -3035,7 +3242,8 @@ inline void processBlock (State& state,
                 bool useMbSag = false;
 
                 if (react > 0.001f && model != Model::Triode
-                    && !(rawStripFilters && (model == Model::Tape || model == Model::Clipper)))
+                    && !(rawStripFilters && (model == Model::Tape || model == Model::Cascade
+                                          || model == Model::Clipper || model == Model::Diode)))
                 {
                     const int window = std::min (
                         (int) ((float) reactBaseWindow * (1.0f + react * 3.0f) * sampleRate / 44100.0f),
@@ -3054,7 +3262,6 @@ inline void processBlock (State& state,
                     switch (model)
                     {
                         case Model::PushPull:
-                        case Model::Cascade:
                         {
                             // Multiband REACT: frequency-dependent sag (bass sags more)
                             mbSag = multibandReactProcess (
@@ -3068,10 +3275,30 @@ inline void processBlock (State& state,
                             effDrive = std::min (effDrive * (1.0f + sagSq * react * 2.0f), 1.0f);
                             break;
                         }
-                        case Model::Diode:
-                            sagBias = sagEnv * react * 0.6f;
-                            sagPre  = 1.0f + sagEnv * react * 0.5f;
+                        case Model::Cascade:
+                        {
+                            const float type = detail::smoothStep01 (effMod);
+                            const float compAmt = detail::clampF (react * juce::jmap (type, 0.72f, 1.10f), 0.0f, 1.0f);
+                            const float program = detail::clampF (sagEnv * juce::jmap (type, 0.65f, 1.00f), 0.0f, 1.0f);
+                            const TapeCompResult comp = processTapeComp (
+                                x, stageTapeComp, compAmt, effDrive, program, sampleRate);
+                            x = comp.sample;
+                            sagPre = 1.0f;
+                            sagPost = 1.0f;
+                            stageSagEnvelope = comp.amount;
                             break;
+                        }
+                        case Model::Diode:
+                        {
+                            const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
+                            const TapeCompResult comp = processTapeComp (
+                                x, stageTapeComp, react, effDrive, program, sampleRate);
+                            x = comp.sample;
+                            sagPre = 1.0f;
+                            sagPost = 1.0f;
+                            stageSagEnvelope = comp.amount;
+                            break;
+                        }
                         case Model::Tape:
                         {
                             const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
@@ -3111,7 +3338,7 @@ inline void processBlock (State& state,
                     stageTapeComp.hfEnv *= 0.5f;
                     stageSagEnvelope = 0.0f;
                 }
-                else if (model == Model::Clipper)
+                else if (model == Model::Cascade || model == Model::Clipper || model == Model::Diode)
                 {
                     stageTapeComp.gain = 1.0f;
                     stageTapeComp.env *= 0.5f;
@@ -3170,12 +3397,14 @@ inline void processBlock (State& state,
                                              state.wsAdaa[sp][ch]);
                         break;
                     case Model::Cascade:
-                        x = processCascade (x, effDrive, effBias, effMod,
-                                            state, ch, cascadeCapBleed);
+                        x = processTransistorStage (x, effDrive, girth, effBias, effMod,
+                                                    state, ch,
+                                                    state.wsAdaa[sp][ch],
+                                                    state.clipperAdaa[sp][ch]);
                         break;
                     case Model::Diode:
-                        x = processDiode (x, effDrive, effBias, effMod,
-                                          state.wsAdaa[sp][ch]);
+                        x = processDiodeStage (x, effDrive, girth, effBias, effMod,
+                                               state.clipperAdaa[sp][ch]);
                         break;
                     case Model::Tape:
                         x = processTape (x, effDrive, effBias, effMod, rawMode,
@@ -3257,9 +3486,9 @@ inline void processBlock (State& state,
                 {
                     x = applyTriodeGirth (x, girth);
                 }
-                else if (model == Model::Clipper)
+                else if (model == Model::Cascade || model == Model::Clipper || model == Model::Diode)
                 {
-                    // GIRTH is already the clipper knee.
+                    // GIRTH is already encoded inside the transistor/diode/clipper core.
                 }
                 else
                     x = applyGirth (x, girth, state.girthAdaa[sp][ch]);
@@ -3287,6 +3516,8 @@ inline void processBlock (State& state,
                         x *= getTapeLevelTrim (drive, mod, girth, react);
                     else if (model == Model::Triode)
                         x *= getTriodeLevelTrim (drive, mod, state.currentSeriesCount);
+                    else if (model == Model::Cascade)
+                        x *= getTransistorLevelTrim (drive, mod);
 
                     if (!skipAutoGain)
                         x *= state.blockCoeffs.autoGain;
