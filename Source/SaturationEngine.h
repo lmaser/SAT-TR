@@ -1406,6 +1406,7 @@ inline float applyTriodePreGirth (float x, float girth, float drive) noexcept
 // ----------------------------------------------------------------
 struct EmphCoeffs {
     float preHP = 0, preSh = 0, postLP = 0, postHP = 0;
+    float preHPAlt = 0, preShAlt = 0, postLPAlt = 0;
 };
 
 inline float preEmphasize (float x, EmphasisState& st, Model model,
@@ -1431,11 +1432,16 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
         }
         case Model::Diode:
         {
-            st.preHP += (x - st.preHP) * ec.preHP;
-            const float hp = x - st.preHP;
-            st.preSh += (hp - st.preSh) * ec.preSh;
-            const float edge = hp - st.preSh;
             const float topo = detail::clampF (mod, 0.0f, 1.0f);
+            const float openTopo = topo <= 0.5f ? 0.0f
+                                                : detail::smoothStep01 ((topo - 0.5f) * 2.0f);
+            const float hpCoeff = juce::jmap (openTopo, ec.preHP, ec.preHPAlt);
+            const float shCoeff = juce::jmap (openTopo, ec.preSh, ec.preShAlt);
+
+            st.preHP += (x - st.preHP) * hpCoeff;
+            const float hp = x - st.preHP;
+            st.preSh += (hp - st.preSh) * shCoeff;
+            const float edge = hp - st.preSh;
             const float feedback = hp + edge * (0.032f + drive * 0.060f);
             const float hard = juce::jmap (0.56f, x, hp) + edge * (0.010f + drive * 0.028f);
             if (topo <= 0.5f)
@@ -1443,9 +1449,9 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
                 const float t = detail::smoothStep01 (topo * 2.0f);
                 return juce::jmap (t, feedback, hard);
             }
-            const float u = detail::smoothStep01 ((topo - 0.5f) * 2.0f);
-            const float open = juce::jmap (0.16f + drive * 0.05f, x, hp)
-                             + edge * (0.007f + drive * 0.020f);
+            const float u = openTopo;
+            const float open = juce::jmap (0.08f + drive * 0.04f, x, hp)
+                             + edge * (0.004f + drive * 0.012f);
             return juce::jmap (u, hard, open);
         }
         case Model::Clipper:
@@ -1504,8 +1510,11 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
         }
         case Model::Diode:
         {
-            st.postLP += (y - st.postLP) * ec.postLP;
             const float topo = detail::clampF (mod, 0.0f, 1.0f);
+            const float openTopo = topo <= 0.5f ? 0.0f
+                                                : detail::smoothStep01 ((topo - 0.5f) * 2.0f);
+            const float lpCoeff = juce::jmap (openTopo, ec.postLP, ec.postLPAlt);
+            st.postLP += (y - st.postLP) * lpCoeff;
             const float feedback = y + (st.postLP - y) * (0.18f + drive * 0.28f);
             const float hard = y + (st.postLP - y) * (0.045f + drive * 0.14f);
             if (topo <= 0.5f)
@@ -1513,10 +1522,10 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
                 const float t = detail::smoothStep01 (topo * 2.0f);
                 return juce::jmap (t, feedback, hard);
             }
-            const float u = detail::smoothStep01 ((topo - 0.5f) * 2.0f);
+            const float u = openTopo;
             const float bright = y - st.postLP;
-            const float open = y + (st.postLP - y) * (0.015f + drive * 0.060f)
-                             + bright * (0.016f + (1.0f - drive) * 0.014f);
+            const float open = y + (st.postLP - y) * (0.006f + drive * 0.030f)
+                             + bright * (0.026f + (1.0f - drive) * 0.018f);
             return juce::jmap (u, hard, open);
         }
         case Model::Clipper:
@@ -1606,7 +1615,14 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     auto& bodyPostLp = state.triodeBodyPostLP[sp][ch];
     float xStage = x;
     float bEff = b;
-    const float bodyCurve = 1.0f - std::pow (1.0f - g, 1.55f);
+    float bodyControl = g;
+    constexpr float bodyUpperPivot = 2.0f / 3.0f;
+    if (bodyControl > bodyUpperPivot)
+    {
+        const float t = (bodyControl - bodyUpperPivot) / (1.0f - bodyUpperPivot);
+        bodyControl = bodyUpperPivot + (1.0f - bodyUpperPivot) * std::pow (t, 2.0f);
+    }
+    const float bodyCurve = 1.0f - std::pow (1.0f - bodyControl, 1.55f);
 
     {
         const float bodyPreHz12AX7 = 210.0f - d * 45.0f;
@@ -2014,10 +2030,10 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
         driveGain = juce::jmap (u, driveHard, driveOpen);
         thresholdMul = juce::jmap (u, 0.82f, 1.02f);
         kneeMul = juce::jmap (u, 0.58f, 1.00f);
-        cleanBlend = juce::jmap (u, 0.02f, 0.16f);
+        cleanBlend = juce::jmap (u, 0.02f, 0.07f);
         voiceTrim = juce::jmap (u, 0.96f, 1.07f);
-        symRange = juce::jmap (u, 0.38f, 0.32f);
-        edgeShape = juce::jmap (u, 0.03f, 0.08f);
+        symRange = juce::jmap (u, 0.36f, 0.32f);
+        edgeShape = juce::jmap (u, 0.03f, 0.06f);
     }
 
     const float threshold = condThreshold * thresholdMul;
@@ -2359,6 +2375,9 @@ inline void processBlock (State& state,
             emphCoeffs.preHP  = detail::onePoleCoeff (720.0f,  sampleRate);
             emphCoeffs.preSh  = detail::onePoleCoeff (1800.0f, sampleRate);
             emphCoeffs.postLP = detail::onePoleCoeff (3200.0f, sampleRate);
+            emphCoeffs.preHPAlt  = detail::onePoleCoeff (420.0f,  sampleRate);
+            emphCoeffs.preShAlt  = detail::onePoleCoeff (2600.0f, sampleRate);
+            emphCoeffs.postLPAlt = detail::onePoleCoeff (5600.0f, sampleRate);
             break;
         case Model::Clipper:
             emphCoeffs.preHP  = detail::onePoleCoeff (720.0f,  sampleRate);
