@@ -737,6 +737,8 @@ struct State
     float triodeBlock[kMaxSeries][2] = {};   // grid conduction / blocking memory
     float powerSag[kMaxSeries][2]    = {};   // supply compression memory
     float tapeFlux[kMaxSeries][2]    = {};   // magnetic remanence proxy
+    float triodeBodyPreLP[kMaxSeries][2] = {};
+    float triodeBodyPostLP[kMaxSeries][2] = {};
 
     // Internal emphasis/de-emphasis (per-stage / per-channel)
     EmphasisState emphasis[kMaxSeries][2];
@@ -828,6 +830,8 @@ struct State
                 triodeBlock[sp][ch] = 0.0f;
                 powerSag[sp][ch] = 0.0f;
                 tapeFlux[sp][ch] = 0.0f;
+                triodeBodyPreLP[sp][ch] = 0.0f;
+                triodeBodyPostLP[sp][ch] = 0.0f;
                 wsAdaa[sp][ch].reset();
                 triodeAdaa[sp][ch].reset();
                 tapeAdaa[sp][ch].reset();
@@ -912,6 +916,8 @@ struct State
                 fl (triodeBlock[sp][ch]);
                 fl (powerSag[sp][ch]);
                 fl (tapeFlux[sp][ch]);
+                fl (triodeBodyPreLP[sp][ch]);
+                fl (triodeBodyPostLP[sp][ch]);
             }
         }
     }
@@ -1595,10 +1601,25 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     const float b = detail::clampF (bias, -1.0f, 1.0f);
     const float tubeMorph = detail::smoothStep01 (m);
     const float tubeMorph2 = tubeMorph * tubeMorph;
-    juce::ignoreUnused (g);
     auto& triodeSag = state.triodeReact[sp][ch];
+    auto& bodyPreLp = state.triodeBodyPreLP[sp][ch];
+    auto& bodyPostLp = state.triodeBodyPostLP[sp][ch];
     float xStage = x;
     float bEff = b;
+    const float bodyCurve = 1.0f - std::pow (1.0f - g, 1.55f);
+
+    {
+        const float bodyPreHz12AX7 = 210.0f - d * 45.0f;
+        const float bodyPreHzPower = 170.0f - d * 35.0f;
+        const float bodyPreHz = juce::jmap (tubeMorph, bodyPreHz12AX7, bodyPreHzPower);
+        const float bodyPreCoeff = detail::onePoleCoeff (bodyPreHz, sr);
+        bodyPreLp += (xStage - bodyPreLp) * bodyPreCoeff;
+
+        const float lfFeedAmt12AX7 = 0.08f + d * 0.10f;
+        const float lfFeedAmtPower = 0.06f + d * 0.08f;
+        const float lfFeedAmt = juce::jmap (tubeMorph, lfFeedAmt12AX7, lfFeedAmtPower);
+        xStage += bodyPreLp * bodyCurve * lfFeedAmt;
+    }
 
     if (!rawMode && react > 0.0001f)
     {
@@ -1654,6 +1675,9 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     const float stageBias12AX7 = bEff * 0.050f - sagCore * 0.095f;
     const float stageBiasPower = bEff * 0.028f - sagCore * 0.072f;
     const float stageBias = juce::jmap (tubeMorph, stageBias12AX7, stageBiasPower);
+    const float cathodeDepth12AX7 = bodyCurve * (0.040f + d * 0.050f);
+    const float cathodeDepthPower = bodyCurve * (0.026f + d * 0.032f);
+    const float cathodeDepth = juce::jmap (tubeMorph, cathodeDepth12AX7, cathodeDepthPower);
 
     const float headroom12AX7 = juce::jlimit (0.54f, 1.0f,
                                               1.0f - sagCore * 0.40f
@@ -1661,7 +1685,9 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     const float headroomPower = juce::jlimit (0.58f, 1.08f,
                                               1.04f - sagCore * 0.28f
                                                      - biasPos * 0.08f + biasNeg * 0.05f);
-    const float stageHeadroom = juce::jmap (tubeMorph, headroom12AX7, headroomPower);
+    const float stageHeadroomBase = juce::jmap (tubeMorph, headroom12AX7, headroomPower);
+    const float stageHeadroom = juce::jlimit (0.52f, 1.08f,
+                                              stageHeadroomBase * (1.0f - cathodeDepth * 0.12f));
     s += stageBias;
     s = detail::clampF (s, -stageHeadroom, stageHeadroom);
     s /= stageHeadroom;
@@ -1678,7 +1704,10 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     // First Tube2 asymmetry section.
     const float asymAmt12AX7 = 0.25f + sagCore * 0.36f + biasPos * 0.08f;
     const float asymAmtPower = 0.14f + sagCore * 0.20f + biasNeg * 0.06f;
-    const float asymAmt = juce::jmap (tubeMorph, asymAmt12AX7, asymAmtPower);
+    const float asymAmt = juce::jmap (tubeMorph, asymAmt12AX7, asymAmtPower)
+                        + juce::jmap (tubeMorph,
+                                      bodyCurve * (0.018f + d * 0.012f),
+                                      bodyCurve * (0.010f + d * 0.008f));
     s = detail::tube2AsymSection (s, asymPad, asymAmt);
     // Original Tube curve.
     s = detail::airwindowsTubeCurve (s, powerFactor);
@@ -1747,6 +1776,20 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     const float ceiling = juce::jmap (tubeMorph2, 0.52f, 0.62f);
     s = detail::clampF (s, -ceiling, ceiling);
     s *= 1.0f / ceiling;
+
+    {
+        const float bodyPostHz12AX7 = 145.0f - d * 18.0f;
+        const float bodyPostHzPower = 120.0f - d * 15.0f;
+        const float bodyPostHz = juce::jmap (tubeMorph, bodyPostHz12AX7, bodyPostHzPower);
+        const float bodyPostCoeff = detail::onePoleCoeff (bodyPostHz, sr);
+        bodyPostLp += (s - bodyPostLp) * bodyPostCoeff;
+
+        const float depthAmt12AX7 = 0.055f + d * 0.040f;
+        const float depthAmtPower = 0.070f + d * 0.045f;
+        const float depthAmt = juce::jmap (tubeMorph, depthAmt12AX7, depthAmtPower);
+        const float depth = bodyPostLp * bodyCurve * depthAmt;
+        s = (s + depth) / (1.0f + bodyCurve * depthAmt * 0.35f);
+    }
 
     state.triodeBlock[sp][ch] = 0.0f;
     return s;
@@ -2716,12 +2759,6 @@ inline void processBlock (State& state,
                     effBias += sagBias;
                 }
 
-                if (model == Model::Tube && girth > 0.001f)
-                {
-                    const float preGirth = girth * (0.28f + effDrive * 0.16f);
-                    x = applyTriodePreGirth (x, juce::jlimit (0.0f, 1.0f, preGirth), effDrive);
-                }
-
                 // -- WAVESHAPER (all passes, with per-pass ADAA state) --
                 if (diagCollector != nullptr && isLast && ch == 0)
                 {
@@ -2798,10 +2835,6 @@ inline void processBlock (State& state,
                 if (model == Model::Tape)
                 {
                     x = applyTapeGirth (x, girth);
-                }
-                else if (model == Model::Tube)
-                {
-                    x = applyTriodeGirth (x, girth);
                 }
                 else if (model == Model::Transistor || model == Model::Clipper
                       || model == Model::Diode)
