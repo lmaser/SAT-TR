@@ -7,7 +7,7 @@
 #include "CrtEffect.h"
 #include "TRSharedUI.h"
 
-class CABTRAudioProcessorEditor : public juce::AudioProcessorEditor,
+class SATTRAudioProcessorEditor : public juce::AudioProcessorEditor,
                                    private juce::Slider::Listener,
                                    private juce::Button::Listener,
                                    private juce::ComboBox::Listener,
@@ -15,8 +15,8 @@ class CABTRAudioProcessorEditor : public juce::AudioProcessorEditor,
                                    private juce::Timer
 {
 public:
-	explicit CABTRAudioProcessorEditor (CABTRAudioProcessor&);
-	~CABTRAudioProcessorEditor() override;
+	explicit SATTRAudioProcessorEditor (SATTRAudioProcessor&);
+	~SATTRAudioProcessorEditor() override;
 
 	void paint (juce::Graphics&) override;
 	void paintOverChildren (juce::Graphics&) override;
@@ -61,7 +61,7 @@ private:
 	void updateInfoIconCache();
 	void setupBar (juce::Slider& s);
 
-	CABTRAudioProcessor& audioProcessor;
+	SATTRAudioProcessor& audioProcessor;
 
 	// ══════════════════════════════════════════════════════════════
 	//  Custom Slider with right-click popup
@@ -73,7 +73,7 @@ private:
 	                  Series, Pan, Fred, Pos,
 	                  Mix, GlobalMix, GlobalOutput, LimThreshold,
 	                  SatDrive, SatGirth, SatMod, SatBias, SatSag, Var, Delay };
-		void setOwner (CABTRAudioProcessorEditor* o) { owner = o; }
+		void setOwner (SATTRAudioProcessorEditor* o) { owner = o; }
 		void setType (Type t) { type_ = t; }
 		Type getType() const { return type_; }
 		void setAllowNumericPopup (bool allow) { allowNumericPopup = allow; }
@@ -92,7 +92,7 @@ private:
 		juce::String getTextFromValue (double v) override;
 
 	private:
-		CABTRAudioProcessorEditor* owner = nullptr;
+		SATTRAudioProcessorEditor* owner = nullptr;
 		Type type_ = Type::Unknown;
 		bool allowNumericPopup = true;
 	};
@@ -104,7 +104,7 @@ private:
 	                           public juce::SettableTooltipClient
 	{
 	public:
-		void setOwner (CABTRAudioProcessorEditor* o, int loaderIdx) { owner = o; loaderIndex_ = loaderIdx; }
+		void setOwner (SATTRAudioProcessorEditor* o, int loaderIdx) { owner = o; loaderIndex_ = loaderIdx; }
 		void setScheme (const TR::TRScheme& s) { scheme = s; repaint(); }
 
 		void paint (juce::Graphics& g) override;
@@ -117,7 +117,7 @@ private:
 		void updateFromProcessor();
 
 	private:
-		CABTRAudioProcessorEditor* owner = nullptr;
+		SATTRAudioProcessorEditor* owner = nullptr;
 		int loaderIndex_ = 0;
 		TR::TRScheme scheme {};
 
@@ -150,7 +150,7 @@ private:
 	{
 	public:
 		DualMixBarComponent() = default;
-		void setOwner (CABTRAudioProcessorEditor* o) { owner = o; }
+		void setOwner (SATTRAudioProcessorEditor* o) { owner = o; }
 		void setScheme (const TR::TRScheme& s) { scheme = s; repaint(); }
 
 		void paint (juce::Graphics& g) override;
@@ -168,7 +168,7 @@ private:
 		DragTarget getLastTouched() const { return lastTouched_; }
 
 	private:
-		CABTRAudioProcessorEditor* owner = nullptr;
+		SATTRAudioProcessorEditor* owner = nullptr;
 		TR::TRScheme scheme {};
 
 		float dryLevel_ = 0.0f;
@@ -306,7 +306,6 @@ private:
 	{
 		const char* enable;
 		const char* hpFreq;  const char* lpFreq;  const char* in;  const char* out;  const char* tilt;
-		const char* start;   const char* end;     const char* size;
 		const char* series;  const char* pan;     const char* fred;   const char* pos;   const char* reso;
 		const char* inv;     const char* chaos;  const char* chaosFilter;
 		const char* chaosAmt; const char* chaosSpd;
@@ -669,5 +668,5 @@ public:
 	bool promptOverlayActive = false;
 
 private:
-	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CABTRAudioProcessorEditor)
+	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SATTRAudioProcessorEditor)
 };

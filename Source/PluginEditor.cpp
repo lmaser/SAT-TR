@@ -1,4 +1,4 @@
-﻿// PluginEditor.cpp — CAB-TR
+// PluginEditor.cpp - SAT-TR
 #include "PluginEditor.h"
 #include "InfoContent.h"
 #include <functional>
@@ -9,36 +9,34 @@ using namespace TR;
  #include <windows.h>
 #endif
 
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 //  Timer & display constants
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 static constexpr int kCrtTimerHz   = 10;
 static constexpr int kIdleTimerHz  = 4;
 static constexpr float kSilenceDb  = -80.0f;
 
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 //  Parameter listener IDs
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 static constexpr std::array<const char*, 10> kUiMirrorParamIds {
-	CABTRAudioProcessor::kParamUiPalette,
-	CABTRAudioProcessor::kParamUiFxTail,
-	CABTRAudioProcessor::kParamUiColor0,
-	CABTRAudioProcessor::kParamUiColor1,
-	CABTRAudioProcessor::kParamEnableA,
-	CABTRAudioProcessor::kParamEnableB,
-	CABTRAudioProcessor::kParamEnableC,
-	CABTRAudioProcessor::kParamSatTypeA,
-	CABTRAudioProcessor::kParamSatTypeB,
-	CABTRAudioProcessor::kParamSatTypeC
+	SATTRAudioProcessor::kParamUiPalette,
+	SATTRAudioProcessor::kParamUiFxTail,
+	SATTRAudioProcessor::kParamUiColor0,
+	SATTRAudioProcessor::kParamUiColor1,
+	SATTRAudioProcessor::kParamEnableA,
+	SATTRAudioProcessor::kParamEnableB,
+	SATTRAudioProcessor::kParamEnableC,
+	SATTRAudioProcessor::kParamSatTypeA,
+	SATTRAudioProcessor::kParamSatTypeB,
+	SATTRAudioProcessor::kParamSatTypeC
 };
 
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 //  Popup helper classes
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 namespace
 {
-	constexpr int legacyPowerLegModelIndex = static_cast<int> (SatEngine::Model::PushPull);
-
 	constexpr int satTypeModelToVisibleComboId (int modelIndex) noexcept
 	{
 		switch (modelIndex)
@@ -46,14 +44,9 @@ namespace
 			case 0: return 1;  // CLEAN
 			case 1: return 2;  // TAPE
 			case 2: return 3;  // TUBE
-			case 3: return 3;  // legacy POWER LEG -> TUBE
-			case 10: return 4; // CLIPPER
-			case 4: return 5;  // TRANSISTOR
-			case 5: return 6;  // DIODE
-			case 6: return 7;  // TUNDRA
-			case 7: return 8;  // FUZZ
-			case 8: return 9;  // DOOM
-			case 9: return 10; // DESTROY
+			case 3: return 4;  // TRANSISTOR
+			case 4: return 5;  // DIODE
+			case 5: return 6;  // CLIPPER
 			default: return 1;
 		}
 	}
@@ -62,16 +55,12 @@ namespace
 	{
 		switch (comboId)
 		{
-			case 1:  return 0; // CLEAN
-			case 2:  return 1; // TAPE
-			case 3:  return 2; // TUBE
-			case 4:  return 10; // CLIPPER
-			case 5:  return 4; // TRANSISTOR
-			case 6:  return 5; // DIODE
-			case 7:  return 6; // TUNDRA
-			case 8:  return 7; // FUZZ
-			case 9:  return 8; // DOOM
-			case 10: return 9; // DESTROY
+			case 1: return 0; // CLEAN
+			case 2: return 1; // TAPE
+			case 3: return 2; // TUBE
+			case 4: return 3; // TRANSISTOR
+			case 5: return 4; // DIODE
+			case 6: return 5; // CLIPPER
 			default: return 0;
 		}
 	}
@@ -117,9 +106,9 @@ namespace
 
 }
 
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 //  Popup static layout helpers
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 static void syncGraphicsPopupState (juce::AlertWindow& aw,
                                     const std::array<juce::Colour, 2>& defaultPalette,
                                     const std::array<juce::Colour, 2>& customPalette,
@@ -429,7 +418,7 @@ static void layoutInfoPopupContent (juce::AlertWindow& aw)
 //==============================================================================
 //  BarSlider::getTextFromValue
 //==============================================================================
-juce::String CABTRAudioProcessorEditor::BarSlider::getTextFromValue (double v)
+juce::String SATTRAudioProcessorEditor::BarSlider::getTextFromValue (double v)
 {
 	if (owner == nullptr)
 		return juce::Slider::getTextFromValue (v);
@@ -487,31 +476,31 @@ juce::String CABTRAudioProcessorEditor::BarSlider::getTextFromValue (double v)
 //==============================================================================
 //  FilterBarComponent implementations
 //==============================================================================
-juce::Rectangle<float> CABTRAudioProcessorEditor::FilterBarComponent::getInnerArea() const
+juce::Rectangle<float> SATTRAudioProcessorEditor::FilterBarComponent::getInnerArea() const
 {
 	return getLocalBounds().toFloat().reduced (kPad);
 }
 
-float CABTRAudioProcessorEditor::FilterBarComponent::freqToNormX (float freq) const
+float SATTRAudioProcessorEditor::FilterBarComponent::freqToNormX (float freq) const
 {
 	const float clamped = juce::jlimit (kMinFreq, kMaxFreq, freq);
 	return std::log2 (clamped / kMinFreq) / std::log2 (kMaxFreq / kMinFreq);
 }
 
-float CABTRAudioProcessorEditor::FilterBarComponent::normXToFreq (float normX) const
+float SATTRAudioProcessorEditor::FilterBarComponent::normXToFreq (float normX) const
 {
 	const float n = juce::jlimit (0.0f, 1.0f, normX);
 	return kMinFreq * std::pow (2.0f, n * std::log2 (kMaxFreq / kMinFreq));
 }
 
-float CABTRAudioProcessorEditor::FilterBarComponent::getMarkerScreenX (float freq) const
+float SATTRAudioProcessorEditor::FilterBarComponent::getMarkerScreenX (float freq) const
 {
 	const auto inner = getInnerArea();
 	return inner.getX() + freqToNormX (freq) * inner.getWidth();
 }
 
-CABTRAudioProcessorEditor::FilterBarComponent::DragTarget
-CABTRAudioProcessorEditor::FilterBarComponent::hitTestMarker (juce::Point<float> p) const
+SATTRAudioProcessorEditor::FilterBarComponent::DragTarget
+SATTRAudioProcessorEditor::FilterBarComponent::hitTestMarker (juce::Point<float> p) const
 {
 	const float hpX = getMarkerScreenX (hpFreq_);
 	const float lpX = getMarkerScreenX (lpFreq_);
@@ -528,7 +517,7 @@ CABTRAudioProcessorEditor::FilterBarComponent::hitTestMarker (juce::Point<float>
 	return None;
 }
 
-void CABTRAudioProcessorEditor::FilterBarComponent::setFreqFromMouseX (float mouseX, DragTarget target)
+void SATTRAudioProcessorEditor::FilterBarComponent::setFreqFromMouseX (float mouseX, DragTarget target)
 {
 	if (owner == nullptr || target == None)
 		return;
@@ -539,8 +528,8 @@ void CABTRAudioProcessorEditor::FilterBarComponent::setFreqFromMouseX (float mou
 
 	auto& proc = owner->audioProcessor;
 	auto pick = [this] (const char* a, const char* b, const char* c) { return loaderIndex_ == 0 ? a : (loaderIndex_ == 1 ? b : c); };
-	const char* hpId = pick (CABTRAudioProcessor::kParamHpFreqA, CABTRAudioProcessor::kParamHpFreqB, CABTRAudioProcessor::kParamHpFreqC);
-	const char* lpId = pick (CABTRAudioProcessor::kParamLpFreqA, CABTRAudioProcessor::kParamLpFreqB, CABTRAudioProcessor::kParamLpFreqC);
+	const char* hpId = pick (SATTRAudioProcessor::kParamHpFreqA, SATTRAudioProcessor::kParamHpFreqB, SATTRAudioProcessor::kParamHpFreqC);
+	const char* lpId = pick (SATTRAudioProcessor::kParamLpFreqA, SATTRAudioProcessor::kParamLpFreqB, SATTRAudioProcessor::kParamLpFreqC);
 
 	// Clamp so HP never exceeds LP and vice-versa
 	if (target == HP)
@@ -559,15 +548,15 @@ void CABTRAudioProcessorEditor::FilterBarComponent::setFreqFromMouseX (float mou
 		param->setValueNotifyingHost (param->convertTo0to1 (freq));
 }
 
-void CABTRAudioProcessorEditor::FilterBarComponent::updateFromProcessor()
+void SATTRAudioProcessorEditor::FilterBarComponent::updateFromProcessor()
 {
 	if (owner == nullptr) return;
 	auto& proc = owner->audioProcessor;
 	auto pick = [this] (const char* a, const char* b, const char* c) { return loaderIndex_ == 0 ? a : (loaderIndex_ == 1 ? b : c); };
-	const char* hpId   = pick (CABTRAudioProcessor::kParamHpFreqA, CABTRAudioProcessor::kParamHpFreqB, CABTRAudioProcessor::kParamHpFreqC);
-	const char* lpId   = pick (CABTRAudioProcessor::kParamLpFreqA, CABTRAudioProcessor::kParamLpFreqB, CABTRAudioProcessor::kParamLpFreqC);
-	const char* hpOnId = pick (CABTRAudioProcessor::kParamHpOnA,   CABTRAudioProcessor::kParamHpOnB,   CABTRAudioProcessor::kParamHpOnC);
-	const char* lpOnId = pick (CABTRAudioProcessor::kParamLpOnA,   CABTRAudioProcessor::kParamLpOnB,   CABTRAudioProcessor::kParamLpOnC);
+	const char* hpId   = pick (SATTRAudioProcessor::kParamHpFreqA, SATTRAudioProcessor::kParamHpFreqB, SATTRAudioProcessor::kParamHpFreqC);
+	const char* lpId   = pick (SATTRAudioProcessor::kParamLpFreqA, SATTRAudioProcessor::kParamLpFreqB, SATTRAudioProcessor::kParamLpFreqC);
+	const char* hpOnId = pick (SATTRAudioProcessor::kParamHpOnA,   SATTRAudioProcessor::kParamHpOnB,   SATTRAudioProcessor::kParamHpOnC);
+	const char* lpOnId = pick (SATTRAudioProcessor::kParamLpOnA,   SATTRAudioProcessor::kParamLpOnB,   SATTRAudioProcessor::kParamLpOnC);
 
 	const float newHpFreq = proc.getValueTreeState().getRawParameterValue (hpId)->load();
 	const float newLpFreq = proc.getValueTreeState().getRawParameterValue (lpId)->load();
@@ -584,7 +573,7 @@ void CABTRAudioProcessorEditor::FilterBarComponent::updateFromProcessor()
 	repaint();
 }
 
-void CABTRAudioProcessorEditor::FilterBarComponent::paint (juce::Graphics& g)
+void SATTRAudioProcessorEditor::FilterBarComponent::paint (juce::Graphics& g)
 {
 	const auto r = getLocalBounds().toFloat();
 
@@ -640,7 +629,7 @@ void CABTRAudioProcessorEditor::FilterBarComponent::paint (juce::Graphics& g)
 	}
 }
 
-void CABTRAudioProcessorEditor::FilterBarComponent::mouseDown (const juce::MouseEvent& e)
+void SATTRAudioProcessorEditor::FilterBarComponent::mouseDown (const juce::MouseEvent& e)
 {
 	if (e.mods.isPopupMenu())
 	{
@@ -657,7 +646,7 @@ void CABTRAudioProcessorEditor::FilterBarComponent::mouseDown (const juce::Mouse
 	}
 }
 
-void CABTRAudioProcessorEditor::FilterBarComponent::mouseDrag (const juce::MouseEvent& e)
+void SATTRAudioProcessorEditor::FilterBarComponent::mouseDrag (const juce::MouseEvent& e)
 {
 	if (currentDrag_ != None)
 	{
@@ -666,12 +655,12 @@ void CABTRAudioProcessorEditor::FilterBarComponent::mouseDrag (const juce::Mouse
 	}
 }
 
-void CABTRAudioProcessorEditor::FilterBarComponent::mouseUp (const juce::MouseEvent&)
+void SATTRAudioProcessorEditor::FilterBarComponent::mouseUp (const juce::MouseEvent&)
 {
 	currentDrag_ = None;
 }
 
-void CABTRAudioProcessorEditor::FilterBarComponent::mouseMove (const juce::MouseEvent& e)
+void SATTRAudioProcessorEditor::FilterBarComponent::mouseMove (const juce::MouseEvent& e)
 {
 	const auto target = hitTestMarker (e.position);
 	if (target == HP)
@@ -690,7 +679,7 @@ void CABTRAudioProcessorEditor::FilterBarComponent::mouseMove (const juce::Mouse
 	}
 }
 
-void CABTRAudioProcessorEditor::FilterBarComponent::mouseDoubleClick (const juce::MouseEvent& e)
+void SATTRAudioProcessorEditor::FilterBarComponent::mouseDoubleClick (const juce::MouseEvent& e)
 {
 	if (owner == nullptr) return;
 	auto& proc = owner->audioProcessor;
@@ -699,7 +688,7 @@ void CABTRAudioProcessorEditor::FilterBarComponent::mouseDoubleClick (const juce
 	const auto target = hitTestMarker (e.position);
 	if (target == HP)
 	{
-		const char* paramId = pick (CABTRAudioProcessor::kParamHpOnA, CABTRAudioProcessor::kParamHpOnB, CABTRAudioProcessor::kParamHpOnC);
+		const char* paramId = pick (SATTRAudioProcessor::kParamHpOnA, SATTRAudioProcessor::kParamHpOnB, SATTRAudioProcessor::kParamHpOnC);
 		if (auto* param = proc.getValueTreeState().getParameter (paramId))
 		{
 			const bool current = param->getValue() > 0.5f;
@@ -708,7 +697,7 @@ void CABTRAudioProcessorEditor::FilterBarComponent::mouseDoubleClick (const juce
 	}
 	else if (target == LP)
 	{
-		const char* paramId = pick (CABTRAudioProcessor::kParamLpOnA, CABTRAudioProcessor::kParamLpOnB, CABTRAudioProcessor::kParamLpOnC);
+		const char* paramId = pick (SATTRAudioProcessor::kParamLpOnA, SATTRAudioProcessor::kParamLpOnB, SATTRAudioProcessor::kParamLpOnC);
 		if (auto* param = proc.getValueTreeState().getParameter (paramId))
 		{
 			const bool current = param->getValue() > 0.5f;
@@ -724,13 +713,13 @@ void CABTRAudioProcessorEditor::FilterBarComponent::mouseDoubleClick (const juce
 //==============================================================================
 //  DualMixBarComponent implementations
 //==============================================================================
-juce::Rectangle<float> CABTRAudioProcessorEditor::DualMixBarComponent::getInnerArea() const
+juce::Rectangle<float> SATTRAudioProcessorEditor::DualMixBarComponent::getInnerArea() const
 {
 	return getLocalBounds().toFloat().reduced (kPad);
 }
 
-CABTRAudioProcessorEditor::DualMixBarComponent::DragTarget
-CABTRAudioProcessorEditor::DualMixBarComponent::hitTestMarker (juce::Point<float> p) const
+SATTRAudioProcessorEditor::DualMixBarComponent::DragTarget
+SATTRAudioProcessorEditor::DualMixBarComponent::hitTestMarker (juce::Point<float> p) const
 {
 	const auto inner = getInnerArea();
 	const float halfW = inner.getWidth() * 0.5f;
@@ -738,7 +727,7 @@ CABTRAudioProcessorEditor::DualMixBarComponent::hitTestMarker (juce::Point<float
 	return (p.x < midX) ? DRY : WET;
 }
 
-void CABTRAudioProcessorEditor::DualMixBarComponent::setLevelFromMouseX (float mouseX, DragTarget target)
+void SATTRAudioProcessorEditor::DualMixBarComponent::setLevelFromMouseX (float mouseX, DragTarget target)
 {
 	if (owner == nullptr || target == None)
 		return;
@@ -750,19 +739,19 @@ void CABTRAudioProcessorEditor::DualMixBarComponent::setLevelFromMouseX (float m
 	else
 		level = (halfW > 0.0f) ? juce::jlimit (0.0f, 1.0f, (mouseX - (inner.getX() + halfW)) / halfW) : 0.0f;
 
-	const char* paramId = (target == DRY) ? CABTRAudioProcessor::kParamDryLevel
-	                                      : CABTRAudioProcessor::kParamWetLevel;
+	const char* paramId = (target == DRY) ? SATTRAudioProcessor::kParamDryLevel
+	                                      : SATTRAudioProcessor::kParamWetLevel;
 	auto& proc = owner->audioProcessor;
 	if (auto* param = proc.getValueTreeState().getParameter (paramId))
 		param->setValueNotifyingHost (level);
 }
 
-void CABTRAudioProcessorEditor::DualMixBarComponent::updateFromProcessor()
+void SATTRAudioProcessorEditor::DualMixBarComponent::updateFromProcessor()
 {
 	if (owner == nullptr) return;
 	auto& proc = owner->audioProcessor;
-	const float newDry = proc.getValueTreeState().getRawParameterValue (CABTRAudioProcessor::kParamDryLevel)->load();
-	const float newWet = proc.getValueTreeState().getRawParameterValue (CABTRAudioProcessor::kParamWetLevel)->load();
+	const float newDry = proc.getValueTreeState().getRawParameterValue (SATTRAudioProcessor::kParamDryLevel)->load();
+	const float newWet = proc.getValueTreeState().getRawParameterValue (SATTRAudioProcessor::kParamWetLevel)->load();
 	if (newDry == dryLevel_ && newWet == wetLevel_)
 		return;
 	dryLevel_ = newDry;
@@ -770,7 +759,7 @@ void CABTRAudioProcessorEditor::DualMixBarComponent::updateFromProcessor()
 	repaint();
 }
 
-void CABTRAudioProcessorEditor::DualMixBarComponent::paint (juce::Graphics& g)
+void SATTRAudioProcessorEditor::DualMixBarComponent::paint (juce::Graphics& g)
 {
 	const auto r = getLocalBounds().toFloat();
 	g.setColour (scheme.outline);
@@ -820,7 +809,7 @@ void CABTRAudioProcessorEditor::DualMixBarComponent::paint (juce::Graphics& g)
 	}
 }
 
-void CABTRAudioProcessorEditor::DualMixBarComponent::mouseDown (const juce::MouseEvent& e)
+void SATTRAudioProcessorEditor::DualMixBarComponent::mouseDown (const juce::MouseEvent& e)
 {
 	if (e.mods.isPopupMenu())
 	{
@@ -842,7 +831,7 @@ void CABTRAudioProcessorEditor::DualMixBarComponent::mouseDown (const juce::Mous
 	}
 }
 
-void CABTRAudioProcessorEditor::DualMixBarComponent::mouseDrag (const juce::MouseEvent& e)
+void SATTRAudioProcessorEditor::DualMixBarComponent::mouseDrag (const juce::MouseEvent& e)
 {
 	if (currentDrag_ != None)
 	{
@@ -856,12 +845,12 @@ void CABTRAudioProcessorEditor::DualMixBarComponent::mouseDrag (const juce::Mous
 	}
 }
 
-void CABTRAudioProcessorEditor::DualMixBarComponent::mouseUp (const juce::MouseEvent&)
+void SATTRAudioProcessorEditor::DualMixBarComponent::mouseUp (const juce::MouseEvent&)
 {
 	currentDrag_ = None;
 }
 
-void CABTRAudioProcessorEditor::DualMixBarComponent::mouseMove (const juce::MouseEvent& e)
+void SATTRAudioProcessorEditor::DualMixBarComponent::mouseMove (const juce::MouseEvent& e)
 {
 	const auto target = hitTestMarker (e.position);
 	const float level = (target == DRY) ? dryLevel_ : wetLevel_;
@@ -876,7 +865,7 @@ void CABTRAudioProcessorEditor::DualMixBarComponent::mouseMove (const juce::Mous
 //==============================================================================
 //  LookAndFeel implementations
 //==============================================================================
-void CABTRAudioProcessorEditor::MinimalLNF::drawLinearSlider (
+void SATTRAudioProcessorEditor::MinimalLNF::drawLinearSlider (
 	juce::Graphics& g, int x, int y, int width, int height,
 	float sliderPos, float /*minSliderPos*/, float /*maxSliderPos*/,
 	const juce::Slider::SliderStyle /*style*/, juce::Slider& /*slider*/)
@@ -899,7 +888,7 @@ void CABTRAudioProcessorEditor::MinimalLNF::drawLinearSlider (
 	g.fillRect (fill);
 }
 
-void CABTRAudioProcessorEditor::MinimalLNF::drawTickBox (
+void SATTRAudioProcessorEditor::MinimalLNF::drawTickBox (
 	juce::Graphics& g, juce::Component& button,
 	float x, float y, float w, float h,
 	bool ticked, bool /*isEnabled*/, bool /*highlighted*/, bool /*down*/)
@@ -932,7 +921,7 @@ void CABTRAudioProcessorEditor::MinimalLNF::drawTickBox (
 	}
 }
 
-void CABTRAudioProcessorEditor::MinimalLNF::drawToggleButton (
+void SATTRAudioProcessorEditor::MinimalLNF::drawToggleButton (
 	juce::Graphics& g, juce::ToggleButton& button,
 	bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
@@ -972,7 +961,7 @@ void CABTRAudioProcessorEditor::MinimalLNF::drawToggleButton (
 	            juce::Justification::centredLeft, false);
 }
 
-void CABTRAudioProcessorEditor::MinimalLNF::drawButtonBackground (
+void SATTRAudioProcessorEditor::MinimalLNF::drawButtonBackground (
 	juce::Graphics& g, juce::Button& button,
 	const juce::Colour& backgroundColour,
 	bool shouldDrawButtonAsHighlighted,
@@ -993,7 +982,7 @@ void CABTRAudioProcessorEditor::MinimalLNF::drawButtonBackground (
 	g.drawRect (r.reduced (1), 3);
 }
 
-void CABTRAudioProcessorEditor::MinimalLNF::drawComboBox (
+void SATTRAudioProcessorEditor::MinimalLNF::drawComboBox (
 	juce::Graphics& g, int width, int height,
 	bool /*isButtonDown*/, int /*buttonX*/, int /*buttonY*/,
 	int /*buttonW*/, int /*buttonH*/, juce::ComboBox& /*box*/)
@@ -1007,7 +996,7 @@ void CABTRAudioProcessorEditor::MinimalLNF::drawComboBox (
 	g.drawRect (r, 3);
 }
 
-void CABTRAudioProcessorEditor::MinimalLNF::drawPopupMenuBackground (
+void SATTRAudioProcessorEditor::MinimalLNF::drawPopupMenuBackground (
 	juce::Graphics& g, int width, int height)
 {
 	g.fillAll (scheme.bg);
@@ -1015,7 +1004,7 @@ void CABTRAudioProcessorEditor::MinimalLNF::drawPopupMenuBackground (
 	g.drawRect (0, 0, width, height, 2);
 }
 
-void CABTRAudioProcessorEditor::MinimalLNF::drawScrollbar (
+void SATTRAudioProcessorEditor::MinimalLNF::drawScrollbar (
 	juce::Graphics& g, juce::ScrollBar&,
 	int x, int y, int width, int height,
 	bool isScrollbarVertical,
@@ -1046,7 +1035,7 @@ void CABTRAudioProcessorEditor::MinimalLNF::drawScrollbar (
 	}
 }
 
-void CABTRAudioProcessorEditor::MinimalLNF::drawAlertBox (juce::Graphics& g,
+void SATTRAudioProcessorEditor::MinimalLNF::drawAlertBox (juce::Graphics& g,
                                                           juce::AlertWindow& alert,
                                                           const juce::Rectangle<int>& textArea,
                                                           juce::TextLayout& textLayout)
@@ -1063,7 +1052,7 @@ void CABTRAudioProcessorEditor::MinimalLNF::drawAlertBox (juce::Graphics& g,
 	textLayout.draw (g, textArea.toFloat());
 }
 
-void CABTRAudioProcessorEditor::MinimalLNF::drawBubble (juce::Graphics& g,
+void SATTRAudioProcessorEditor::MinimalLNF::drawBubble (juce::Graphics& g,
                                                         juce::BubbleComponent&,
                                                         const juce::Point<float>&,
                                                         const juce::Rectangle<float>& body)
@@ -1074,20 +1063,20 @@ void CABTRAudioProcessorEditor::MinimalLNF::drawBubble (juce::Graphics& g,
 	                  findColour (juce::TooltipWindow::outlineColourId));
 }
 
-juce::Font CABTRAudioProcessorEditor::MinimalLNF::getTextButtonFont (juce::TextButton&, int buttonHeight)
+juce::Font SATTRAudioProcessorEditor::MinimalLNF::getTextButtonFont (juce::TextButton&, int buttonHeight)
 {
 	const float h = juce::jlimit (12.0f, 26.0f, buttonHeight * 0.48f);
 	return juce::Font (juce::FontOptions (h).withStyle ("Bold"));
 }
 
-juce::Font CABTRAudioProcessorEditor::MinimalLNF::getAlertWindowMessageFont()
+juce::Font SATTRAudioProcessorEditor::MinimalLNF::getAlertWindowMessageFont()
 {
 	auto f = juce::LookAndFeel_V4::getAlertWindowMessageFont();
 	f.setBold (true);
 	return f;
 }
 
-juce::Font CABTRAudioProcessorEditor::MinimalLNF::getLabelFont (juce::Label& label)
+juce::Font SATTRAudioProcessorEditor::MinimalLNF::getLabelFont (juce::Label& label)
 {
 	auto f = label.getFont();
 	if (f.getHeight() <= 0.0f)
@@ -1102,12 +1091,12 @@ juce::Font CABTRAudioProcessorEditor::MinimalLNF::getLabelFont (juce::Label& lab
 	return f;
 }
 
-juce::Font CABTRAudioProcessorEditor::MinimalLNF::getSliderPopupFont (juce::Slider&)
+juce::Font SATTRAudioProcessorEditor::MinimalLNF::getSliderPopupFont (juce::Slider&)
 {
 	return makeOverlayDisplayFont();
 }
 
-juce::Rectangle<int> CABTRAudioProcessorEditor::MinimalLNF::getTooltipBounds (const juce::String& tipText,
+juce::Rectangle<int> SATTRAudioProcessorEditor::MinimalLNF::getTooltipBounds (const juce::String& tipText,
                                                                                juce::Point<int> screenPos,
                                                                                juce::Rectangle<int> parentArea)
 {
@@ -1125,7 +1114,7 @@ juce::Rectangle<int> CABTRAudioProcessorEditor::MinimalLNF::getTooltipBounds (co
 	return r.constrainedWithin (parentArea.reduced (parentMargin));
 }
 
-void CABTRAudioProcessorEditor::MinimalLNF::drawTooltip (juce::Graphics& g,
+void SATTRAudioProcessorEditor::MinimalLNF::drawTooltip (juce::Graphics& g,
                                                           const juce::String& text,
                                                           int width,
                                                           int height)
@@ -1155,59 +1144,56 @@ void CABTRAudioProcessorEditor::MinimalLNF::drawTooltip (juce::Graphics& g,
 //==============================================================================
 //  Static loader param-ID table
 //==============================================================================
-const CABTRAudioProcessorEditor::LoaderParamIds CABTRAudioProcessorEditor::kLoaderParams[3] =
+const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoaderParams[3] =
 {
 	{ // A
-		CABTRAudioProcessor::kParamEnableA,
-		CABTRAudioProcessor::kParamHpFreqA, CABTRAudioProcessor::kParamLpFreqA, CABTRAudioProcessor::kParamInA, CABTRAudioProcessor::kParamOutA, CABTRAudioProcessor::kParamTiltA,
-		CABTRAudioProcessor::kParamStartA,  CABTRAudioProcessor::kParamEndA,    CABTRAudioProcessor::kParamSizeA,
-		CABTRAudioProcessor::kParamSeriesA, CABTRAudioProcessor::kParamPanA,    CABTRAudioProcessor::kParamFredA, CABTRAudioProcessor::kParamPosA, CABTRAudioProcessor::kParamResoA,
-		CABTRAudioProcessor::kParamInvA,    CABTRAudioProcessor::kParamChaosA, CABTRAudioProcessor::kParamChaosFilterA,
-		CABTRAudioProcessor::kParamChaosAmtA, CABTRAudioProcessor::kParamChaosSpdA,
-		CABTRAudioProcessor::kParamChaosAmtFilterA, CABTRAudioProcessor::kParamChaosSpdFilterA,
-		CABTRAudioProcessor::kParamModeInA, CABTRAudioProcessor::kParamModeOutA, CABTRAudioProcessor::kParamSumBusA, CABTRAudioProcessor::kParamFilterPosA, CABTRAudioProcessor::kParamMixA,
-		CABTRAudioProcessor::kParamSatTypeA, CABTRAudioProcessor::kParamSatRawA, CABTRAudioProcessor::kParamSatDriveA, CABTRAudioProcessor::kParamSatGirthA,
-		CABTRAudioProcessor::kParamSatModA, CABTRAudioProcessor::kParamSatBiasA, CABTRAudioProcessor::kParamSatSagA,
-		CABTRAudioProcessor::kParamVarA,
-		CABTRAudioProcessor::kParamDelayA,
-		CABTRAudioProcessor::kParamExpA
+		SATTRAudioProcessor::kParamEnableA,
+		SATTRAudioProcessor::kParamHpFreqA, SATTRAudioProcessor::kParamLpFreqA, SATTRAudioProcessor::kParamInA, SATTRAudioProcessor::kParamOutA, SATTRAudioProcessor::kParamTiltA,
+		SATTRAudioProcessor::kParamSeriesA, SATTRAudioProcessor::kParamPanA,    SATTRAudioProcessor::kParamFredA, SATTRAudioProcessor::kParamPosA, SATTRAudioProcessor::kParamResoA,
+		SATTRAudioProcessor::kParamInvA,    SATTRAudioProcessor::kParamChaosA, SATTRAudioProcessor::kParamChaosFilterA,
+		SATTRAudioProcessor::kParamChaosAmtA, SATTRAudioProcessor::kParamChaosSpdA,
+		SATTRAudioProcessor::kParamChaosAmtFilterA, SATTRAudioProcessor::kParamChaosSpdFilterA,
+		SATTRAudioProcessor::kParamModeInA, SATTRAudioProcessor::kParamModeOutA, SATTRAudioProcessor::kParamSumBusA, SATTRAudioProcessor::kParamFilterPosA, SATTRAudioProcessor::kParamMixA,
+		SATTRAudioProcessor::kParamSatTypeA, SATTRAudioProcessor::kParamSatRawA, SATTRAudioProcessor::kParamSatDriveA, SATTRAudioProcessor::kParamSatGirthA,
+		SATTRAudioProcessor::kParamSatModA, SATTRAudioProcessor::kParamSatBiasA, SATTRAudioProcessor::kParamSatSagA,
+		SATTRAudioProcessor::kParamVarA,
+		SATTRAudioProcessor::kParamDelayA,
+		SATTRAudioProcessor::kParamExpA
 	},
 	{ // B
-		CABTRAudioProcessor::kParamEnableB,
-		CABTRAudioProcessor::kParamHpFreqB, CABTRAudioProcessor::kParamLpFreqB, CABTRAudioProcessor::kParamInB, CABTRAudioProcessor::kParamOutB, CABTRAudioProcessor::kParamTiltB,
-		CABTRAudioProcessor::kParamStartB,  CABTRAudioProcessor::kParamEndB,    CABTRAudioProcessor::kParamSizeB,
-		CABTRAudioProcessor::kParamSeriesB, CABTRAudioProcessor::kParamPanB,    CABTRAudioProcessor::kParamFredB, CABTRAudioProcessor::kParamPosB, CABTRAudioProcessor::kParamResoB,
-		CABTRAudioProcessor::kParamInvB,    CABTRAudioProcessor::kParamChaosB, CABTRAudioProcessor::kParamChaosFilterB,
-		CABTRAudioProcessor::kParamChaosAmtB, CABTRAudioProcessor::kParamChaosSpdB,
-		CABTRAudioProcessor::kParamChaosAmtFilterB, CABTRAudioProcessor::kParamChaosSpdFilterB,
-		CABTRAudioProcessor::kParamModeInB, CABTRAudioProcessor::kParamModeOutB, CABTRAudioProcessor::kParamSumBusB, CABTRAudioProcessor::kParamFilterPosB, CABTRAudioProcessor::kParamMixB,
-		CABTRAudioProcessor::kParamSatTypeB, CABTRAudioProcessor::kParamSatRawB, CABTRAudioProcessor::kParamSatDriveB, CABTRAudioProcessor::kParamSatGirthB,
-		CABTRAudioProcessor::kParamSatModB, CABTRAudioProcessor::kParamSatBiasB, CABTRAudioProcessor::kParamSatSagB,
-		CABTRAudioProcessor::kParamVarB,
-		CABTRAudioProcessor::kParamDelayB,
-		CABTRAudioProcessor::kParamExpB
+		SATTRAudioProcessor::kParamEnableB,
+		SATTRAudioProcessor::kParamHpFreqB, SATTRAudioProcessor::kParamLpFreqB, SATTRAudioProcessor::kParamInB, SATTRAudioProcessor::kParamOutB, SATTRAudioProcessor::kParamTiltB,
+		SATTRAudioProcessor::kParamSeriesB, SATTRAudioProcessor::kParamPanB,    SATTRAudioProcessor::kParamFredB, SATTRAudioProcessor::kParamPosB, SATTRAudioProcessor::kParamResoB,
+		SATTRAudioProcessor::kParamInvB,    SATTRAudioProcessor::kParamChaosB, SATTRAudioProcessor::kParamChaosFilterB,
+		SATTRAudioProcessor::kParamChaosAmtB, SATTRAudioProcessor::kParamChaosSpdB,
+		SATTRAudioProcessor::kParamChaosAmtFilterB, SATTRAudioProcessor::kParamChaosSpdFilterB,
+		SATTRAudioProcessor::kParamModeInB, SATTRAudioProcessor::kParamModeOutB, SATTRAudioProcessor::kParamSumBusB, SATTRAudioProcessor::kParamFilterPosB, SATTRAudioProcessor::kParamMixB,
+		SATTRAudioProcessor::kParamSatTypeB, SATTRAudioProcessor::kParamSatRawB, SATTRAudioProcessor::kParamSatDriveB, SATTRAudioProcessor::kParamSatGirthB,
+		SATTRAudioProcessor::kParamSatModB, SATTRAudioProcessor::kParamSatBiasB, SATTRAudioProcessor::kParamSatSagB,
+		SATTRAudioProcessor::kParamVarB,
+		SATTRAudioProcessor::kParamDelayB,
+		SATTRAudioProcessor::kParamExpB
 	},
 	{ // C
-		CABTRAudioProcessor::kParamEnableC,
-		CABTRAudioProcessor::kParamHpFreqC, CABTRAudioProcessor::kParamLpFreqC, CABTRAudioProcessor::kParamInC, CABTRAudioProcessor::kParamOutC, CABTRAudioProcessor::kParamTiltC,
-		CABTRAudioProcessor::kParamStartC,  CABTRAudioProcessor::kParamEndC,    CABTRAudioProcessor::kParamSizeC,
-		CABTRAudioProcessor::kParamSeriesC, CABTRAudioProcessor::kParamPanC,    CABTRAudioProcessor::kParamFredC, CABTRAudioProcessor::kParamPosC, CABTRAudioProcessor::kParamResoC,
-		CABTRAudioProcessor::kParamInvC,    CABTRAudioProcessor::kParamChaosC, CABTRAudioProcessor::kParamChaosFilterC,
-		CABTRAudioProcessor::kParamChaosAmtC, CABTRAudioProcessor::kParamChaosSpdC,
-		CABTRAudioProcessor::kParamChaosAmtFilterC, CABTRAudioProcessor::kParamChaosSpdFilterC,
-		CABTRAudioProcessor::kParamModeInC, CABTRAudioProcessor::kParamModeOutC, CABTRAudioProcessor::kParamSumBusC, CABTRAudioProcessor::kParamFilterPosC, CABTRAudioProcessor::kParamMixC,
-		CABTRAudioProcessor::kParamSatTypeC, CABTRAudioProcessor::kParamSatRawC, CABTRAudioProcessor::kParamSatDriveC, CABTRAudioProcessor::kParamSatGirthC,
-		CABTRAudioProcessor::kParamSatModC, CABTRAudioProcessor::kParamSatBiasC, CABTRAudioProcessor::kParamSatSagC,
-		CABTRAudioProcessor::kParamVarC,
-		CABTRAudioProcessor::kParamDelayC,
-		CABTRAudioProcessor::kParamExpC
+		SATTRAudioProcessor::kParamEnableC,
+		SATTRAudioProcessor::kParamHpFreqC, SATTRAudioProcessor::kParamLpFreqC, SATTRAudioProcessor::kParamInC, SATTRAudioProcessor::kParamOutC, SATTRAudioProcessor::kParamTiltC,
+		SATTRAudioProcessor::kParamSeriesC, SATTRAudioProcessor::kParamPanC,    SATTRAudioProcessor::kParamFredC, SATTRAudioProcessor::kParamPosC, SATTRAudioProcessor::kParamResoC,
+		SATTRAudioProcessor::kParamInvC,    SATTRAudioProcessor::kParamChaosC, SATTRAudioProcessor::kParamChaosFilterC,
+		SATTRAudioProcessor::kParamChaosAmtC, SATTRAudioProcessor::kParamChaosSpdC,
+		SATTRAudioProcessor::kParamChaosAmtFilterC, SATTRAudioProcessor::kParamChaosSpdFilterC,
+		SATTRAudioProcessor::kParamModeInC, SATTRAudioProcessor::kParamModeOutC, SATTRAudioProcessor::kParamSumBusC, SATTRAudioProcessor::kParamFilterPosC, SATTRAudioProcessor::kParamMixC,
+		SATTRAudioProcessor::kParamSatTypeC, SATTRAudioProcessor::kParamSatRawC, SATTRAudioProcessor::kParamSatDriveC, SATTRAudioProcessor::kParamSatGirthC,
+		SATTRAudioProcessor::kParamSatModC, SATTRAudioProcessor::kParamSatBiasC, SATTRAudioProcessor::kParamSatSagC,
+		SATTRAudioProcessor::kParamVarC,
+		SATTRAudioProcessor::kParamDelayC,
+		SATTRAudioProcessor::kParamExpC
 	}
 };
 
 //==============================================================================
 //  Loader ref accessors
 //==============================================================================
-CABTRAudioProcessorEditor::LoaderRefs CABTRAudioProcessorEditor::getLoaderRefs (int i)
+SATTRAudioProcessorEditor::LoaderRefs SATTRAudioProcessorEditor::getLoaderRefs (int i)
 {
 	switch (i)
 	{
@@ -1232,7 +1218,7 @@ CABTRAudioProcessorEditor::LoaderRefs CABTRAudioProcessorEditor::getLoaderRefs (
 	}
 }
 
-CABTRAudioProcessorEditor::AttachRefs CABTRAudioProcessorEditor::getAttachRefs (int i)
+SATTRAudioProcessorEditor::AttachRefs SATTRAudioProcessorEditor::getAttachRefs (int i)
 {
 	switch (i)
 	{
@@ -1255,9 +1241,9 @@ CABTRAudioProcessorEditor::AttachRefs CABTRAudioProcessorEditor::getAttachRefs (
 }
 
 //==============================================================================
-//  setupLoaderUI — unified per-loader component initialisation
+//  setupLoaderUI � unified per-loader component initialisation
 //==============================================================================
-void CABTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
+void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
                                                 const char* chaosAmtId, const char* chaosSpdId)
 {
 	const juce::String suffix = juce::String (loaderIndex == 0 ? "A" : loaderIndex == 1 ? "B" : "C");
@@ -1311,15 +1297,15 @@ void CABTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 	addAndMakeVisible (r.exp);   r.exp.setButtonText ("EXP");   r.exp.addListener (this);
 	r.exp.addMouseListener (this, false);
 	{
-		const auto& orderParamId = loaderIndex == 0 ? CABTRAudioProcessor::kParamExpOrderA
-		                         : loaderIndex == 1 ? CABTRAudioProcessor::kParamExpOrderB
-		                                            : CABTRAudioProcessor::kParamExpOrderC;
-		const auto& ratioParamId = loaderIndex == 0 ? CABTRAudioProcessor::kParamExpRatioA
-		                         : loaderIndex == 1 ? CABTRAudioProcessor::kParamExpRatioB
-		                                            : CABTRAudioProcessor::kParamExpRatioC;
-		const auto& threshParamId = loaderIndex == 0 ? CABTRAudioProcessor::kParamExpThreshA
-		                          : loaderIndex == 1 ? CABTRAudioProcessor::kParamExpThreshB
-		                                             : CABTRAudioProcessor::kParamExpThreshC;
+		const auto& orderParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpOrderA
+		                         : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpOrderB
+		                                            : SATTRAudioProcessor::kParamExpOrderC;
+		const auto& ratioParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpRatioA
+		                         : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpRatioB
+		                                            : SATTRAudioProcessor::kParamExpRatioC;
+		const auto& threshParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpThreshA
+		                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpThreshB
+		                                             : SATTRAudioProcessor::kParamExpThreshC;
 		const bool  savedOrder = audioProcessor.getValueTreeState().getRawParameterValue (orderParamId)->load() >= 0.5f;
 		const float savedRatio = audioProcessor.getValueTreeState().getRawParameterValue (ratioParamId)->load();
 		const float savedThresh = audioProcessor.getValueTreeState().getRawParameterValue (threshParamId)->load();
@@ -1379,13 +1365,9 @@ void CABTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 		r.satType.addItem ("CLEAN",     1);
 		r.satType.addItem ("TAPE",      2);
 		r.satType.addItem ("TUBE",      3);
-		r.satType.addItem ("CLIPPER",   4);
-		r.satType.addItem ("TRANSISTOR", 5);
-		r.satType.addItem ("DIODE",     6);
-		r.satType.addItem ("TUNDRA",    7);
-		r.satType.addItem ("FUZZ",      8);
-		r.satType.addItem ("DOOM",      9);
-		r.satType.addItem ("DESTROY",  10);
+		r.satType.addItem ("TRANSISTOR", 4);
+		r.satType.addItem ("DIODE",     5);
+		r.satType.addItem ("CLIPPER",   6);
 		r.satType.setJustificationType (juce::Justification::centred);
 		r.satType.setLookAndFeel (&lnf);
 		r.satType.addListener (this);
@@ -1403,9 +1385,9 @@ void CABTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 }
 
 //==============================================================================
-//  createLoaderAttachments — unified per-loader param attachment wiring
+//  createLoaderAttachments � unified per-loader param attachment wiring
 //==============================================================================
-void CABTRAudioProcessorEditor::createLoaderAttachments (juce::AudioProcessorValueTreeState& params,
+void SATTRAudioProcessorEditor::createLoaderAttachments (juce::AudioProcessorValueTreeState& params,
                                                           int loaderIndex,
                                                           LoaderRefs ui, AttachRefs a)
 {
@@ -1447,33 +1429,31 @@ void CABTRAudioProcessorEditor::createLoaderAttachments (juce::AudioProcessorVal
 	ui.out.setSkewFactor (3.23);
 }
 
-int CABTRAudioProcessorEditor::getSelectedSatTypeModelIndex (const juce::ComboBox& combo) const noexcept
+int SATTRAudioProcessorEditor::getSelectedSatTypeModelIndex (const juce::ComboBox& combo) const noexcept
 {
 	return visibleComboIdToSatTypeModel (combo.getSelectedId());
 }
 
-void CABTRAudioProcessorEditor::syncSatTypeComboSelection (int loaderIndex)
+void SATTRAudioProcessorEditor::syncSatTypeComboSelection (int loaderIndex)
 {
 	auto refs = getLoaderRefs (loaderIndex);
-	const char* paramId = loaderIndex == 0 ? CABTRAudioProcessor::kParamSatTypeA
-	                     : loaderIndex == 1 ? CABTRAudioProcessor::kParamSatTypeB
-	                                        : CABTRAudioProcessor::kParamSatTypeC;
+	const char* paramId = loaderIndex == 0 ? SATTRAudioProcessor::kParamSatTypeA
+	                     : loaderIndex == 1 ? SATTRAudioProcessor::kParamSatTypeB
+	                                        : SATTRAudioProcessor::kParamSatTypeC;
 
 	if (auto* raw = audioProcessor.getValueTreeState().getRawParameterValue (paramId))
 	{
-		int modelIndex = juce::roundToInt (raw->load());
-		if (modelIndex == legacyPowerLegModelIndex)
-			modelIndex = static_cast<int> (SatEngine::Model::Triode);
+		const int modelIndex = juce::roundToInt (raw->load());
 		refs.satType.setSelectedId (satTypeModelToVisibleComboId (modelIndex), juce::dontSendNotification);
 	}
 }
 
-void CABTRAudioProcessorEditor::commitSatTypeComboSelection (int loaderIndex)
+void SATTRAudioProcessorEditor::commitSatTypeComboSelection (int loaderIndex)
 {
 	auto refs = getLoaderRefs (loaderIndex);
-	const char* paramId = loaderIndex == 0 ? CABTRAudioProcessor::kParamSatTypeA
-	                     : loaderIndex == 1 ? CABTRAudioProcessor::kParamSatTypeB
-	                                        : CABTRAudioProcessor::kParamSatTypeC;
+	const char* paramId = loaderIndex == 0 ? SATTRAudioProcessor::kParamSatTypeA
+	                     : loaderIndex == 1 ? SATTRAudioProcessor::kParamSatTypeB
+	                                        : SATTRAudioProcessor::kParamSatTypeC;
 
 	if (auto* param = audioProcessor.getValueTreeState().getParameter (paramId))
 	{
@@ -1485,7 +1465,7 @@ void CABTRAudioProcessorEditor::commitSatTypeComboSelection (int loaderIndex)
 //==============================================================================
 //  Constructor
 //==============================================================================
-CABTRAudioProcessorEditor::CABTRAudioProcessorEditor (CABTRAudioProcessor& p)
+SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 	: AudioProcessorEditor (&p), audioProcessor (p)
 {
 	setLookAndFeel (&lnf);
@@ -1595,27 +1575,27 @@ CABTRAudioProcessorEditor::CABTRAudioProcessorEditor (CABTRAudioProcessor& p)
 
 	// Global parameter attachments
 	routeAttach = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-		params, CABTRAudioProcessor::kParamRoute, routeCombo);
+		params, SATTRAudioProcessor::kParamRoute, routeCombo);
 	matchAttach = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-		params, CABTRAudioProcessor::kParamOversample, matchCombo);
+		params, SATTRAudioProcessor::kParamOversample, matchCombo);
 	trimAttach = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-		params, CABTRAudioProcessor::kParamTrim, trimCombo);
+		params, SATTRAudioProcessor::kParamTrim, trimCombo);
 	mixModeAttach = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-		params, CABTRAudioProcessor::kParamMixMode, mixModeCombo);
+		params, SATTRAudioProcessor::kParamMixMode, mixModeCombo);
 	globalMixAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
-		params, CABTRAudioProcessor::kParamMix, globalMixSlider);
+		params, SATTRAudioProcessor::kParamMix, globalMixSlider);
 	globalOutputAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
-		params, CABTRAudioProcessor::kParamOutput, globalOutputSlider);
+		params, SATTRAudioProcessor::kParamOutput, globalOutputSlider);
 	limThresholdAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
-		params, CABTRAudioProcessor::kParamLimThreshold, limThresholdSlider);
+		params, SATTRAudioProcessor::kParamLimThreshold, limThresholdSlider);
 	limModeAttach = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-		params, CABTRAudioProcessor::kParamLimMode, limModeCombo);
+		params, SATTRAudioProcessor::kParamLimMode, limModeCombo);
 	invPolAttach = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-		params, CABTRAudioProcessor::kParamInvPol, invPolCombo);
+		params, SATTRAudioProcessor::kParamInvPol, invPolCombo);
 	invStrAttach = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-		params, CABTRAudioProcessor::kParamInvStr, invStrCombo);
+		params, SATTRAudioProcessor::kParamInvStr, invStrCombo);
 	alignAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
-		params, CABTRAudioProcessor::kParamAlign, alignButton);
+		params, SATTRAudioProcessor::kParamAlign, alignButton);
 
 	// Initialize per-loader collapse state from processor
 	ioExpandedA_ = audioProcessor.getUiIoExpanded (0);
@@ -1669,7 +1649,7 @@ CABTRAudioProcessorEditor::CABTRAudioProcessorEditor (CABTRAudioProcessor& p)
 	updateLoaderEnabledState (2);
 }
 
-CABTRAudioProcessorEditor::~CABTRAudioProcessorEditor()
+SATTRAudioProcessorEditor::~SATTRAudioProcessorEditor()
 {
 	TR::dismissEditorOwnedModalPrompts (lnf);
 	setPromptOverlayActive (false);
@@ -1704,7 +1684,7 @@ CABTRAudioProcessorEditor::~CABTRAudioProcessorEditor()
 //==============================================================================
 //  Paint
 //==============================================================================
-void CABTRAudioProcessorEditor::paint (juce::Graphics& g)
+void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 {
 	using namespace TR;
 
@@ -1770,7 +1750,7 @@ void CABTRAudioProcessorEditor::paint (juce::Graphics& g)
 			g.drawText (juce::String ("v") + InfoContent::version, versionX, versionY, versionW, versionH,
 			            juce::Justification::bottomRight, false);
 
-		// Footer combo labels — explicit font + colour
+		// Footer combo labels � explicit font + colour
 		g.setColour (activeScheme.text);
 		g.setFont (juce::Font (juce::FontOptions (14.0f).withStyle ("Bold")));
 
@@ -1896,7 +1876,7 @@ void CABTRAudioProcessorEditor::paint (juce::Graphics& g)
 		g.fillEllipse (cachedInfoGearHole);
 	}
 
-	// (oversampling label removed — now in footer combo)
+	// (oversampling label removed � now in footer combo)
 
 	// Draw value legends for all bar sliders
 	{
@@ -1936,13 +1916,13 @@ void CABTRAudioProcessorEditor::paint (juce::Graphics& g)
 	}
 }
 
-void CABTRAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
+void SATTRAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 {
 	// Skip toggle bar when prompt overlay is active (it would paint over the prompt)
 	if (promptOverlayActive)
 		return;
 
-	// ── Per-loader toggle bars (triangle + rounded horizontal bar) ──
+	// -- Per-loader toggle bars (triangle + rounded horizontal bar) --
 	auto drawToggleBar = [&] (const juce::Rectangle<int>& area, bool expanded)
 	{
 		if (area.isEmpty()) return;
@@ -1980,7 +1960,7 @@ void CABTRAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 //==============================================================================
 //  Resized & Layout
 //==============================================================================
-void CABTRAudioProcessorEditor::resized()
+void SATTRAudioProcessorEditor::resized()
 {
 	// Persist window size to processor
 	audioProcessor.setUiEditorSize (getWidth(), getHeight());
@@ -2049,7 +2029,7 @@ void CABTRAudioProcessorEditor::resized()
 	footer.removeFromTop (rowGap);
 	auto footerRow2 = footer;
 
-	// Row 1: MIX / OUTPUT / LIM — uniform bar widths across full width
+	// Row 1: MIX / OUTPUT / LIM � uniform bar widths across full width
 	{
 		const int mixValW    = 60;
 		const int outValW    = 70;
@@ -2087,7 +2067,7 @@ void CABTRAudioProcessorEditor::resized()
 		limThresholdSlider.setBounds (row.removeFromLeft (barW));
 	}
 
-	// Row 2: ROUTE | MATCH | MIX | LIMIT | INV POL | INV STR — uniform
+	// Row 2: ROUTE | MATCH | MIX | LIMIT | INV POL | INV STR � uniform
 	{
 		auto area = footerRow2.reduced (footerMargin, 0);
 		auto row  = area.withSizeKeepingCentre (area.getWidth(), 26);
@@ -2112,7 +2092,7 @@ void CABTRAudioProcessorEditor::resized()
 	updateInfoIconCache();
 }
 
-void CABTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, int loaderIndex)
+void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, int loaderIndex)
 {
 	const int margin = 10;
 	const int buttonH = 30;
@@ -2128,7 +2108,7 @@ void CABTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	enableBtn.setBounds (area.removeFromTop (buttonH));
 	area.removeFromTop (gap);
 
-	// Toggle bar area — full column width (union computed in resized)
+	// Toggle bar area � full column width (union computed in resized)
 	auto toggleBarArea = area.removeFromTop (toggleBarH);
 	if (loaderIndex == 0)
 		cachedToggleBarAreaA_ = toggleBarArea;
@@ -2179,7 +2159,7 @@ void CABTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 
 	if (expanded)
 	{
-		// ── Expanded IO view: IN, OUT, TILT, FILTER, PAN, MIX, MODE IN/OUT, CHAOS ──
+		// -- Expanded IO view: IN, OUT, TILT, FILTER, PAN, MIX, MODE IN/OUT, CHAOS --
 
 		auto sliderRow = area.removeFromTop (sliderH);
 		in_.setBounds (sliderRow.removeFromLeft (sliderW));
@@ -2211,7 +2191,7 @@ void CABTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		mix.setVisible (true);
 		area.removeFromTop (gap);
 
-		// MODE IN / MODE OUT / F/T / SUM BUS combos (2×2 grid, same height as sliders)
+		// MODE IN / MODE OUT / F/T / SUM BUS combos (2�2 grid, same height as sliders)
 		area.removeFromTop (modeLabelGap);
 		const int modeComboW = (sliderW - gap) / 2;
 		auto modeRow1 = area.removeFromTop (sliderH);
@@ -2227,7 +2207,7 @@ void CABTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		sumBusCmb.setVisible (true);
 		area.removeFromTop (gap * 2);
 
-		// CHSF + CHSD checkboxes — CHSF aligned with sliders, CHSD aligned with value column
+		// CHSF + CHSD checkboxes � CHSF aligned with sliders, CHSD aligned with value column
 		auto checkArea = area.removeFromTop (checkH);
 		constexpr int valuePadPx = 8;
 		const int chsfW = sliderW;
@@ -2265,7 +2245,7 @@ void CABTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	}
 	else
 	{
-		// ── Collapsed main view: SatType combo + 5 sat sliders + SERIES + VAR + INV ──
+		// -- Collapsed main view: SatType combo + 5 sat sliders + SERIES + VAR + INV --
 
 		// SatType combo (same height as sliders) + RAW checkbox
 		auto& satTypeCmb = pick (satTypeComboA, satTypeComboB, satTypeComboC);
@@ -2356,7 +2336,7 @@ void CABTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 //==============================================================================
 //  Loader enabled/disabled visual state
 //==============================================================================
-void CABTRAudioProcessorEditor::updateLoaderEnabledState (int loaderIndex)
+void SATTRAudioProcessorEditor::updateLoaderEnabledState (int loaderIndex)
 {
 	auto r = getLoaderRefs (loaderIndex);
 
@@ -2386,7 +2366,7 @@ void CABTRAudioProcessorEditor::updateLoaderEnabledState (int loaderIndex)
 	repaint();
 }
 
-void CABTRAudioProcessorEditor::updateSatControlsEnabledState (int loaderIndex)
+void SATTRAudioProcessorEditor::updateSatControlsEnabledState (int loaderIndex)
 {
 	auto r = getLoaderRefs (loaderIndex);
 
@@ -2413,7 +2393,7 @@ void CABTRAudioProcessorEditor::updateSatControlsEnabledState (int loaderIndex)
 //==============================================================================
 //  Callbacks
 //==============================================================================
-void CABTRAudioProcessorEditor::timerCallback()
+void SATTRAudioProcessorEditor::timerCallback()
 {
 	// Sync filter bars from processor
 	filterBarA_.updateFromProcessor();
@@ -2451,19 +2431,19 @@ void CABTRAudioProcessorEditor::timerCallback()
 	}
 }
 
-void CABTRAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
+void SATTRAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
 {
 	juce::ignoreUnused (slider);
 	legendDirty = true;
 	repaint();
 }
 
-void CABTRAudioProcessorEditor::buttonClicked (juce::Button* button)
+void SATTRAudioProcessorEditor::buttonClicked (juce::Button* button)
 {
 	juce::ignoreUnused (button);
 }
 
-void CABTRAudioProcessorEditor::comboBoxChanged (juce::ComboBox* combo)
+void SATTRAudioProcessorEditor::comboBoxChanged (juce::ComboBox* combo)
 {
 	if (combo == &satTypeComboA) { commitSatTypeComboSelection (0); updateSatControlsEnabledState (0); }
 	else if (combo == &satTypeComboB) { commitSatTypeComboSelection (1); updateSatControlsEnabledState (1); }
@@ -2473,24 +2453,24 @@ void CABTRAudioProcessorEditor::comboBoxChanged (juce::ComboBox* combo)
 	repaint();
 }
 
-void CABTRAudioProcessorEditor::parameterChanged (const juce::String& paramID, float newValue)
+void SATTRAudioProcessorEditor::parameterChanged (const juce::String& paramID, float newValue)
 {
-	if (paramID == CABTRAudioProcessor::kParamUiFxTail)
+	if (paramID == SATTRAudioProcessor::kParamUiFxTail)
 	{
 		crtEnabled = newValue > 0.5f;
 		crtEffect.setEnabled (crtEnabled);
 		return;
 	}
 
-	const char* enableIds[] = { CABTRAudioProcessor::kParamEnableA,
-	                            CABTRAudioProcessor::kParamEnableB,
-	                            CABTRAudioProcessor::kParamEnableC };
+	const char* enableIds[] = { SATTRAudioProcessor::kParamEnableA,
+	                            SATTRAudioProcessor::kParamEnableB,
+	                            SATTRAudioProcessor::kParamEnableC };
 	for (int i = 0; i < 3; ++i)
 	{
 		if (paramID == enableIds[i])
 		{
 			const int idx = i;
-			juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<CABTRAudioProcessorEditor> (this), idx] ()
+			juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<SATTRAudioProcessorEditor> (this), idx] ()
 			{
 				if (safeThis != nullptr)
 					safeThis->updateLoaderEnabledState (idx);
@@ -2499,15 +2479,15 @@ void CABTRAudioProcessorEditor::parameterChanged (const juce::String& paramID, f
 		}
 	}
 
-	const char* satTypeIds[] = { CABTRAudioProcessor::kParamSatTypeA,
-	                             CABTRAudioProcessor::kParamSatTypeB,
-	                             CABTRAudioProcessor::kParamSatTypeC };
+	const char* satTypeIds[] = { SATTRAudioProcessor::kParamSatTypeA,
+	                             SATTRAudioProcessor::kParamSatTypeB,
+	                             SATTRAudioProcessor::kParamSatTypeC };
 	for (int i = 0; i < 3; ++i)
 	{
 		if (paramID == satTypeIds[i])
 		{
 			const int idx = i;
-			juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<CABTRAudioProcessorEditor> (this), idx] ()
+			juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<SATTRAudioProcessorEditor> (this), idx] ()
 			{
 				if (safeThis != nullptr)
 				{
@@ -2523,7 +2503,7 @@ void CABTRAudioProcessorEditor::parameterChanged (const juce::String& paramID, f
 //==============================================================================
 //  Mouse Events
 //==============================================================================
-void CABTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
+void SATTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 {
 	const auto p = e.getEventRelativeTo (this).getPosition();
 
@@ -2554,7 +2534,7 @@ void CABTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 		return;
 	}
 
-	// Click on OS label — no longer needed (now a footer combo)
+	// Click on OS label � no longer needed (now a footer combo)
 	// (removed)
 
 	// CHAOS checkboxes: left-click toggles, right-click opens chaos amount/speed prompt
@@ -2645,11 +2625,11 @@ void CABTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 	}
 }
 
-void CABTRAudioProcessorEditor::mouseDoubleClick (const juce::MouseEvent&)
+void SATTRAudioProcessorEditor::mouseDoubleClick (const juce::MouseEvent&)
 {
 }
 
-void CABTRAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
+void SATTRAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
 {
 	if (isDraggingWindow && e.mods.isLeftButtonDown())
 	{
@@ -2661,7 +2641,7 @@ void CABTRAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
 //  TR-style label/value system helpers
 //==============================================================================
 
-void CABTRAudioProcessorEditor::setupBar (juce::Slider& s)
+void SATTRAudioProcessorEditor::setupBar (juce::Slider& s)
 {
 	s.setSliderStyle (juce::Slider::LinearBar);
 	s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -2673,7 +2653,7 @@ void CABTRAudioProcessorEditor::setupBar (juce::Slider& s)
 	s.setColour (juce::Slider::thumbColourId, juce::Colours::transparentBlack);
 }
 
-bool CABTRAudioProcessorEditor::refreshLegendTextCache()
+bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 {
 	using namespace TR;
 
@@ -2716,34 +2696,26 @@ bool CABTRAudioProcessorEditor::refreshLegendTextCache()
 		{
 			case 1:                          reactLabels[l] = "COMP";  break; // Tape
 			case 2:                          reactLabels[l] = "SAG";   break; // Tube
-			case 4:
+			case 3:
 				driveLabels[l] = "GAIN";
 				girthLabels[l] = "BODY";
 				modLabels[l]   = "TYPE";
 				biasLabels[l]  = "BIAS";
 				reactLabels[l] = "COMP";
 				break;
-			case 10:
+			case 4:
+				girthLabels[l] = "COND";
+				modLabels[l]   = "TOPO";
+				biasLabels[l]  = "SYM";
+				reactLabels[l] = "COMP";
+				break;
+			case 5:
 				driveLabels[l] = "THR";
 				girthLabels[l] = "KNEE";
 				modLabels[l]   = "VOICE";
 				biasLabels[l]  = "SYM";
 				reactLabels[l] = "COMP";
 				break;
-			case 5:
-				girthLabels[l] = "COND";
-				modLabels[l]   = "TOPO";
-				biasLabels[l]  = "SYM";
-				reactLabels[l] = "COMP";
-				break;
-			case 6:
-				driveLabels[l] = "GAIN";
-				girthLabels[l] = "COLOR";
-				modLabels[l]   = "VOICE";
-				biasLabels[l]  = "FOCUS";
-				reactLabels[l] = "TIGHT";
-				break;
-			case 7: case 8: case 9: reactLabels[l] = "OCT";   break; // Fuzz/Doom/Destroy
 			default:                         reactLabels[l] = "RCT";   break; // Clean/unknown
 		}
 	}
@@ -2792,7 +2764,7 @@ bool CABTRAudioProcessorEditor::refreshLegendTextCache()
 					ct.short_  = juce::String (juce::roundToInt (val)) + " ms";
 					ct.intOnly = juce::String (juce::roundToInt (val));
 					break;
-				case 3: // Percent (value is 0..1 range → display as %)
+				case 3: // Percent (value is 0..1 range ? display as %)
 				{
 					const int pct = juce::roundToInt (val * 100.0);
 					ct.full    = juce::String (pct) + "% " + fmt.label;
@@ -2810,7 +2782,7 @@ bool CABTRAudioProcessorEditor::refreshLegendTextCache()
 					ct.short_  = juce::String (val, 1) + " dB";
 					ct.intOnly = juce::String (juce::roundToInt (val));
 					break;
-				case 6: // Bipolar percent (-1..1 → -100..100%)
+				case 6: // Bipolar percent (-1..1 ? -100..100%)
 				{
 					const int pct = juce::roundToInt (val * 100.0);
 					ct.full    = juce::String (pct) + "% " + fmt.label;
@@ -2857,7 +2829,7 @@ bool CABTRAudioProcessorEditor::refreshLegendTextCache()
 	return false;
 }
 
-juce::String CABTRAudioProcessorEditor::getMixText() const
+juce::String SATTRAudioProcessorEditor::getMixText() const
 {
 	if (mixModeCombo.getSelectedId() == 2)
 	{
@@ -2872,7 +2844,7 @@ juce::String CABTRAudioProcessorEditor::getMixText() const
 	return juce::String (pct) + "% MIX";
 }
 
-juce::String CABTRAudioProcessorEditor::getMixTextShort() const
+juce::String SATTRAudioProcessorEditor::getMixTextShort() const
 {
 	if (mixModeCombo.getSelectedId() == 2)
 	{
@@ -2887,7 +2859,7 @@ juce::String CABTRAudioProcessorEditor::getMixTextShort() const
 	return juce::String (pct) + "% MX";
 }
 
-juce::Rectangle<int> CABTRAudioProcessorEditor::getValueAreaFor (const juce::Rectangle<int>& barBounds,
+juce::Rectangle<int> SATTRAudioProcessorEditor::getValueAreaFor (const juce::Rectangle<int>& barBounds,
                                                                   int columnRight) const
 {
 	constexpr int valuePadPx    = 8;
@@ -2901,7 +2873,7 @@ juce::Rectangle<int> CABTRAudioProcessorEditor::getValueAreaFor (const juce::Rec
 	return { valueX, y, maxW, valueHeightPx };
 }
 
-juce::Slider* CABTRAudioProcessorEditor::getSliderForValueAreaPoint (juce::Point<int> p)
+juce::Slider* SATTRAudioProcessorEditor::getSliderForValueAreaPoint (juce::Point<int> p)
 {
 	for (int i = 0; i < 3; ++i)
 	{
@@ -2922,7 +2894,7 @@ juce::Slider* CABTRAudioProcessorEditor::getSliderForValueAreaPoint (juce::Point
 	return nullptr;
 }
 
-juce::Rectangle<int> CABTRAudioProcessorEditor::getInfoIconArea() const
+juce::Rectangle<int> SATTRAudioProcessorEditor::getInfoIconArea() const
 {
 	constexpr int size = 32;
 	constexpr int margin = 10;
@@ -2931,7 +2903,7 @@ juce::Rectangle<int> CABTRAudioProcessorEditor::getInfoIconArea() const
 	return { x, y, size, size };
 }
 
-void CABTRAudioProcessorEditor::updateInfoIconCache()
+void SATTRAudioProcessorEditor::updateInfoIconCache()
 {
 	const auto iconArea = getInfoIconArea();
 	const auto iconF = iconArea.toFloat();
@@ -2960,7 +2932,7 @@ void CABTRAudioProcessorEditor::updateInfoIconCache()
 }
 
 //==============================================================================
-void CABTRAudioProcessorEditor::setPromptOverlayActive (bool shouldBeActive)
+void SATTRAudioProcessorEditor::setPromptOverlayActive (bool shouldBeActive)
 {
 	if (promptOverlayActive == shouldBeActive)
 		return;
@@ -3013,7 +2985,7 @@ void CABTRAudioProcessorEditor::setPromptOverlayActive (bool shouldBeActive)
 	TR::anchorEditorOwnedPromptWindows (*this, lnf);
 }
 
-void CABTRAudioProcessorEditor::moved()
+void SATTRAudioProcessorEditor::moved()
 {
 	if (promptOverlayActive)
 		promptOverlay.toFront (false);
@@ -3021,7 +2993,7 @@ void CABTRAudioProcessorEditor::moved()
 	TR::anchorEditorOwnedPromptWindows (*this, lnf);
 }
 
-void CABTRAudioProcessorEditor::parentHierarchyChanged()
+void SATTRAudioProcessorEditor::parentHierarchyChanged()
 {
 	if (promptOverlayActive)
 		promptOverlay.toFront (false);
@@ -3030,13 +3002,13 @@ void CABTRAudioProcessorEditor::parentHierarchyChanged()
 //==============================================================================
 //  Prompts
 //==============================================================================
-void CABTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
+void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 {
 	using namespace TR;
 	lnf.setScheme (activeScheme);
 	const auto scheme = activeScheme;
 
-	// ── Suffix determination via slider type ──
+	// -- Suffix determination via slider type --
 	juce::String suffix;
 	juce::String suffixShort;
 	auto* bar = dynamic_cast<BarSlider*> (&s);
@@ -3070,7 +3042,7 @@ void CABTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	auto* aw = new juce::AlertWindow ("", "", juce::AlertWindow::NoIcon);
 	aw->setLookAndFeel (&lnf);
 
-	// ── Initial display value ──
+	// -- Initial display value --
 	juce::String currentDisplay;
 	if (isHpLp)
 		currentDisplay = juce::String (s.getValue(), 3);
@@ -3189,7 +3161,7 @@ void CABTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		if (layoutValueAndSuffix)
 			layoutValueAndSuffix();
 
-		// ── Per-slider input constraints ──
+		// -- Per-slider input constraints --
 		double minVal = 0.0, maxVal = 1.0;
 		int maxLen = 0, maxDecs = 4;
 
@@ -3272,7 +3244,7 @@ void CABTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 
 	styleAlertButtons (*aw, lnf);
 
-	juce::Component::SafePointer<CABTRAudioProcessorEditor> safeThis (this);
+	juce::Component::SafePointer<SATTRAudioProcessorEditor> safeThis (this);
 	juce::Slider* sliderPtr = &s;
 
 	setPromptOverlayActive (true);
@@ -3360,20 +3332,20 @@ void CABTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 //==============================================================================
 //  MIX SEND prompt (DRY + WET levels)
 //==============================================================================
-void CABTRAudioProcessorEditor::openMixSendPrompt()
+void SATTRAudioProcessorEditor::openMixSendPrompt()
 {
 	using namespace TR;
 	lnf.setScheme (activeScheme);
 	const auto scheme = activeScheme;
 
 	auto& proc = audioProcessor;
-	const float curDry = proc.getValueTreeState().getRawParameterValue (CABTRAudioProcessor::kParamDryLevel)->load();
-	const float curWet = proc.getValueTreeState().getRawParameterValue (CABTRAudioProcessor::kParamWetLevel)->load();
+	const float curDry = proc.getValueTreeState().getRawParameterValue (SATTRAudioProcessor::kParamDryLevel)->load();
+	const float curWet = proc.getValueTreeState().getRawParameterValue (SATTRAudioProcessor::kParamWetLevel)->load();
 
 	auto* aw = new juce::AlertWindow ("", "", juce::AlertWindow::NoIcon);
 	aw->setLookAndFeel (&lnf);
 
-	// ── Inline PromptBar (horizontal fill bar with draggable value) ──
+	// -- Inline PromptBar (horizontal fill bar with draggable value) --
 	struct PromptBar : public juce::Component
 	{
 		TRScheme colours;
@@ -3438,20 +3410,20 @@ void CABTRAudioProcessorEditor::openMixSendPrompt()
 
 	// DRY section
 	aw->addTextEditor ("dryLevel", dbString (curDry), juce::String());
-	auto* dryBar = new PromptBar (scheme, curDry, CABTRAudioProcessor::kDryLevelDefault);
+	auto* dryBar = new PromptBar (scheme, curDry, SATTRAudioProcessor::kDryLevelDefault);
 	aw->addAndMakeVisible (dryBar);
 
 	// WET section
 	aw->addTextEditor ("wetLevel", dbString (curWet), juce::String());
-	auto* wetBar = new PromptBar (scheme, curWet, CABTRAudioProcessor::kWetLevelDefault);
+	auto* wetBar = new PromptBar (scheme, curWet, SATTRAudioProcessor::kWetLevelDefault);
 	aw->addAndMakeVisible (wetBar);
 
 	// Shared sync flag
 	auto syncing  = std::make_shared<bool> (false);
 	auto layoutFn = std::make_shared<std::function<void()>> ([] {});
 
-	// ── Real-time parameter setter ──
-	juce::Component::SafePointer<CABTRAudioProcessorEditor> safeThis (this);
+	// -- Real-time parameter setter --
+	juce::Component::SafePointer<SATTRAudioProcessorEditor> safeThis (this);
 
 	auto pushParams = [safeThis, aw, dbToLinear] ()
 	{
@@ -3467,13 +3439,13 @@ void CABTRAudioProcessorEditor::openMixSendPrompt()
 		auto* wetTe = aw->getTextEditor ("wetLevel");
 		const float dryLin = dryTe ? juce::jlimit (0.0f, 1.0f, dbToLinear (dryTe->getText().getFloatValue())) : 1.0f;
 		const float wetLin = wetTe ? juce::jlimit (0.0f, 1.0f, dbToLinear (wetTe->getText().getFloatValue())) : 1.0f;
-		setP (CABTRAudioProcessor::kParamDryLevel, dryLin);
-		setP (CABTRAudioProcessor::kParamWetLevel, wetLin);
+		setP (SATTRAudioProcessor::kParamDryLevel, dryLin);
+		setP (SATTRAudioProcessor::kParamWetLevel, wetLin);
 
 		safeThis->dualMixBar_.updateFromProcessor();
 	};
 
-	// Wire bar → text sync
+	// Wire bar ? text sync
 	auto barToText = [aw, syncing, pushParams, dbString] (const char* editorId, float v01)
 	{
 		if (*syncing) return;
@@ -3490,7 +3462,7 @@ void CABTRAudioProcessorEditor::openMixSendPrompt()
 	dryBar->onValueChanged = [barToText] (float v) { barToText ("dryLevel", v); };
 	wetBar->onValueChanged = [barToText] (float v) { barToText ("wetLevel", v); };
 
-	// Wire text → bar sync
+	// Wire text ? bar sync
 	auto textToBar = [syncing, pushParams, dbToLinear] (juce::TextEditor* te, PromptBar* bar)
 	{
 		if (*syncing || te == nullptr || bar == nullptr) return;
@@ -3521,7 +3493,7 @@ void CABTRAudioProcessorEditor::openMixSendPrompt()
 	const int margin = kPromptInnerMargin;
 	const juce::Font promptFont (juce::FontOptions (34.0f).withStyle ("Bold"));
 
-	// ── Create persistent labels ──
+	// -- Create persistent labels --
 	auto* dryNameLabel = new juce::Label ("", "DRY");
 	dryNameLabel->setJustificationType (juce::Justification::centredLeft);
 	dryNameLabel->setColour (juce::Label::textColourId, scheme.text);
@@ -3550,11 +3522,11 @@ void CABTRAudioProcessorEditor::openMixSendPrompt()
 	wetDbLabel->setFont (promptFont);
 	aw->addAndMakeVisible (wetDbLabel);
 
-	// ── Prepare TextEditors ──
+	// -- Prepare TextEditors --
 	preparePromptTextEditor (*aw, "dryLevel", scheme.bg, scheme.text, scheme.fg, promptFont, false);
 	preparePromptTextEditor (*aw, "wetLevel", scheme.bg, scheme.text, scheme.fg, promptFont, false);
 
-	// ── Re-callable layout ──
+	// -- Re-callable layout --
 	auto layoutRows = [aw, dryNameLabel, wetNameLabel, dryDbLabel, wetDbLabel,
 	                    dryBar, wetBar, promptFont, margin] ()
 	{
@@ -3641,15 +3613,15 @@ void CABTRAudioProcessorEditor::openMixSendPrompt()
 
 			if (result != 1)
 			{
-				// CANCEL — restore original values
+				// CANCEL � restore original values
 				auto& p = safeThis->audioProcessor;
 				auto setP = [&p] (const char* id, float plain)
 				{
 					if (auto* param = p.getValueTreeState().getParameter (id))
 						param->setValueNotifyingHost (param->convertTo0to1 (plain));
 				};
-				setP (CABTRAudioProcessor::kParamDryLevel, origDry);
-				setP (CABTRAudioProcessor::kParamWetLevel, origWet);
+				setP (SATTRAudioProcessor::kParamDryLevel, origDry);
+				setP (SATTRAudioProcessor::kParamWetLevel, origWet);
 				safeThis->dualMixBar_.updateFromProcessor();
 			}
 
@@ -3661,7 +3633,7 @@ void CABTRAudioProcessorEditor::openMixSendPrompt()
 //==============================================================================
 //  FILTER prompt (HP + LP frequencies, on/off, slope)
 //==============================================================================
-void CABTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
+void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 {
 	using namespace TR;
 	lnf.setScheme (activeScheme);
@@ -3673,12 +3645,12 @@ void CABTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	auto pickId = [&] (const char* a, const char* b, const char* c) -> const char* {
 		return loaderIndex == 0 ? a : (loaderIndex == 1 ? b : c);
 	};
-	const char* hpFreqId  = pickId (CABTRAudioProcessor::kParamHpFreqA,  CABTRAudioProcessor::kParamHpFreqB,  CABTRAudioProcessor::kParamHpFreqC);
-	const char* lpFreqId  = pickId (CABTRAudioProcessor::kParamLpFreqA,  CABTRAudioProcessor::kParamLpFreqB,  CABTRAudioProcessor::kParamLpFreqC);
-	const char* hpOnId    = pickId (CABTRAudioProcessor::kParamHpOnA,    CABTRAudioProcessor::kParamHpOnB,    CABTRAudioProcessor::kParamHpOnC);
-	const char* lpOnId    = pickId (CABTRAudioProcessor::kParamLpOnA,    CABTRAudioProcessor::kParamLpOnB,    CABTRAudioProcessor::kParamLpOnC);
-	const char* hpSlopeId = pickId (CABTRAudioProcessor::kParamHpSlopeA, CABTRAudioProcessor::kParamHpSlopeB, CABTRAudioProcessor::kParamHpSlopeC);
-	const char* lpSlopeId = pickId (CABTRAudioProcessor::kParamLpSlopeA, CABTRAudioProcessor::kParamLpSlopeB, CABTRAudioProcessor::kParamLpSlopeC);
+	const char* hpFreqId  = pickId (SATTRAudioProcessor::kParamHpFreqA,  SATTRAudioProcessor::kParamHpFreqB,  SATTRAudioProcessor::kParamHpFreqC);
+	const char* lpFreqId  = pickId (SATTRAudioProcessor::kParamLpFreqA,  SATTRAudioProcessor::kParamLpFreqB,  SATTRAudioProcessor::kParamLpFreqC);
+	const char* hpOnId    = pickId (SATTRAudioProcessor::kParamHpOnA,    SATTRAudioProcessor::kParamHpOnB,    SATTRAudioProcessor::kParamHpOnC);
+	const char* lpOnId    = pickId (SATTRAudioProcessor::kParamLpOnA,    SATTRAudioProcessor::kParamLpOnB,    SATTRAudioProcessor::kParamLpOnC);
+	const char* hpSlopeId = pickId (SATTRAudioProcessor::kParamHpSlopeA, SATTRAudioProcessor::kParamHpSlopeB, SATTRAudioProcessor::kParamHpSlopeC);
+	const char* lpSlopeId = pickId (SATTRAudioProcessor::kParamLpSlopeA, SATTRAudioProcessor::kParamLpSlopeB, SATTRAudioProcessor::kParamLpSlopeC);
 
 	const float hpFreq  = vts.getRawParameterValue (hpFreqId)->load();
 	const float lpFreq  = vts.getRawParameterValue (lpFreqId)->load();
@@ -3690,7 +3662,7 @@ void CABTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	auto* aw = new juce::AlertWindow ("", "", juce::AlertWindow::NoIcon);
 	aw->setLookAndFeel (&lnf);
 
-	// ── Inline PromptBar for freq dragging ──
+	// -- Inline PromptBar for freq dragging --
 	struct PromptBar : public juce::Component
 	{
 		TRScheme colours;
@@ -3750,12 +3722,12 @@ void CABTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 
 	// HP section
 	aw->addTextEditor ("hpFreq", juce::String (juce::roundToInt (hpFreq)), juce::String());
-	auto* hpBar = new PromptBar (scheme, freqToNorm (hpFreq), freqToNorm (CABTRAudioProcessor::kFilterHpFreqDefault));
+	auto* hpBar = new PromptBar (scheme, freqToNorm (hpFreq), freqToNorm (SATTRAudioProcessor::kFilterHpFreqDefault));
 	aw->addAndMakeVisible (hpBar);
 
 	// LP section
 	aw->addTextEditor ("lpFreq", juce::String (juce::roundToInt (lpFreq)), juce::String());
-	auto* lpBar = new PromptBar (scheme, freqToNorm (lpFreq), freqToNorm (CABTRAudioProcessor::kFilterLpFreqDefault));
+	auto* lpBar = new PromptBar (scheme, freqToNorm (lpFreq), freqToNorm (SATTRAudioProcessor::kFilterLpFreqDefault));
 	aw->addAndMakeVisible (lpBar);
 
 	// HP on/off toggle
@@ -3770,7 +3742,7 @@ void CABTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	lpToggle->setLookAndFeel (&lnf);
 	aw->addAndMakeVisible (lpToggle);
 
-	// ── Clickable slope labels (cycle 6→12→24→6 on click) ──
+	// -- Clickable slope labels (cycle 6?12?24?6 on click) --
 	auto slopeToText = [] (int s) -> juce::String
 	{
 		if (s == 0) return "6dB";
@@ -3800,7 +3772,7 @@ void CABTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	auto syncing    = std::make_shared<bool> (false);
 	auto layoutFn   = std::make_shared<std::function<void()>> ([] {});
 
-	juce::Component::SafePointer<CABTRAudioProcessorEditor> safeThis (this);
+	juce::Component::SafePointer<SATTRAudioProcessorEditor> safeThis (this);
 
 	// Capture param IDs for lambda usage
 	const juce::String hpFreqIdStr (hpFreqId);
@@ -3842,7 +3814,7 @@ void CABTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 		fb.updateFromProcessor();
 	};
 
-	// Slope label click → cycle value and push
+	// Slope label click ? cycle value and push
 	struct SlopeCycler : public juce::MouseListener
 	{
 		std::shared_ptr<int> val;
@@ -3884,7 +3856,7 @@ void CABTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	hpToggle->onClick = pushParams;
 	lpToggle->onClick = pushParams;
 
-	// Wire bar ↔ text sync
+	// Wire bar ? text sync
 	auto barToText = [aw, syncing, normToFreq, freqToNorm, pushParams, hpBar, lpBar] (const char* editorId, float v01, bool isHp)
 	{
 		if (*syncing) return;
@@ -4000,7 +3972,7 @@ void CABTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	auto hpFwdGuard = std::shared_ptr<ToggleForwarder> (hpFwd);
 	auto lpFwdGuard = std::shared_ptr<ToggleForwarder> (lpFwd);
 
-	// ── Layout function (with slope labels) ──
+	// -- Layout function (with slope labels) --
 	auto layoutRows = [aw, hpToggle, lpToggle,
 	                    hpNameLabel, lpNameLabel, hpHzLabel, lpHzLabel,
 	                    hpSlopeLabel, lpSlopeLabel,
@@ -4113,7 +4085,7 @@ void CABTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 
 			if (result != 1)
 			{
-				// CANCEL — restore original values
+				// CANCEL � restore original values
 				auto& vts = safeThis->audioProcessor.getValueTreeState();
 				auto setP = [&vts] (const juce::String& id, float plain)
 				{
@@ -4141,26 +4113,26 @@ void CABTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 //==============================================================================
 //  CHAOS prompt (AMOUNT + SPEED)
 //==============================================================================
-void CABTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
+void SATTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 {
 	using namespace TR;
 	lnf.setScheme (activeScheme);
 	const auto scheme = activeScheme;
 
 	const auto& amtId = isFilter
-	    ? (loaderIndex == 0 ? CABTRAudioProcessor::kParamChaosAmtFilterA
-	       : (loaderIndex == 1 ? CABTRAudioProcessor::kParamChaosAmtFilterB
-	                           : CABTRAudioProcessor::kParamChaosAmtFilterC))
-	    : (loaderIndex == 0 ? CABTRAudioProcessor::kParamChaosAmtA
-	       : (loaderIndex == 1 ? CABTRAudioProcessor::kParamChaosAmtB
-	                           : CABTRAudioProcessor::kParamChaosAmtC));
+	    ? (loaderIndex == 0 ? SATTRAudioProcessor::kParamChaosAmtFilterA
+	       : (loaderIndex == 1 ? SATTRAudioProcessor::kParamChaosAmtFilterB
+	                           : SATTRAudioProcessor::kParamChaosAmtFilterC))
+	    : (loaderIndex == 0 ? SATTRAudioProcessor::kParamChaosAmtA
+	       : (loaderIndex == 1 ? SATTRAudioProcessor::kParamChaosAmtB
+	                           : SATTRAudioProcessor::kParamChaosAmtC));
 	const auto& spdId = isFilter
-	    ? (loaderIndex == 0 ? CABTRAudioProcessor::kParamChaosSpdFilterA
-	       : (loaderIndex == 1 ? CABTRAudioProcessor::kParamChaosSpdFilterB
-	                           : CABTRAudioProcessor::kParamChaosSpdFilterC))
-	    : (loaderIndex == 0 ? CABTRAudioProcessor::kParamChaosSpdA
-	       : (loaderIndex == 1 ? CABTRAudioProcessor::kParamChaosSpdB
-	                           : CABTRAudioProcessor::kParamChaosSpdC));
+	    ? (loaderIndex == 0 ? SATTRAudioProcessor::kParamChaosSpdFilterA
+	       : (loaderIndex == 1 ? SATTRAudioProcessor::kParamChaosSpdFilterB
+	                           : SATTRAudioProcessor::kParamChaosSpdFilterC))
+	    : (loaderIndex == 0 ? SATTRAudioProcessor::kParamChaosSpdA
+	       : (loaderIndex == 1 ? SATTRAudioProcessor::kParamChaosSpdB
+	                           : SATTRAudioProcessor::kParamChaosSpdC));
 
 	const float currentAmt = audioProcessor.getValueTreeState().getRawParameterValue (amtId)->load();
 	const float currentSpd = audioProcessor.getValueTreeState().getRawParameterValue (spdId)->load();
@@ -4171,7 +4143,7 @@ void CABTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 	aw->addTextEditor ("amt", juce::String (juce::roundToInt (currentAmt)), juce::String());
 	aw->addTextEditor ("spd", juce::String (currentSpd, 2), juce::String());
 
-	// ── Inline bar component ──
+	// -- Inline bar component --
 	struct PromptBar : public juce::Component
 	{
 		TRScheme colours;
@@ -4282,15 +4254,15 @@ void CABTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 	setupField ("amt", "AMT", "%",  false, amtSuffix, amtUnitLabel);
 	setupField ("spd", "SPD", "Hz", true,  spdSuffix, spdUnitLabel);
 
-	// Bars: AMOUNT 0-100 → 0..1, SPEED 0.01-100 Hz → 0..1 (logarithmic)
-	const float spdLogMin = std::log (CABTRAudioProcessor::kChaosSpdMin);
-	const float spdLogMax = std::log (CABTRAudioProcessor::kChaosSpdMax);
+	// Bars: AMOUNT 0-100 ? 0..1, SPEED 0.01-100 Hz ? 0..1 (logarithmic)
+	const float spdLogMin = std::log (SATTRAudioProcessor::kChaosSpdMin);
+	const float spdLogMax = std::log (SATTRAudioProcessor::kChaosSpdMax);
 	const float spdLogRange = spdLogMax - spdLogMin;
 
 	auto hzToBar = [spdLogMin, spdLogRange] (float hz) -> float
 	{
-		if (hz <= CABTRAudioProcessor::kChaosSpdMin) return 0.0f;
-		if (hz >= CABTRAudioProcessor::kChaosSpdMax) return 1.0f;
+		if (hz <= SATTRAudioProcessor::kChaosSpdMin) return 0.0f;
+		if (hz >= SATTRAudioProcessor::kChaosSpdMax) return 1.0f;
 		return (std::log (hz) - spdLogMin) / spdLogRange;
 	};
 
@@ -4300,10 +4272,10 @@ void CABTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 	};
 
 	auto* amtBar = new PromptBar (scheme, currentAmt * 0.01f,
-	                              CABTRAudioProcessor::kChaosAmtDefault * 0.01f);
+	                              SATTRAudioProcessor::kChaosAmtDefault * 0.01f);
 	auto* spdBar = new PromptBar (scheme,
 	                              hzToBar (currentSpd),
-	                              hzToBar (CABTRAudioProcessor::kChaosSpdDefault));
+	                              hzToBar (SATTRAudioProcessor::kChaosSpdDefault));
 	aw->addAndMakeVisible (amtBar);
 	aw->addAndMakeVisible (spdBar);
 
@@ -4315,7 +4287,7 @@ void CABTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 	auto* amtApvts = audioProcessor.getValueTreeState().getParameter (amtId);
 	auto* spdApvts = audioProcessor.getValueTreeState().getParameter (spdId);
 
-	// Bar → text + APVTS
+	// Bar ? text + APVTS
 	auto barToTextAmt = [aw, syncing, amtApvts] (float v01)
 	{
 		if (*syncing) return;
@@ -4334,8 +4306,8 @@ void CABTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 	{
 		if (*syncing) return;
 		*syncing = true;
-		const float hz = juce::jlimit (CABTRAudioProcessor::kChaosSpdMin,
-		                               CABTRAudioProcessor::kChaosSpdMax, barToHz (v01));
+		const float hz = juce::jlimit (SATTRAudioProcessor::kChaosSpdMin,
+		                               SATTRAudioProcessor::kChaosSpdMax, barToHz (v01));
 		if (auto* te = aw->getTextEditor ("spd"))
 		{
 			te->setText (juce::String (hz, 2), juce::sendNotification);
@@ -4416,7 +4388,7 @@ void CABTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 		placeRow (spdTe, spdSuffix, spdUnitLabel, spdBar, startY + rowTotal + gap);
 	};
 
-	// Text → bar + APVTS
+	// Text ? bar + APVTS
 	auto textToBar = [syncing, hzToBar] (juce::TextEditor* te, PromptBar* bar,
 	                            juce::RangedAudioParameter* param, bool isSpeed)
 	{
@@ -4425,8 +4397,8 @@ void CABTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 		const float raw = juce::jlimit (0.0f, 100.0f, te->getText().getFloatValue());
 		if (isSpeed)
 		{
-			const float hz = juce::jlimit (CABTRAudioProcessor::kChaosSpdMin,
-			                               CABTRAudioProcessor::kChaosSpdMax, raw);
+			const float hz = juce::jlimit (SATTRAudioProcessor::kChaosSpdMin,
+			                               SATTRAudioProcessor::kChaosSpdMax, raw);
 			bar->value = hzToBar (hz);
 			if (param != nullptr)
 				param->setValueNotifyingHost (param->convertTo0to1 (hz));
@@ -4468,7 +4440,7 @@ void CABTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 
 	styleAlertButtons (*aw, lnf);
 
-	juce::Component::SafePointer<CABTRAudioProcessorEditor> safeThis (this);
+	juce::Component::SafePointer<SATTRAudioProcessorEditor> safeThis (this);
 
 	if (safeThis != nullptr)
 	{
@@ -4547,8 +4519,8 @@ void CABTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 
 			// OK: update tooltip
 			const float newAmt = juce::jlimit (0.0f, 100.0f, amtBar->value * 100.0f);
-			const float newSpd = juce::jlimit (CABTRAudioProcessor::kChaosSpdMin,
-			                                    CABTRAudioProcessor::kChaosSpdMax,
+			const float newSpd = juce::jlimit (SATTRAudioProcessor::kChaosSpdMin,
+			                                    SATTRAudioProcessor::kChaosSpdMax,
 			                                    std::exp (spdLogMin + juce::jlimit (0.0f, 1.0f, spdBar->value) * spdLogRange));
 			auto tip = juce::String (juce::roundToInt (newAmt)) + "% | "
 			         + juce::String (juce::roundToInt (newSpd)) + " Hz";
@@ -4559,29 +4531,29 @@ void CABTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 }
 
 //==============================================================================
-//  EXP Prompt — right-click on EXP button opens ORDER/RATIO/THRESHOLD
+//  EXP Prompt � right-click on EXP button opens ORDER/RATIO/THRESHOLD
 //==============================================================================
-void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
+void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 {
 	using namespace TR;
 	lnf.setScheme (activeScheme);
 	const auto scheme = activeScheme;
 
-	const auto& orderParamId = loaderIndex == 0 ? CABTRAudioProcessor::kParamExpOrderA
-	                         : loaderIndex == 1 ? CABTRAudioProcessor::kParamExpOrderB
-	                                            : CABTRAudioProcessor::kParamExpOrderC;
-	const auto& ratioParamId = loaderIndex == 0 ? CABTRAudioProcessor::kParamExpRatioA
-	                         : loaderIndex == 1 ? CABTRAudioProcessor::kParamExpRatioB
-	                                            : CABTRAudioProcessor::kParamExpRatioC;
-	const auto& threshParamId = loaderIndex == 0 ? CABTRAudioProcessor::kParamExpThreshA
-	                          : loaderIndex == 1 ? CABTRAudioProcessor::kParamExpThreshB
-	                                             : CABTRAudioProcessor::kParamExpThreshC;
-	const auto& atkParamId = loaderIndex == 0 ? CABTRAudioProcessor::kParamExpAtkA
-	                       : loaderIndex == 1 ? CABTRAudioProcessor::kParamExpAtkB
-	                                          : CABTRAudioProcessor::kParamExpAtkC;
-	const auto& relParamId = loaderIndex == 0 ? CABTRAudioProcessor::kParamExpRelA
-	                       : loaderIndex == 1 ? CABTRAudioProcessor::kParamExpRelB
-	                                          : CABTRAudioProcessor::kParamExpRelC;
+	const auto& orderParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpOrderA
+	                         : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpOrderB
+	                                            : SATTRAudioProcessor::kParamExpOrderC;
+	const auto& ratioParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpRatioA
+	                         : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpRatioB
+	                                            : SATTRAudioProcessor::kParamExpRatioC;
+	const auto& threshParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpThreshA
+	                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpThreshB
+	                                             : SATTRAudioProcessor::kParamExpThreshC;
+	const auto& atkParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpAtkA
+	                       : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpAtkB
+	                                          : SATTRAudioProcessor::kParamExpAtkC;
+	const auto& relParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpRelA
+	                       : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpRelB
+	                                          : SATTRAudioProcessor::kParamExpRelC;
 
 	const bool  currentOrder  = audioProcessor.getValueTreeState().getRawParameterValue (orderParamId)->load() >= 0.5f;
 	const float currentRatio  = audioProcessor.getValueTreeState().getRawParameterValue (ratioParamId)->load();
@@ -4592,7 +4564,7 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	auto* aw = new juce::AlertWindow ("", "", juce::AlertWindow::NoIcon);
 	aw->setLookAndFeel (&lnf);
 
-	// ── Inline bar component ──
+	// -- Inline bar component --
 	struct PromptBar : public juce::Component
 	{
 		TRScheme colours;
@@ -4651,11 +4623,11 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	const auto& f = kBoldFont40();
 
-	// ── Scrollable body container ──
+	// -- Scrollable body container --
 	auto* bodyContent = new juce::Component();
 	bodyContent->setComponentID ("expBody");
 
-	// ── "ORDER:" legend + PRE/POST clickable toggle ──
+	// -- "ORDER:" legend + PRE/POST clickable toggle --
 	auto* orderLegend = new juce::Label ("", "ORDER:");
 	orderLegend->setJustificationType (juce::Justification::centredRight);
 	applyLabelTextColour (*orderLegend, scheme.text);
@@ -4670,7 +4642,7 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	orderLabel->setInterceptsMouseClicks (true, false);
 	bodyContent->addAndMakeVisible (orderLabel);
 
-	// ── TextEditors (added to aw so getTextEditor works, but re-parented to body) ──
+	// -- TextEditors (added to aw so getTextEditor works, but re-parented to body) --
 	aw->addTextEditor ("ratio",  juce::String (currentRatio, 1), juce::String());
 	aw->addTextEditor ("thresh", juce::String (juce::roundToInt (currentThresh)), juce::String());
 	aw->addTextEditor ("atk",    juce::String (currentAtk, 2), juce::String());
@@ -4723,21 +4695,21 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	setupField ("atk",    "ATK",    "ms", atkSuffix,    atkUnit);
 	setupField ("rel",    "REL",    "ms", relSuffix,    relUnit);
 
-	// ── Bars ──
-	const float ratioNorm  = (currentRatio - CABTRAudioProcessor::kExpRatioMin)
-	                       / (CABTRAudioProcessor::kExpRatioMax - CABTRAudioProcessor::kExpRatioMin);
-	const float threshNorm = (currentThresh - CABTRAudioProcessor::kExpThreshMin)
-	                       / (CABTRAudioProcessor::kExpThreshMax - CABTRAudioProcessor::kExpThreshMin);
+	// -- Bars --
+	const float ratioNorm  = (currentRatio - SATTRAudioProcessor::kExpRatioMin)
+	                       / (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin);
+	const float threshNorm = (currentThresh - SATTRAudioProcessor::kExpThreshMin)
+	                       / (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin);
 
-	auto atkNormRange = juce::NormalisableRange<float> (CABTRAudioProcessor::kExpAtkMin, CABTRAudioProcessor::kExpAtkMax, 0.01f, 0.3f);
-	auto relNormRange = juce::NormalisableRange<float> (CABTRAudioProcessor::kExpRelMin, CABTRAudioProcessor::kExpRelMax, 0.1f, 0.3f);
+	auto atkNormRange = juce::NormalisableRange<float> (SATTRAudioProcessor::kExpAtkMin, SATTRAudioProcessor::kExpAtkMax, 0.01f, 0.3f);
+	auto relNormRange = juce::NormalisableRange<float> (SATTRAudioProcessor::kExpRelMin, SATTRAudioProcessor::kExpRelMax, 0.1f, 0.3f);
 	const float atkNorm = atkNormRange.convertTo0to1 (currentAtk);
 	const float relNorm = relNormRange.convertTo0to1 (currentRel);
 
 	auto* ratioBar  = new PromptBar (scheme, ratioNorm,  0.0f);
 	auto* threshBar = new PromptBar (scheme, threshNorm, 1.0f);
-	auto* atkBar    = new PromptBar (scheme, atkNorm, atkNormRange.convertTo0to1 (CABTRAudioProcessor::kExpAtkDefault));
-	auto* relBar    = new PromptBar (scheme, relNorm, relNormRange.convertTo0to1 (CABTRAudioProcessor::kExpRelDefault));
+	auto* atkBar    = new PromptBar (scheme, atkNorm, atkNormRange.convertTo0to1 (SATTRAudioProcessor::kExpAtkDefault));
+	auto* relBar    = new PromptBar (scheme, relNorm, relNormRange.convertTo0to1 (SATTRAudioProcessor::kExpRelDefault));
 	bodyContent->addAndMakeVisible (ratioBar);
 	bodyContent->addAndMakeVisible (threshBar);
 	bodyContent->addAndMakeVisible (atkBar);
@@ -4748,7 +4720,7 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	if (atkSuffix    != nullptr) atkSuffix->pairedBar    = atkBar;
 	if (relSuffix    != nullptr) relSuffix->pairedBar    = relBar;
 
-	// ── Preset labels: GATE | DUCK | SOFT ──
+	// -- Preset labels: GATE | DUCK | SOFT --
 	auto* presetGate = new juce::Label ("", "GATE");
 	auto* presetDuck = new juce::Label ("", "DUCK");
 	auto* presetSoft = new juce::Label ("", "SOFT");
@@ -4762,7 +4734,7 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		bodyContent->addAndMakeVisible (pl);
 	}
 
-	// ── Viewport wrapping the body ──
+	// -- Viewport wrapping the body --
 	auto* viewport = new juce::Viewport();
 	viewport->setComponentID ("expViewport");
 	viewport->setViewedComponent (bodyContent, true); // bodyContent owned by viewport
@@ -4779,7 +4751,7 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	auto* atkApvts    = audioProcessor.getValueTreeState().getParameter (atkParamId);
 	auto* relApvts    = audioProcessor.getValueTreeState().getParameter (relParamId);
 
-	// ── Order toggle via click ──
+	// -- Order toggle via click --
 	auto orderState = std::make_shared<bool> (currentOrder);
 	struct OrderClickHandler : public juce::MouseListener
 	{
@@ -4799,13 +4771,13 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	orderHandler->param = orderApvts;
 	orderLabel->addMouseListener (orderHandler, false);
 
-	// ── Bar → text + APVTS ──
+	// -- Bar ? text + APVTS --
 	ratioBar->onValueChanged = [aw, syncing, ratioApvts] (float v01)
 	{
 		if (*syncing) return;
 		*syncing = true;
-		const float ratio = CABTRAudioProcessor::kExpRatioMin
-		                  + v01 * (CABTRAudioProcessor::kExpRatioMax - CABTRAudioProcessor::kExpRatioMin);
+		const float ratio = SATTRAudioProcessor::kExpRatioMin
+		                  + v01 * (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin);
 		if (auto* te = aw->getTextEditor ("ratio"))
 		{ te->setText (juce::String (ratio, 1), juce::sendNotification); te->selectAll(); }
 		if (ratioApvts) ratioApvts->setValueNotifyingHost (ratioApvts->convertTo0to1 (ratio));
@@ -4816,8 +4788,8 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	{
 		if (*syncing) return;
 		*syncing = true;
-		const float thresh = CABTRAudioProcessor::kExpThreshMin
-		                   + v01 * (CABTRAudioProcessor::kExpThreshMax - CABTRAudioProcessor::kExpThreshMin);
+		const float thresh = SATTRAudioProcessor::kExpThreshMin
+		                   + v01 * (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin);
 		if (auto* te = aw->getTextEditor ("thresh"))
 		{ te->setText (juce::String (juce::roundToInt (thresh)), juce::sendNotification); te->selectAll(); }
 		if (threshApvts) threshApvts->setValueNotifyingHost (threshApvts->convertTo0to1 (thresh));
@@ -4846,7 +4818,7 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		*syncing = false;
 	};
 
-	// ── Preset click handlers ──
+	// -- Preset click handlers --
 	auto applyPreset = [aw, atkBar, relBar, atkApvts, relApvts, atkNormRange, relNormRange, syncing]
 	                   (float atkMs, float relMs)
 	{
@@ -4882,7 +4854,7 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	softClick->onClick = [applyPreset] () { applyPreset (2.0f, 500.0f); };
 	presetSoft->addMouseListener (softClick, false);
 
-	// ── Layout: positions body content inside viewport ──
+	// -- Layout: positions body content inside viewport --
 	auto layoutBody = [aw, viewport, bodyContent,
 	                   orderLegend, orderLabel,
 	                   ratioSuffix, threshSuffix, atkSuffix, relSuffix,
@@ -4989,14 +4961,14 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		bodyContent->setSize (contentW, y);
 	};
 
-	// ── Text → bar + APVTS ──
+	// -- Text ? bar + APVTS --
 	auto textToBarRatio = [syncing, ratioApvts] (juce::TextEditor* te, PromptBar* bar)
 	{
 		if (*syncing || !te || !bar) return;
 		*syncing = true;
-		const float raw = juce::jlimit (CABTRAudioProcessor::kExpRatioMin, CABTRAudioProcessor::kExpRatioMax,
+		const float raw = juce::jlimit (SATTRAudioProcessor::kExpRatioMin, SATTRAudioProcessor::kExpRatioMax,
 		                                te->getText().getFloatValue());
-		bar->value = (raw - CABTRAudioProcessor::kExpRatioMin) / (CABTRAudioProcessor::kExpRatioMax - CABTRAudioProcessor::kExpRatioMin);
+		bar->value = (raw - SATTRAudioProcessor::kExpRatioMin) / (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin);
 		if (ratioApvts) ratioApvts->setValueNotifyingHost (ratioApvts->convertTo0to1 (raw));
 		bar->repaint();
 		*syncing = false;
@@ -5006,9 +4978,9 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	{
 		if (*syncing || !te || !bar) return;
 		*syncing = true;
-		const float raw = juce::jlimit (CABTRAudioProcessor::kExpThreshMin, CABTRAudioProcessor::kExpThreshMax,
+		const float raw = juce::jlimit (SATTRAudioProcessor::kExpThreshMin, SATTRAudioProcessor::kExpThreshMax,
 		                                te->getText().getFloatValue());
-		bar->value = (raw - CABTRAudioProcessor::kExpThreshMin) / (CABTRAudioProcessor::kExpThreshMax - CABTRAudioProcessor::kExpThreshMin);
+		bar->value = (raw - SATTRAudioProcessor::kExpThreshMin) / (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin);
 		if (threshApvts) threshApvts->setValueNotifyingHost (threshApvts->convertTo0to1 (raw));
 		bar->repaint();
 		*syncing = false;
@@ -5018,7 +4990,7 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	{
 		if (*syncing || !te || !bar) return;
 		*syncing = true;
-		const float raw = juce::jlimit (CABTRAudioProcessor::kExpAtkMin, CABTRAudioProcessor::kExpAtkMax,
+		const float raw = juce::jlimit (SATTRAudioProcessor::kExpAtkMin, SATTRAudioProcessor::kExpAtkMax,
 		                                te->getText().getFloatValue());
 		bar->value = atkNormRange.convertTo0to1 (raw);
 		if (atkApvts) atkApvts->setValueNotifyingHost (atkApvts->convertTo0to1 (raw));
@@ -5030,7 +5002,7 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	{
 		if (*syncing || !te || !bar) return;
 		*syncing = true;
-		const float raw = juce::jlimit (CABTRAudioProcessor::kExpRelMin, CABTRAudioProcessor::kExpRelMax,
+		const float raw = juce::jlimit (SATTRAudioProcessor::kExpRelMin, SATTRAudioProcessor::kExpRelMax,
 		                                te->getText().getFloatValue());
 		bar->value = relNormRange.convertTo0to1 (raw);
 		if (relApvts) relApvts->setValueNotifyingHost (relApvts->convertTo0to1 (raw));
@@ -5066,7 +5038,7 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	styleAlertButtons (*aw, lnf);
 
-	juce::Component::SafePointer<CABTRAudioProcessorEditor> safeThis (this);
+	juce::Component::SafePointer<SATTRAudioProcessorEditor> safeThis (this);
 
 	if (safeThis != nullptr)
 	{
@@ -5160,14 +5132,14 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			else
 			{
 				// OK: update tooltip
-				const float newRatio = juce::jlimit (CABTRAudioProcessor::kExpRatioMin,
-				                                     CABTRAudioProcessor::kExpRatioMax,
-				                                     CABTRAudioProcessor::kExpRatioMin
-				                                     + ratioBar->value * (CABTRAudioProcessor::kExpRatioMax - CABTRAudioProcessor::kExpRatioMin));
-				const float newThresh = juce::jlimit (CABTRAudioProcessor::kExpThreshMin,
-				                                      CABTRAudioProcessor::kExpThreshMax,
-				                                      CABTRAudioProcessor::kExpThreshMin
-				                                      + threshBar->value * (CABTRAudioProcessor::kExpThreshMax - CABTRAudioProcessor::kExpThreshMin));
+				const float newRatio = juce::jlimit (SATTRAudioProcessor::kExpRatioMin,
+				                                     SATTRAudioProcessor::kExpRatioMax,
+				                                     SATTRAudioProcessor::kExpRatioMin
+				                                     + ratioBar->value * (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin));
+				const float newThresh = juce::jlimit (SATTRAudioProcessor::kExpThreshMin,
+				                                      SATTRAudioProcessor::kExpThreshMax,
+				                                      SATTRAudioProcessor::kExpThreshMin
+				                                      + threshBar->value * (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin));
 				auto tip = juce::String (*orderState ? "POST" : "PRE") + " | 1:"
 				         + juce::String (juce::roundToInt (newRatio))
 				         + " | " + juce::String (juce::roundToInt (newThresh)) + " dB";
@@ -5183,7 +5155,7 @@ void CABTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		false);
 }
 
-void CABTRAudioProcessorEditor::openInfoPopup()
+void SATTRAudioProcessorEditor::openInfoPopup()
 {
 	lnf.setScheme (activeScheme);
 
@@ -5191,7 +5163,7 @@ void CABTRAudioProcessorEditor::openInfoPopup()
 
 	auto* aw = new juce::AlertWindow ("", "", juce::AlertWindow::NoIcon);
 	juce::Component::SafePointer<juce::AlertWindow> safeAw (aw);
-	juce::Component::SafePointer<CABTRAudioProcessorEditor> safeThis (this);
+	juce::Component::SafePointer<SATTRAudioProcessorEditor> safeThis (this);
 	aw->setLookAndFeel (&lnf);
 	aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
 	aw->addButton ("GRAPHICS", 2);
@@ -5316,7 +5288,7 @@ void CABTRAudioProcessorEditor::openInfoPopup()
 	});
 
 	aw->enterModalState (true,
-		juce::ModalCallbackFunction::create ([safeThis = juce::Component::SafePointer<CABTRAudioProcessorEditor> (this), aw] (int result) mutable
+		juce::ModalCallbackFunction::create ([safeThis = juce::Component::SafePointer<SATTRAudioProcessorEditor> (this), aw] (int result) mutable
 		{
 			std::unique_ptr<juce::AlertWindow> killer (aw);
 
@@ -5333,7 +5305,7 @@ void CABTRAudioProcessorEditor::openInfoPopup()
 		}));
 }
 
-void CABTRAudioProcessorEditor::openGraphicsPopup()
+void SATTRAudioProcessorEditor::openGraphicsPopup()
 {
 	lnf.setScheme (activeScheme);
 
@@ -5345,7 +5317,7 @@ void CABTRAudioProcessorEditor::openGraphicsPopup()
 	setPromptOverlayActive (true);
 
 	auto* aw = new juce::AlertWindow ("", "", juce::AlertWindow::NoIcon);
-	juce::Component::SafePointer<CABTRAudioProcessorEditor> safeThis (this);
+	juce::Component::SafePointer<SATTRAudioProcessorEditor> safeThis (this);
 	juce::Component::SafePointer<juce::AlertWindow> safeAw (aw);
 	aw->setLookAndFeel (&lnf);
 	aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -5627,7 +5599,7 @@ void CABTRAudioProcessorEditor::openGraphicsPopup()
 		}));
 }
 
-void CABTRAudioProcessorEditor::applyLabelTextColour (juce::Label& label, juce::Colour colour)
+void SATTRAudioProcessorEditor::applyLabelTextColour (juce::Label& label, juce::Colour colour)
 {
 	label.setColour (juce::Label::textColourId, colour);
 }

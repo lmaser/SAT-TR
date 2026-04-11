@@ -24,7 +24,7 @@ namespace SatDiag
 // ── Per-block snapshot ──────────────────────────────────────────────────────
 struct BlockSnap
 {
-    int      implRev        = 24041022;
+    int      implRev        = 24041048;
 
     // Timing
     double   blockTimeUs    = 0.0;   // wall-clock time for processBlock (µs)
@@ -66,7 +66,6 @@ struct BlockSnap
     float    transInputPad  = 0.0f;  // TRANSISTOR: effective input pad for the current block
     float    transSatK      = 0.0f;  // TRANSISTOR: main tanh k
     float    transRailThresh = 0.0f; // TRANSISTOR: average rail threshold
-
     // Routing / context
     int      route          = 0;
     int      diagLoader     = 0;     // 0=A, 1=B, 2=C
@@ -92,11 +91,6 @@ struct BlockSnap
     float    maxDelta       = 0.0f;
     int      clickCount     = 0;     // # deltas > clickThreshold
 
-    // Feedback state
-    float    fuzzFeedback   = 0.0f;
-    float    doomFeedback   = 0.0f;
-    float    destroyFeedback = 0.0f;
-
     // Filter state magnitudes (max across series passes, L channel)
     float    maxFilterState = 0.0f;  // largest one-pole state value
     float    maxDcState     = 0.0f;  // largest DC-blocker state value
@@ -104,7 +98,6 @@ struct BlockSnap
     // REACT / sag
     float    sagEnvelope    = 0.0f;
     float    sagLastPass    = 0.0f;
-    float    yinFreq        = 0.0f;
 
     // Timestamp
     juce::int64 timestampMs = 0;
@@ -317,7 +310,7 @@ private:
                 << "  time_ms  cpu%  model  sr  blk  os  ser | drive girth mod bias react\n"
                 << "  pkIn  pkOut  pkPreAG  pkFin  autoGain | maxDlt clicks | nan inf dnrm\n"
                 << "  adaaFB adaaBlend adaaFull lastDx lastK\n"
-                << "  fuzzFB doomFB destFB maxFilt sagEnv yinHz\n"
+       << "  maxFilt sagEnv\n"
                 << "================================================================\n\n";
             file_.appendText (hdr);
         }
@@ -346,7 +339,7 @@ private:
 
         if (! isInteresting) return;
 
-        char buf[1200];
+        char buf[1900];
         std::snprintf (buf, sizeof (buf),
             "[%lld] rev=%d cpu=%.1f%%  m=%d ld=%d rt=%d en=%d sr=%.0f blk=%d os=%d ser=%d"
             " | drv=%.3f gir=%.3f mod=%.3f bias=%.3f react=%.3f"
@@ -358,7 +351,7 @@ private:
             " | dlt=%.4f clk=%d"
             " | nan=%d inf=%d dnrm=%d"
             " | aFB=%d aBl=%d aFl=%d dx=%.2e k=%.1f"
-            " | fzFB=%.4f dmFB=%.4f dsFB=%.4f filt=%.2e dc=%.2e sag=%.3f sagL=%.3f yin=%.1f\n",
+        " | filt=%.2e dc=%.2e sag=%.3f sagL=%.3f\n",
             (long long) s.timestampMs, s.implRev, s.cpuPercent,
             s.model, s.diagLoader, s.route, s.enableMask, s.sampleRate, s.numSamples, s.osOrder, s.seriesCount,
             s.drive, s.girth, s.mod, s.bias, s.react,
@@ -370,8 +363,7 @@ private:
             s.maxDelta, s.clickCount,
             s.nanCount, s.infCount, s.denormalCount,
             s.adaaFallbacks, s.adaaBlends, s.adaaFull, s.adaaLastDx, s.adaaLastK,
-            s.fuzzFeedback, s.doomFeedback, s.destroyFeedback,
-            s.maxFilterState, s.maxDcState, s.sagEnvelope, s.sagLastPass, s.yinFreq);
+        s.maxFilterState, s.maxDcState, s.sagEnvelope, s.sagLastPass);
 
         file_.appendText (juce::String (buf));
     }

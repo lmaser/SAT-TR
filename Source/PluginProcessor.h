@@ -7,12 +7,12 @@
 #include <atomic>
 #include <vector>
 
-class CABTRAudioProcessor : public juce::AudioProcessor,
+class SATTRAudioProcessor : public juce::AudioProcessor,
                              private juce::Timer
 {
 public:
-	CABTRAudioProcessor();
-	~CABTRAudioProcessor() override;
+	SATTRAudioProcessor();
+	~SATTRAudioProcessor() override;
 
 	// ══════════════════════════════════════════════════════════════
 	//  Parameter IDs — Loader A
@@ -27,9 +27,6 @@ public:
 	static constexpr const char* kParamInA          = "in_a";
 	static constexpr const char* kParamOutA         = "out_a";
 	static constexpr const char* kParamTiltA        = "tilt_a";
-	static constexpr const char* kParamStartA       = "start_a";
-	static constexpr const char* kParamEndA         = "end_a";
-	static constexpr const char* kParamSizeA        = "size_a";
 	static constexpr const char* kParamSeriesA      = "series_a";
 	static constexpr const char* kParamVarA         = "var_a";
 	static constexpr const char* kParamPanA         = "pan_a";
@@ -76,9 +73,6 @@ public:
 	static constexpr const char* kParamInB          = "in_b";
 	static constexpr const char* kParamOutB         = "out_b";
 	static constexpr const char* kParamTiltB        = "tilt_b";
-	static constexpr const char* kParamStartB       = "start_b";
-	static constexpr const char* kParamEndB         = "end_b";
-	static constexpr const char* kParamSizeB        = "size_b";
 	static constexpr const char* kParamSeriesB      = "series_b";
 	static constexpr const char* kParamVarB         = "var_b";
 	static constexpr const char* kParamPanB         = "pan_b";
@@ -125,9 +119,6 @@ public:
 	static constexpr const char* kParamInC          = "in_c";
 	static constexpr const char* kParamOutC         = "out_c";
 	static constexpr const char* kParamTiltC        = "tilt_c";
-	static constexpr const char* kParamStartC       = "start_c";
-	static constexpr const char* kParamEndC         = "end_c";
-	static constexpr const char* kParamSizeC        = "size_c";
 	static constexpr const char* kParamSeriesC      = "series_c";
 	static constexpr const char* kParamVarC         = "var_c";
 	static constexpr const char* kParamPanC         = "pan_c";
@@ -283,7 +274,7 @@ public:
 	static constexpr float kMaxNormBoost   = 7.94328f; // +18 dB
 
 	// ══════════════════════════════════════════════════════════════
-	//  Parameter Ranges & Defaults — Legacy IR Compatibility Controls
+	//  Parameter Ranges & Defaults — Per-Loader Controls
 	// ══════════════════════════════════════════════════════════════
 	static constexpr float kInMin                   = -100.0f;
 	static constexpr float kInMax                   = 0.0f;
@@ -296,18 +287,6 @@ public:
 	static constexpr float kTiltMin                 = -6.0f;
 	static constexpr float kTiltMax                 = 6.0f;
 	static constexpr float kTiltDefault             = 0.0f;
-
-	static constexpr float kStartMin                = 0.0f;
-	static constexpr float kStartMax                = 10000.0f; // 10 seconds max IR
-	static constexpr float kStartDefault            = 0.0f;
-
-	static constexpr float kEndMin                  = 0.0f;
-	static constexpr float kEndMax                  = 10000.0f;
-	static constexpr float kEndDefault              = 10000.0f;
-
-	static constexpr float kSizeMin                 = 0.25f;      // 25%
-	static constexpr float kSizeMax                 = 4.0f;       // 400%
-	static constexpr float kSizeDefault             = 1.0f;       // 100%
 
 	static constexpr float kSeriesMin               = 1.0f;
 	static constexpr float kSeriesMax               = 4.0f;
@@ -361,7 +340,7 @@ public:
 
 	static constexpr float kResoMin                  = 0.0f;       // 0%
 	static constexpr float kResoMax                  = 2.0f;       // 200%
-	static constexpr float kResoDefault              = 1.0f;       // 100% = original IR
+	static constexpr float kResoDefault              = 1.0f;       // 100% = neutral resonance response
 
 	// ══════════════════════════════════════════════════════════════
 	//  Parameter Ranges & Defaults — Global
@@ -506,7 +485,7 @@ public:
 	// ══════════════════════════════════════════════════════════════
 	//  DSP State — Per-loader processing
 	// ══════════════════════════════════════════════════════════════
-	struct IRLoaderState
+	struct LoaderState
 		{
 		// Filter states (6/12/24 dB/oct slope-selectable)
 		juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, 
@@ -597,23 +576,23 @@ public:
 		juce::SmoothedValue<float> smoothedDelay { 0.0f };
 		
 		// Delete copy operations (contains atomic)
-		IRLoaderState() = default;
-		IRLoaderState (const IRLoaderState&) = delete;
-		IRLoaderState& operator= (const IRLoaderState&) = delete;
-		IRLoaderState (IRLoaderState&&) = default;
-		IRLoaderState& operator= (IRLoaderState&&) = default;
+		LoaderState() = default;
+		LoaderState (const LoaderState&) = delete;
+		LoaderState& operator= (const LoaderState&) = delete;
+		LoaderState (LoaderState&&) = default;
+		LoaderState& operator= (LoaderState&&) = default;
 	};
 
-	IRLoaderState stateA;
-	IRLoaderState stateB;
-	IRLoaderState stateC;
+	LoaderState stateA;
+	LoaderState stateB;
+	LoaderState stateC;
 
 #if SAT_DSP_DIAG
 	SatDiag::Collector _diagCollector;
 #endif
 
 	// ══════════════════════════════════════════════════════════════
-	//  Helper methods (public for editor to trigger IR loading)
+	//  Helper methods (public for editor-triggered maintenance/actions)
 	// ══════════════════════════════════════════════════════════════
 
 
@@ -866,7 +845,7 @@ private:
 	//  Private Helper methods
 	// ══════════════════════════════════════════════════════════════
 	// loaderIndex: 0=A, 1=B, 2=C
-	void processLoader (IRLoaderState& state, 
+	void processLoader (LoaderState& state,
 	                    juce::AudioBuffer<float>& buffer,
 	                    int loaderIndex,
 	                    bool skipAutoGain = false);
@@ -914,5 +893,5 @@ private:
 		output = driftValue + shValue * shWeight;
 	}
 
-	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CABTRAudioProcessor)
+	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SATTRAudioProcessor)
 };

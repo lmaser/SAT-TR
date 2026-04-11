@@ -1,4 +1,4 @@
-﻿#include "PluginProcessor.h"
+#include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "DspDebugLog.h"
 #include "SatDspDiag.h"
@@ -8,14 +8,14 @@
 // ---------------------------------------------------------------------------
 namespace
 {
-	// Fast dB→linear conversion using exp2 instead of pow(10, dB/20).
+	// Fast dB?linear conversion using exp2 instead of pow(10, dB/20).
 	// Mathematically equivalent: 10^(dB/20) = 2^(dB * log2(10)/20) = 2^(dB * 0.16609640474)
 	inline float fastDecibelsToGain (float dB) noexcept
 	{
 		return (dB <= -100.0f) ? 0.0f : std::exp2 (dB * 0.16609640474f);
 	}
 
-	// Relaxed atomic load helpers — safe for audio thread (single-writer GUI, single-reader audio).
+	// Relaxed atomic load helpers � safe for audio thread (single-writer GUI, single-reader audio).
 	// Avoids unnecessary memory fences from default seq_cst ordering.
 	inline float loadRelaxed (std::atomic<float>* p, float def = 0.0f) noexcept
 	{
@@ -55,7 +55,7 @@ namespace
 }
 
 //==============================================================================
-CABTRAudioProcessor::CABTRAudioProcessor()
+SATTRAudioProcessor::SATTRAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
      : AudioProcessor (BusesProperties()
                      #if ! JucePlugin_IsMidiEffect
@@ -68,22 +68,22 @@ CABTRAudioProcessor::CABTRAudioProcessor()
 #else
      :
 #endif
-      parameters (*this, nullptr, juce::Identifier ("CABTRState"), createParameterLayout())
+      parameters (*this, nullptr, juce::Identifier ("SATTRState"), createParameterLayout())
 {
 	startTimer (200);
 }
 
-CABTRAudioProcessor::~CABTRAudioProcessor()
+SATTRAudioProcessor::~SATTRAudioProcessor()
 {
 }
 
 //==============================================================================
-const juce::String CABTRAudioProcessor::getName() const
+const juce::String SATTRAudioProcessor::getName() const
 {
     return JucePlugin_Name;
 }
 
-bool CABTRAudioProcessor::acceptsMidi() const
+bool SATTRAudioProcessor::acceptsMidi() const
 {
    #if JucePlugin_WantsMidiInput
     return true;
@@ -92,7 +92,7 @@ bool CABTRAudioProcessor::acceptsMidi() const
    #endif
 }
 
-bool CABTRAudioProcessor::producesMidi() const
+bool SATTRAudioProcessor::producesMidi() const
 {
    #if JucePlugin_ProducesMidiOutput
     return true;
@@ -101,7 +101,7 @@ bool CABTRAudioProcessor::producesMidi() const
    #endif
 }
 
-bool CABTRAudioProcessor::isMidiEffect() const
+bool SATTRAudioProcessor::isMidiEffect() const
 {
    #if JucePlugin_IsMidiEffect
     return true;
@@ -110,46 +110,46 @@ bool CABTRAudioProcessor::isMidiEffect() const
    #endif
 }
 
-double CABTRAudioProcessor::getTailLengthSeconds() const
+double SATTRAudioProcessor::getTailLengthSeconds() const
 {
     return 0.0;
 }
 
-int CABTRAudioProcessor::getNumPrograms()
+int SATTRAudioProcessor::getNumPrograms()
 {
     return 1;   // NB: some hosts don't cope very well if you tell them there are 0 programs,
                 // so this should be at least 1, even if you're not really implementing programs.
 }
 
-int CABTRAudioProcessor::getCurrentProgram()
+int SATTRAudioProcessor::getCurrentProgram()
 {
     return 0;
 }
 
-void CABTRAudioProcessor::setCurrentProgram (int index)
+void SATTRAudioProcessor::setCurrentProgram (int index)
 {
 	juce::ignoreUnused (index);
 }
 
-const juce::String CABTRAudioProcessor::getProgramName (int index)
+const juce::String SATTRAudioProcessor::getProgramName (int index)
 {
     juce::ignoreUnused (index);
     return {};
 }
 
-void CABTRAudioProcessor::changeProgramName (int index, const juce::String& newName)
+void SATTRAudioProcessor::changeProgramName (int index, const juce::String& newName)
 {
 	juce::ignoreUnused (index, newName);
 }
 
 //==============================================================================
-juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createParameterLayout()
+juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createParameterLayout()
 {
 	juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-	// ══════════════════════════════════════════════════════════════
+	// --------------------------------------------------------------
 	//  Loader A Parameters
-	// ══════════════════════════════════════════════════════════════
+	// --------------------------------------------------------------
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamEnableA, "Enable A", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -182,19 +182,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamTiltA, "Tilt A",
 		juce::NormalisableRange<float> (kTiltMin, kTiltMax, 0.01f),
 		kTiltDefault));
-	// Legacy IR compatibility parameters kept only for old sessions/presets.
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamStartA, "Start A",
-		juce::NormalisableRange<float> (kStartMin, kStartMax, 0.1f, 0.15f), // Skew 0.15 = deep log (high resolution at low values)
-		kStartDefault));
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamEndA, "End A",
-		juce::NormalisableRange<float> (kEndMin, kEndMax, 0.1f, 0.15f), // Skew 0.15 = deep log
-		kEndDefault));
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSizeA, "Size A", 
-		juce::NormalisableRange<float> (kSizeMin, kSizeMax, 0.01f, 0.5f), 
-		kSizeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSeriesA, "Series A",
 		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
@@ -250,7 +237,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamMixA, "Mix A", kGlobalMixMin, kGlobalMixMax, kGlobalMixDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSatTypeA, "Sat Type A",
-            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TUBE", "TRANSISTOR", "DIODE", "TUNDRA", "FUZZ", "DOOM", "DESTROY", "CLIPPER" }, kSatTypeDefault));
+            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TRANSISTOR", "DIODE", "CLIPPER" }, kSatTypeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatDriveA, "Sat Drive A",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
@@ -285,9 +272,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamExpRelA, "Exp Rel A",
 		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.1f, 0.3f), kExpRelDefault));
 
-	// ══════════════════════════════════════════════════════════════
+	// --------------------------------------------------------------
 	//  Loader B Parameters
-	// ══════════════════════════════════════════════════════════════
+	// --------------------------------------------------------------
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamEnableB, "Enable B", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -320,19 +307,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamTiltB, "Tilt B",
 		juce::NormalisableRange<float> (kTiltMin, kTiltMax, 0.01f),
 		kTiltDefault));
-	// Legacy IR compatibility parameters kept only for old sessions/presets.
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamStartB, "Start B",
-		juce::NormalisableRange<float> (kStartMin, kStartMax, 0.1f, 0.15f), // Skew 0.15 = deep log (high resolution at low values)
-		kStartDefault));
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamEndB, "End B",
-		juce::NormalisableRange<float> (kEndMin, kEndMax, 0.1f, 0.15f), // Skew 0.15 = deep log
-		kEndDefault));
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSizeB, "Size B", 
-		juce::NormalisableRange<float> (kSizeMin, kSizeMax, 0.01f, 0.5f), 
-		kSizeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSeriesB, "Series B",
 		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
@@ -388,7 +362,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamMixB, "Mix B", kGlobalMixMin, kGlobalMixMax, kGlobalMixDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSatTypeB, "Sat Type B",
-            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TUBE", "TRANSISTOR", "DIODE", "TUNDRA", "FUZZ", "DOOM", "DESTROY", "CLIPPER" }, kSatTypeDefault));
+            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TRANSISTOR", "DIODE", "CLIPPER" }, kSatTypeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatDriveB, "Sat Drive B",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
@@ -423,9 +397,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamExpRelB, "Exp Rel B",
 		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.1f, 0.3f), kExpRelDefault));
 
-	// ══════════════════════════════════════════════════════════════
+	// --------------------------------------------------------------
 	//  Loader C Parameters
-	// ══════════════════════════════════════════════════════════════
+	// --------------------------------------------------------------
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamEnableC, "Enable C", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -458,19 +432,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamTiltC, "Tilt C",
 		juce::NormalisableRange<float> (kTiltMin, kTiltMax, 0.01f),
 		kTiltDefault));
-	// Legacy IR compatibility parameters kept only for old sessions/presets.
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamStartC, "Start C",
-		juce::NormalisableRange<float> (kStartMin, kStartMax, 0.1f, 0.15f),
-		kStartDefault));
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamEndC, "End C",
-		juce::NormalisableRange<float> (kEndMin, kEndMax, 0.1f, 0.15f),
-		kEndDefault));
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSizeC, "Size C", 
-		juce::NormalisableRange<float> (kSizeMin, kSizeMax, 0.01f, 0.5f), 
-		kSizeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSeriesC, "Series C",
 		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
@@ -526,7 +487,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamMixC, "Mix C", kGlobalMixMin, kGlobalMixMax, kGlobalMixDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSatTypeC, "Sat Type C",
-            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TUBE", "TRANSISTOR", "DIODE", "TUNDRA", "FUZZ", "DOOM", "DESTROY", "CLIPPER" }, kSatTypeDefault));
+            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TRANSISTOR", "DIODE", "CLIPPER" }, kSatTypeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatDriveC, "Sat Drive C",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
@@ -561,9 +522,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 		kParamExpRelC, "Exp Rel C",
 		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.1f, 0.3f), kExpRelDefault));
 
-	// ══════════════════════════════════════════════════════════════
+	// --------------------------------------------------------------
 	//  Global Parameters
-	// ══════════════════════════════════════════════════════════════
+	// --------------------------------------------------------------
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamInput, "Input", kInputMin, kInputMax, kInputDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -613,9 +574,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamAlign, "Align", false));
 
-	// ══════════════════════════════════════════════════════════════
+	// --------------------------------------------------------------
 	//  UI State Parameters (hidden from automation)
-	// ══════════════════════════════════════════════════════════════
+	// --------------------------------------------------------------
 	layout.add (std::make_unique<juce::AudioParameterInt> (
 		juce::ParameterID { kParamUiWidth, 1 }, "UI Width", 400, 2000, 800,
 		juce::AudioParameterIntAttributes().withAutomatable (false)));
@@ -644,12 +605,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout CABTRAudioProcessor::createP
 }
 
 //==============================================================================
-void CABTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
 	currentSampleRate = sampleRate;
 	currentBlockSize = samplesPerBlock;
 	
-	LOG_IR_EVENT ("prepareToPlay: sr=" + juce::String (sampleRate) + 
+	LOG_DSP_EVENT ("prepareToPlay: sr=" + juce::String (sampleRate) + 
 	              " blockSize=" + juce::String (samplesPerBlock));
 
 	juce::dsp::ProcessSpec spec;
@@ -892,7 +853,7 @@ void CABTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	// Initialize EMA-smoothed filter frequencies to current parameter values
 	std::atomic<float>* hpPtrs[] = { pHpFreqA, pHpFreqB, pHpFreqC };
 	std::atomic<float>* lpPtrs[] = { pLpFreqA, pLpFreqB, pLpFreqC };
-	IRLoaderState* states[] = { &stateA, &stateB, &stateC };
+	LoaderState* states[] = { &stateA, &stateB, &stateC };
 	for (int i = 0; i < 3; ++i)
 	{
 		states[i]->smoothedHpFreq = hpPtrs[i]->load();
@@ -900,7 +861,7 @@ void CABTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 		states[i]->satState.reset();
 	}
 
-	// Initialize oversampling objects (all factors × all loaders)
+	// Initialize oversampling objects (all factors � all loaders)
 	for (int ldr = 0; ldr < 3; ++ldr)
 	{
 		for (int order = 1; order <= 4; ++order)
@@ -914,12 +875,12 @@ void CABTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	currentOsOrder_ = 0;
 }
 
-void CABTRAudioProcessor::releaseResources()
+void SATTRAudioProcessor::releaseResources()
 {
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
-bool CABTRAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool SATTRAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
   #if JucePlugin_IsMidiEffect
     juce::ignoreUnused (layouts);
@@ -948,14 +909,14 @@ bool CABTRAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) co
 // DSP NOTES:
 //
 // 1. MODE PROCESSING: Mid/Side conversion
-//    - MID = (L+R) / sqrt(2)  — preserves RMS energy
+//    - MID = (L+R) / sqrt(2)  � preserves RMS energy
 //    - SIDE = (L-R) / sqrt(2)
 //    - L+R = standard stereo pass-through
 //
 // 2. ROUTING:
 //    - PARALLEL (A|B|C): Independent processing, summed output
-//    - SERIES (A→B→C): Output of one loader feeds the next
-//    - HYBRID: A→B|C and A|B→C
+//    - SERIES (A?B?C): Output of one loader feeds the next
+//    - HYBRID: A?B|C and A|B?C
 //
 // 3. SIMD OPTIMIZATION: FloatVectorOperations for buffer operations
 //    - applyGain, multiply, add use SIMD when available
@@ -971,7 +932,7 @@ static inline void injectMSBus (float l, float r, int bus,
 	else               { sideBus += (l - r) * 0.5f; }
 }
 
-void CABTRAudioProcessor::applyMidSideMode (juce::AudioBuffer<float>& buf, int modeVal, int nSamples)
+void SATTRAudioProcessor::applyMidSideMode (juce::AudioBuffer<float>& buf, int modeVal, int nSamples)
 {
 	if ((modeVal == 1 || modeVal == 2) && buf.getNumChannels() >= 2)
 	{
@@ -995,7 +956,7 @@ void CABTRAudioProcessor::applyMidSideMode (juce::AudioBuffer<float>& buf, int m
 	}
 }
 
-void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
 	juce::ScopedNoDenormals noDenormals;
 	juce::ignoreUnused (midiMessages);
@@ -1030,12 +991,12 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		loaderDryBuffer.setSize (nc, numSamples, false, false, true);
 	}
 
-	// Get global parameters (cached pointers — relaxed atomic, no hash lookup)
+	// Get global parameters (cached pointers � relaxed atomic, no hash lookup)
 	const bool enableA = loadRelaxedBool (pEnableA);
 	const bool enableB = loadRelaxedBool (pEnableB);
 	const bool enableC = loadRelaxedBool (pEnableC);
 
-	// A loader is "active" when enabled (no IR dependency in SAT-TR)
+	// A loader is active when enabled.
 	const bool activeA = enableA;
 	const bool activeB = enableB;
 	const bool activeC = enableC;
@@ -1048,7 +1009,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const float dryLevel  = (mixMode == 1) ? loadRelaxed (pDryLevel) : 0.0f;
 	const float wetLevel  = (mixMode == 1) ? loadRelaxed (pWetLevel) : 0.0f;
 
-	// ── Limiter ──
+	// -- Limiter --
 	const int limMode = loadRelaxedInt (pLimMode);
 	const float limThreshLin = (limMode != 0)
 		? fastDecibelsToGain (loadRelaxed (pLimThreshold, kLimThresholdDefault))
@@ -1070,9 +1031,9 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const float mixA = loadRelaxed (pMixA);
 	const float mixB = loadRelaxed (pMixB);
 	const float mixC = loadRelaxed (pMixC);
-	const auto satTypeA = SatEngine::canonicalizeModel (static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeA)));
-	const auto satTypeB = SatEngine::canonicalizeModel (static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeB)));
-	const auto satTypeC = SatEngine::canonicalizeModel (static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeC)));
+	const auto satTypeA = static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeA));
+	const auto satTypeB = static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeB));
+	const auto satTypeC = static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeC));
 	const bool satRawA = loadRelaxedBool (pSatRawA);
 	const bool satRawB = loadRelaxedBool (pSatRawB);
 	const bool satRawC = loadRelaxedBool (pSatRawC);
@@ -1094,8 +1055,8 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const float inputGain = fastDecibelsToGain (loadRelaxed (pInput));
 	buffer.applyGain (inputGain);
 
-	// ── DIAGNOSTIC LOG (throttled ~1s) ──
-#if CABTR_DSP_DEBUG_LOG
+	// -- DIAGNOSTIC LOG (throttled ~1s) --
+#if SATTR_DSP_DEBUG_LOG
 	{
 		static int diagBlockCount = 0;
 		++diagBlockCount;
@@ -1139,13 +1100,13 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			     << " InC=" << juce::String (inC_dB, 2) << " OutC=" << juce::String (outC_dB, 2)
 			     << " | mixA=" << juce::String (mixA, 3) << " mixB=" << juce::String (mixB, 3) << " mixC=" << juce::String (mixC, 3)
 			     << " | tempBufA=" << tempBufferA.getNumSamples() << " tempBufB=" << tempBufferB.getNumSamples();
-			LOG_IR_EVENT (diag);
+			LOG_DSP_EVENT (diag);
 		}
 	}
 #endif
 
 	// Capture dry signal AFTER input gain, but BEFORE any loader processing
-	// Used for global MIX: dry is unaffected by convolution, filters, mode, etc.
+	// Used for global MIX: dry is unaffected by loader processing, filters, mode, etc.
 	const bool needsDry = (mixMode == 1) ? true : (globalMix < 0.999f);
 	if (needsDry)
 	{
@@ -1153,7 +1114,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			globalDryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
 	}
 
-	// ── Helper lambdas ──
+	// -- Helper lambdas --
 	// Save dry copy before processing a loader (for per-loader mix)
 	auto saveDry = [&] (const juce::AudioBuffer<float>& src)
 	{
@@ -1179,7 +1140,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	};
 
 	// Process one loader with mode in/out and per-loader mix
-	auto processOne = [&] (IRLoaderState& state, juce::AudioBuffer<float>& buf,
+	auto processOne = [&] (LoaderState& state, juce::AudioBuffer<float>& buf,
 	                        int loaderIndex, int modeIn, int modeOut, float loaderMix,
 	                        bool skipAutoGain = false)
 	{
@@ -1211,13 +1172,13 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		return (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0);
 	};
 
-	// ── ROUTING ──
-	// Route 0: A→B→C (full series)
+	// -- ROUTING --
+	// Route 0: A?B?C (full series)
 	// Route 1: A|B|C  (all parallel)
-	// Route 2: A→B|C  (series A→B, C parallel)
-	// Route 3: A|B→C  (A parallel, series B→C)
+	// Route 2: A?B|C  (series A?B, C parallel)
+	// Route 3: A|B?C  (A parallel, series B?C)
 
-	if (route == 1) // A|B|C — all parallel
+	if (route == 1) // A|B|C � all parallel
 	{
 		const int numActive = countEnabled (activeA, activeB, activeC);
 		if (numActive >= 2)
@@ -1237,14 +1198,14 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			if (activeB) processOne (stateB, tempBufferB, 1, modeInB, modeOutB, mixB);
 			if (activeC) processOne (stateC, tempBufferC, 2, modeInC, modeOutC, mixC);
 
-			// Sum active buffers — M/S bus-aware
+			// Sum active buffers � M/S bus-aware
 			const bool anyMSBus = (activeA && sumBusA != 0)
 			                   || (activeB && sumBusB != 0)
 			                   || (activeC && sumBusC != 0);
 
 			if (anyMSBus && buffer.getNumChannels() >= 2)
 			{
-				// M/S bus routing: each loader contributes to ST, →M, or →S bus
+				// M/S bus routing: each loader contributes to ST, ?M, or ?S bus
 				auto* outL = buffer.getWritePointer (0);
 				auto* outR = buffer.getWritePointer (1);
 
@@ -1275,7 +1236,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			}
 			else
 			{
-				// Fast path: all ST — simple L+R addition (no M/S overhead)
+				// Fast path: all ST � simple L+R addition (no M/S overhead)
 				buffer.clear();
 				if (activeA)
 					for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
@@ -1298,7 +1259,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		else if (activeC)
 			processOne (stateC, buffer, 2, modeInC, modeOutC, mixC);
 	}
-	else if (route == 2) // A→B|C — series A→B, C parallel
+	else if (route == 2) // A?B|C � series A?B, C parallel
 	{
 		const bool seriesActive = activeA || activeB;
 		if (seriesActive && activeC)
@@ -1306,12 +1267,12 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			// Copy input for parallel path C
 			for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 				tempBufferC.copyFrom (ch, 0, buffer, ch, 0, numSamples);
-			// Series path: A→B stays in buffer (skip auto-gain on A when B follows)
+			// Series path: A?B stays in buffer (skip auto-gain on A when B follows)
 			if (activeA) processOne (stateA, buffer, 0, modeInA, modeOutA, mixA, activeB);
 			if (activeB) processOne (stateB, buffer, 1, modeInB, modeOutB, mixB);
 			// Parallel path C
 			processOne (stateC, tempBufferC, 2, modeInC, modeOutC, mixC);
-			// Sum both paths and compensate — M/S bus-aware
+			// Sum both paths and compensate � M/S bus-aware
 			// Series path bus = sumBusB (last in chain), parallel path bus = sumBusC
 			const int seriesBus = sumBusB;
 			const int parallelBus = sumBusC;
@@ -1339,13 +1300,13 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		}
 		else
 		{
-			// Only one path active — series or C alone
+			// Only one path active � series or C alone
 			if (activeA) processOne (stateA, buffer, 0, modeInA, modeOutA, mixA);
 			if (activeB) processOne (stateB, buffer, 1, modeInB, modeOutB, mixB);
 			if (activeC) processOne (stateC, buffer, 2, modeInC, modeOutC, mixC);
 		}
 	}
-	else if (route == 3) // A|B→C — A parallel, series B→C
+	else if (route == 3) // A|B?C � A parallel, series B?C
 	{
 		const bool seriesActive = activeB || activeC;
 		if (activeA && seriesActive)
@@ -1355,10 +1316,10 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				tempBufferA.copyFrom (ch, 0, buffer, ch, 0, numSamples);
 			// Parallel path A
 			processOne (stateA, tempBufferA, 0, modeInA, modeOutA, mixA);
-			// Series path: B→C stays in buffer (skip auto-gain on B when C follows)
+			// Series path: B?C stays in buffer (skip auto-gain on B when C follows)
 			if (activeB) processOne (stateB, buffer, 1, modeInB, modeOutB, mixB, activeC);
 			if (activeC) processOne (stateC, buffer, 2, modeInC, modeOutC, mixC);
-			// Sum both paths and compensate — M/S bus-aware
+			// Sum both paths and compensate � M/S bus-aware
 			// Parallel path bus = sumBusA, series path bus = sumBusC (last in chain)
 			const int parallelBus = sumBusA;
 			const int seriesBus = sumBusC;
@@ -1392,7 +1353,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			if (activeC) processOne (stateC, buffer, 2, modeInC, modeOutC, mixC);
 		}
 	}
-	else // route == 0: A→B→C (full series)
+	else // route == 0: A?B?C (full series)
 	{
 		// Skip auto-gain on non-final loaders so the hot saturated signal
 		// feeds into the next stage, preserving harmonic stacking.
@@ -1402,7 +1363,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		if (activeC) processOne (stateC, buffer, 2, modeInC, modeOutC, mixC, false);
 	}
 
-	// ── MATCH: Tilt EQ targeting a spectral profile ──
+	// -- MATCH: Tilt EQ targeting a spectral profile --
 	// Target slopes: White=0, Pink=-3, Brown=-6, Bright=+3, Bright+=+6 dB/oct
 	{
 		const int matchProfile = loadRelaxedInt (pMatch);
@@ -1411,7 +1372,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		{
 			const float targetSlope = kTargetSlopes[juce::jlimit (0, kNumTargetSlopes - 1, matchProfile)];
 
-			// No IR slope to compensate — apply target slope directly
+			// No extra stage slope to compensate - apply target slope directly
 			const float compensatingSlope = targetSlope;
 
 			// Update target coefficients when profile or slope changes
@@ -1467,7 +1428,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		}
 	}
 
-	// ── NORM: static peak-normalize wet signal to target level ──
+	// -- NORM: static peak-normalize wet signal to target level --
 	// Captures maximum peak (no release) and applies fixed gain.
 	// Toggling NORM off/on resets the peak measurement.
 	// A warmup period (~150 ms) prevents boost during startup / 
@@ -1499,7 +1460,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				const float clampedGain = juce::jlimit (0.01f, kMaxNormBoost, desiredGain);
 
 				// During warmup: cap at unity (only allow cut, never boost).
-				// After warmup: peak follower is reliable — allow full range.
+				// After warmup: peak follower is reliable � allow full range.
 				const float effectiveGain = warmingUp ? juce::jmin (1.0f, clampedGain)
 				                                      : clampedGain;
 
@@ -1515,18 +1476,18 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		}
 		else
 		{
-			// Reset state when off — next enable will re-measure
+			// Reset state when off � next enable will re-measure
 			normPeakFollower_  = 0.0f;
 			normSmoothedGain_  = 1.0f;
 			normWarmupSamples_ = 0;
 		}
 	}
 
-	// ── User limiter (WET: on processed signal, before global dry/wet mix) ──
+	// -- User limiter (WET: on processed signal, before global dry/wet mix) --
 	if (limMode == 1 && buffer.getNumChannels() >= 2)
 		applyLimiter (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples, limThreshLin);
 
-	// ── Invert Polarity / Stereo (WET mode: after Limiter WET, before mix) ──
+	// -- Invert Polarity / Stereo (WET mode: after Limiter WET, before mix) --
 	{
 		const int nc = buffer.getNumChannels();
 		if (invPol == 1)
@@ -1584,7 +1545,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	}
 
 	// Global MIX: blend unprocessed dry with fully processed wet
-	// dry = input after gain, wet = after all loader processing (mode + convolution + effects)
+	// dry = input after gain, wet = after all loader processing (mode + effects)
 	if (needsDry)
 	{
 		float wet, dry;
@@ -1607,7 +1568,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		}
 	}
 
-	// ── Flush denormals in global filter states (per-block, near-zero cost) ──
+	// -- Flush denormals in global filter states (per-block, near-zero cost) --
 	{
 		constexpr float kDnr = 1e-20f;
 		if (std::abs (tiltState_[0]) < kDnr) tiltState_[0] = 0.0f;
@@ -1642,11 +1603,11 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		fadeInSamplesRemaining_ -= fadeThisBlock;
 	}
 
-	// ── User limiter (GLOBAL: after output gain, before safety clip) ──
+	// -- User limiter (GLOBAL: after output gain, before safety clip) --
 	if (limMode == 2 && buffer.getNumChannels() >= 2)
 		applyLimiter (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples, limThreshLin);
 
-	// ── Invert Polarity / Stereo (GLOBAL mode: after Limiter GLOBAL, before safety clip) ──
+	// -- Invert Polarity / Stereo (GLOBAL mode: after Limiter GLOBAL, before safety clip) --
 	{
 		const int nc = buffer.getNumChannels();
 		if (invPol == 2)
@@ -1665,8 +1626,8 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	// Soft-knee tanh at +24 dBFS (15.85), hard clip at +30 dBFS (31.62).
 	// Engages only during extreme settings (RAW + SERIES=6 + high drive).
 	{
-#if CABTR_DSP_DEBUG_LOG
-		// Log output levels before safety limiter (throttled — same ~1s cadence)
+#if SATTR_DSP_DEBUG_LOG
+		// Log output levels before safety limiter (throttled � same ~1s cadence)
 		{
 			static int diagOutCount = 0;
 			++diagOutCount;
@@ -1682,12 +1643,12 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				  << " outputGain=" << juce::String (outputGain, 6)
 				  << " outputDb=" << juce::String (loadRelaxed (pOutput), 2)
 				  << " fadeRemaining=" << fadeInSamplesRemaining_;
-				LOG_IR_EVENT (d);
+				LOG_DSP_EVENT (d);
 			}
 		}
 #endif
-		constexpr float kSoftKnee = 15.849f;  // +24 dBFS — soft limiting starts here
-		constexpr float kHardClip = 31.623f;   // +30 dBFS — absolute maximum
+		constexpr float kSoftKnee = 15.849f;  // +24 dBFS � soft limiting starts here
+		constexpr float kHardClip = 31.623f;   // +30 dBFS � absolute maximum
 		for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 		{
 			auto* data = buffer.getWritePointer (ch);
@@ -1711,10 +1672,10 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	}
 
 	// Peak output + clip detection (post output gain)
-	// (removed — profiling disabled for release)
+	// (removed � profiling disabled for release)
 
 #if SAT_DSP_DIAG
-	// ── Final peak + diagnostics snapshot ──
+	// -- Final peak + diagnostics snapshot --
 	{
 		float peakFinal = 0.0f;
 		for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
@@ -1762,13 +1723,12 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 		// Grab active loader index + state for model info + feedback states
 		const int diagIdx = diagLoaderIndex;
-		const IRLoaderState* activeState = diagIdx == 2 ? &stateC : (diagIdx == 1 ? &stateB : &stateA);
+		const LoaderState* activeState = diagIdx == 2 ? &stateC : (diagIdx == 1 ? &stateB : &stateA);
 
 		auto diagPick = [&] (std::atomic<float>* a, std::atomic<float>* b, std::atomic<float>* c)
 			-> std::atomic<float>* { return diagIdx == 0 ? a : (diagIdx == 1 ? b : c); };
 
-		snap.model        = static_cast<int> (SatEngine::canonicalizeModel (static_cast<SatEngine::Model> (
-			loadRelaxedInt (diagPick (pSatTypeA, pSatTypeB, pSatTypeC)))));
+		snap.model        = loadRelaxedInt (diagPick (pSatTypeA, pSatTypeB, pSatTypeC));
 		snap.seriesCount  = juce::jlimit (1, 4, loadRelaxedInt (diagPick (pSeriesA, pSeriesB, pSeriesC)));
 		snap.osOrder      = loadRelaxedInt (pOversample);
 		snap.girth        = loadRelaxed (diagPick (pSatGirthA, pSatGirthB, pSatGirthC));
@@ -1786,9 +1746,6 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 		const auto& ss = activeState->satState;
 		snap.drive = ss.sDrive;
-		snap.fuzzFeedback    = ss.fuzzFeedback[0][0];
-		snap.doomFeedback    = ss.doomFeedback[0][0];
-		snap.destroyFeedback = ss.destroyFeedback[0][0];
 		snap.autoGainVal     = ss.blockCoeffs.autoGain;
 		const int dbgPass = juce::jlimit (0, SatEngine::kMaxSeries - 1,
 		                                  snap.seriesCount - 1);
@@ -1809,16 +1766,21 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			maxSagEnv = std::max (maxSagEnv, ss.sagEnvelope[sp][0]);
 		snap.sagEnvelope     = maxSagEnv;
 		snap.sagLastPass     = ss.sagEnvelope[dbgPass][0];
-		snap.yinFreq         = ss.yinSmoothedFreq;
-
 		// Max filter state magnitude (check for stuck/denormal filters)
 		float mf = 0.0f;
-		for (int f = 0; f < 6; ++f)
-			mf = std::max (mf, std::abs (ss.doomDC[0][f][0]));
-		mf = std::max (mf, std::abs (ss.fuzzCoupDC[0][0]));
-		mf = std::max (mf, std::abs (ss.fuzzToneLPF[0][0]));
-		mf = std::max (mf, std::abs (ss.destroyXfmrLP[0][0]));
-		mf = std::max (mf, std::abs (ss.destroyRectHP[0][0]));
+		for (int sp = 0; sp < SatEngine::kMaxSeries; ++sp)
+		{
+			mf = std::max (mf, std::abs (ss.emphasis[sp][0].preHP));
+			mf = std::max (mf, std::abs (ss.emphasis[sp][0].preSh));
+			mf = std::max (mf, std::abs (ss.emphasis[sp][0].postHP));
+			mf = std::max (mf, std::abs (ss.emphasis[sp][0].postLP));
+			mf = std::max (mf, std::abs (ss.interStageLPF[sp][0]));
+			mf = std::max (mf, std::abs (ss.transistorPreHP[sp][0]));
+			mf = std::max (mf, std::abs (ss.transistorPreEdge[sp][0]));
+			mf = std::max (mf, std::abs (ss.transistorPostLP[sp][0]));
+			mf = std::max (mf, std::abs (ss.bumpZ1[sp][0]));
+			mf = std::max (mf, std::abs (ss.bumpZ2[sp][0]));
+		}
 		snap.maxFilterState = mf;
 
 		float mdc = 0.0f;
@@ -1840,9 +1802,7 @@ void CABTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 }
 
 //==============================================================================
-// Measure spectral slope of an IR in dB/octave via FFT + linear regression
-// Analyses magnitude spectrum from 100 Hz to 10 kHz
-void CABTRAudioProcessor::processLoader (IRLoaderState& state, 
+void SATTRAudioProcessor::processLoader (LoaderState& state, 
                                           juce::AudioBuffer<float>& buffer,
                                           int loaderIndex,
                                           bool skipAutoGain)
@@ -1857,7 +1817,7 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 	
 
 	
-	// Get runtime parameters (cached pointers — no hash lookup)
+	// Get runtime parameters (cached pointers � no hash lookup)
 	// loaderIndex: 0=A, 1=B, 2=C
 	auto pick = [&] (std::atomic<float>* a, std::atomic<float>* b, std::atomic<float>* c)
 		-> std::atomic<float>* { return loaderIndex == 0 ? a : (loaderIndex == 1 ? b : c); };
@@ -1887,7 +1847,7 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 
 	// Filter / Tilt position
 	const int fltPos = loadRelaxedInt (pick (pFilterPosA, pFilterPosB, pFilterPosC));
-	// 0=F▼T▼  1=F▲T▲  2=F▲T▼  3=F▼T▲
+	// 0=F?T?  1=F?T?  2=F?T?  3=F?T?
 
 	// Saturation parameters
 	const int   satType  = loadRelaxedInt (pick (pSatTypeA,  pSatTypeB,  pSatTypeC));
@@ -1907,15 +1867,14 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 	const float expThreshDb = loadRelaxed    (pick (pExpThreshA, pExpThreshB, pExpThreshC));
 	const float expAtkMs   = loadRelaxed     (pick (pExpAtkA,    pExpAtkB,    pExpAtkC));
 	const float expRelMs   = loadRelaxed     (pick (pExpRelA,    pExpRelB,    pExpRelC));
-	const auto model = SatEngine::canonicalizeModel (static_cast<SatEngine::Model> (
-		juce::jlimit (0, (int) SatEngine::Model::NumModels - 1, satType)));
+	const auto model = static_cast<SatEngine::Model> (`r`n`t`tjuce::jlimit (0, (int) SatEngine::Model::NumModels - 1, satType));
 	const bool filterPre = (fltPos == 1 || fltPos == 2);
 	const bool tiltPre   = (fltPos == 1 || fltPos == 3);
 	const bool chaosDriveEnabled = chaosEnabled;
 	const bool chaosFilterEnabledForProc = chaosFilterEnabled;
 	const bool expanderEnabled = expEnabled;
 	
-	// (FRED processing happens after convolution + filters)
+	// (FRED processing happens after saturation + filters)
 	
 	// 1. INPUT GAIN (IN)
 	{
@@ -1930,7 +1889,7 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 	// only IN should change saturation input level. OUT is applied at the end
 	// of the loader after the black-box and post-routing stages.
 
-	// ── Tilt EQ lambda (PRE/POST saturation) ──
+	// -- Tilt EQ lambda (PRE/POST saturation) --
 	auto applyTilt = [&]()
 	{
 	if (std::abs (tiltDb) > 0.05f)
@@ -1976,18 +1935,18 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 	}
 	}; // applyTilt
 
-	// ── HP + LP Filters lambda (6/12/24 dB/oct) ──
+	// -- HP + LP Filters lambda (6/12/24 dB/oct) --
 	const bool chaosFilterActive = chaosFilterEnabledForProc && chaosAmtFilter > 0.01f;
 	auto applyFilters = [&]()
 	{
 
-		// CHAOS FILTER Hermite+Drift: advance per-block, modulate HP/LP target frequencies (±2 oct)
+		// CHAOS FILTER Hermite+Drift: advance per-block, modulate HP/LP target frequencies (�2 oct)
 		float hpTarget = hpFreq;
 		float lpTarget = lpFreq;
 		if (chaosFilterActive)
 		{
 			const float amountNorm = chaosAmtFilter * 0.01f;
-			const float chaosFilterMaxOct = amountNorm * 2.0f;  // ±2 octaves at 100%
+			const float chaosFilterMaxOct = amountNorm * 2.0f;  // �2 octaves at 100%
 			const float shPeriodSamples = (float) currentSampleRate / chaosSpdFilter;
 			const float sr = (float) currentSampleRate;
 
@@ -2001,7 +1960,7 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 
 			const float octaveShift = state.chaosFOut[0] * chaosFilterMaxOct;
 			const float freqMult = std::exp2 (octaveShift);
-			// When HP/LP knobs are off, chaos sweeps the full 20–20k range (ECHO-TR match)
+			// When HP/LP knobs are off, chaos sweeps the full 20�20k range (ECHO-TR match)
 			const float hpBase = hpOn ? hpFreq : kFilterFreqMin;
 			const float lpBase = lpOn ? lpFreq : kFilterFreqMax;
 			hpTarget = juce::jlimit (kFilterFreqMin, kFilterFreqMax, hpBase * freqMult);
@@ -2018,7 +1977,7 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 		// Recalculate coefficients every 32 samples (not every block)
 		if (--state.filterCoeffCountdown <= 0)
 		{
-			state.filterCoeffCountdown = IRLoaderState::kFilterCoeffUpdateInterval;
+			state.filterCoeffCountdown = LoaderState::kFilterCoeffUpdateInterval;
 
 			const float maxFreq = static_cast<float> (currentSampleRate) * 0.49f;
 
@@ -2026,17 +1985,17 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 			const float clampedHp = juce::jlimit (20.0f, maxFreq, state.smoothedHpFreq);
 			if (std::abs (clampedHp - state.lastHpFreq) > 0.01f || hpSlope != state.lastHpSlope)
 			{
-				if (hpSlope == 0) // 6 dB/oct — first-order
+				if (hpSlope == 0) // 6 dB/oct � first-order
 				{
 					*state.hpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass (
 						currentSampleRate, clampedHp);
 				}
-				else if (hpSlope == 1) // 12 dB/oct — Butterworth biquad
+				else if (hpSlope == 1) // 12 dB/oct � Butterworth biquad
 				{
 					*state.hpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighPass (
 						currentSampleRate, clampedHp, kSqrt2Over2);
 				}
-				else // 24 dB/oct — cascaded biquad pair
+				else // 24 dB/oct � cascaded biquad pair
 				{
 					*state.hpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighPass (
 						currentSampleRate, clampedHp, kBW4_Q1);
@@ -2051,17 +2010,17 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 			const float clampedLp = juce::jlimit (20.0f, maxFreq, state.smoothedLpFreq);
 			if (std::abs (clampedLp - state.lastLpFreq) > 0.01f || lpSlope != state.lastLpSlope)
 			{
-				if (lpSlope == 0) // 6 dB/oct — first-order
+				if (lpSlope == 0) // 6 dB/oct � first-order
 				{
 					*state.lpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowPass (
 						currentSampleRate, clampedLp);
 				}
-				else if (lpSlope == 1) // 12 dB/oct — Butterworth biquad
+				else if (lpSlope == 1) // 12 dB/oct � Butterworth biquad
 				{
 					*state.lpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass (
 						currentSampleRate, clampedLp, kSqrt2Over2);
 				}
-				else // 24 dB/oct — cascaded biquad pair
+				else // 24 dB/oct � cascaded biquad pair
 				{
 					*state.lpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass (
 						currentSampleRate, clampedLp, kBW4_Q1);
@@ -2096,11 +2055,11 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 		}
 	}; // applyFilters
 
-	// ── PRE-saturation: apply tilt/filter if requested ──
+	// -- PRE-saturation: apply tilt/filter if requested --
 	if (filterPre) applyFilters();
 	if (tiltPre)   applyTilt();
 
-	// ── Expander / Noise Gate lambda ──
+	// -- Expander / Noise Gate lambda --
 	auto applyExpander = [&]()
 	{
 		if (!expanderEnabled || expRatio <= 1.01f)
@@ -2149,21 +2108,21 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 		}
 	};
 
-	// ── PRE-saturation expander ──
+	// -- PRE-saturation expander --
 	if (expanderEnabled && !expPost) applyExpander();
 
-	// 2.5. CHAOS D (micro-delay + gain modulation — BEFORE saturation)
+	// 2.5. CHAOS D (micro-delay + gain modulation � BEFORE saturation)
 	if (chaosDriveEnabled && chaosAmt > 0.01f)
 	{
-		const float maxDelaySec = 0.005f; // ±5ms max
+		const float maxDelaySec = 0.005f; // �5ms max
 		const float amountNorm = chaosAmt * 0.01f; // 0..1
 		const float maxDelaySamples = amountNorm * maxDelaySec * (float) currentSampleRate;
 		const float shPeriodSamples = (float) currentSampleRate / chaosSpd;
-		const float chaosGainMaxDb = amountNorm * 1.0f; // ±1dB at 100%
+		const float chaosGainMaxDb = amountNorm * 1.0f; // �1dB at 100%
 		const float sr = (float) currentSampleRate;
 		
 		const int chCount = juce::jmin (numChannels, 2);
-		const int delayBufLen = IRLoaderState::kChaosDelayMaxSamples;
+		const int delayBufLen = LoaderState::kChaosDelayMaxSamples;
 		const int mask = delayBufLen - 1;
 		
 		float* channelData[2] = { nullptr, nullptr };
@@ -2215,7 +2174,7 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 				const float c3 = (1.0f / 6.0f) * (p3 - p0) + 0.5f * (p1 - p2);
 				channelData[ch][i] = ((c3 * frac + c2) * frac + c1) * frac + c0;
 				
-				// Per-channel gain modulation (±1dB, fast dB→linear)
+				// Per-channel gain modulation (�1dB, fast dB?linear)
 				const float gainDb  = state.chaosGOut[ch] * chaosGainMaxDb;
 				const float ex = gainDb * 0.16609640474f;
 				const float exln2 = ex * 0.6931472f;
@@ -2275,18 +2234,18 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 #endif
 	}
 
-	// ── POST-saturation: apply tilt/filter if not already applied ──
+	// -- POST-saturation: apply tilt/filter if not already applied --
 	if (!tiltPre)   applyTilt();
 	if (!filterPre) applyFilters();
 
-	// ── POST-saturation expander ──
+	// -- POST-saturation expander --
 	if (expanderEnabled && expPost) applyExpander();
 
 	// 4. DISTANCE (exponential LPF + gain attenuation)
 	// 0% = close/bright (no change), 100% = far/dark (HF reduction + volume drop)
 	if (pos > 0.01f)
 	{
-		// Exponential cutoff: 12kHz * exp(-pos * 2.08) → pos=0→12kHz, pos=1→1.5kHz
+		// Exponential cutoff: 12kHz * exp(-pos * 2.08) ? pos=0?12kHz, pos=1?1.5kHz
 		const float cutoff = 12000.0f * std::exp (-pos * kDistDecay);
 		constexpr float kPosSmooth = 0.9955f;
 		state.smoothedPosFreq += (cutoff - state.smoothedPosFreq) * (1.0f - kPosSmooth);
@@ -2335,7 +2294,7 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 	
 	// 6. ANGLE (off-axis mic simulation)
 	// Simulates a second mic at an angle on a guitar cab.
-	// Fixed delay of ~159µs (≈5cm path difference), sample-rate independent.
+	// Fixed delay of ~159�s (�5cm path difference), sample-rate independent.
 	// First comb null at ~6.3kHz regardless of sample rate.
 	// angle=0: pure on-axis (no effect), angle=1: full off-axis blend
 	if (fred > 0.001f)
@@ -2345,11 +2304,11 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 		for (int ch = 0; ch < chCount; ++ch)
 			channelData[ch] = buffer.getWritePointer (ch);
 		
-		// Fractional delay in samples: 159µs × sampleRate
-		const float delaySamples = IRLoaderState::kFredDelayMicros * 1e-6f * (float) currentSampleRate;
+		// Fractional delay in samples: 159�s � sampleRate
+		const float delaySamples = LoaderState::kFredDelayMicros * 1e-6f * (float) currentSampleRate;
 		const int delayInt = (int) delaySamples;
 		const float delayFrac = delaySamples - (float) delayInt;
-		const int bufSize = IRLoaderState::kFredDelayBufSize;
+		const int bufSize = LoaderState::kFredDelayBufSize;
 		const float compensate = 1.0f / (1.0f + fred);
 		
 		for (int i = 0; i < numSamples; ++i)
@@ -2372,14 +2331,14 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 		}
 	}
 
-	// 7. OUTPUT GAIN (OUT) — final per-loader output trim
+	// 7. OUTPUT GAIN (OUT) � final per-loader output trim
 	if (std::abs (outDb) > 0.01f)
 	{
 		const float outGain = fastDecibelsToGain (outDb);
 		buffer.applyGain (outGain);
 	}
 	
-	// ── Flush denormals in filter/tilt states (per-block, near-zero cost) ──
+	// -- Flush denormals in filter/tilt states (per-block, near-zero cost) --
 	{
 		constexpr float kDnr = 1e-20f;
 		if (std::abs (state.tiltState[0])       < kDnr) state.tiltState[0]       = 0.0f;
@@ -2388,7 +2347,7 @@ void CABTRAudioProcessor::processLoader (IRLoaderState& state,
 }
 
 //==============================================================================
-void CABTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float delayMs, int loaderIndex)
+void SATTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float delayMs, int loaderIndex)
 {
 	if (delayMs < 0.1f)
 		return;
@@ -2422,7 +2381,7 @@ void CABTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float de
 }
 
 //==============================================================================
-void CABTRAudioProcessor::calculateAutoAlignment()
+void SATTRAudioProcessor::calculateAutoAlignment()
 {
 	const bool enabledA = parameters.getRawParameterValue (kParamEnableA)->load() > 0.5f;
 	const bool enabledB = parameters.getRawParameterValue (kParamEnableB)->load() > 0.5f;
@@ -2431,41 +2390,37 @@ void CABTRAudioProcessor::calculateAutoAlignment()
 	if (! enabledA || (! enabledB && ! enabledC))
 		return;
 
-	// ── Generate synthetic impulse responses ──
+	// -- Generate synthetic alignment probes --
 	// Process a unit impulse through each active engine's emphasis chain.
 	const int irLen = 512;
 	const float sr = static_cast<float> (currentSampleRate);
 
-	auto makeIR = [&] (int satType, float satMod) -> juce::AudioBuffer<float>
+	auto makeAlignmentProbe = [&] (int satType, float satMod) -> juce::AudioBuffer<float>
 	{
-		juce::AudioBuffer<float> ir (1, irLen);
-		ir.clear();
-		ir.setSample (0, 0, 1.0f); // Unit impulse
+		juce::AudioBuffer<float> probe (1, irLen);
+		probe.clear();
+		probe.setSample (0, 0, 1.0f); // Unit impulse probe
 
 		SatEngine::EmphasisState empSt;
 		empSt.reset();
 
-		const auto model = SatEngine::canonicalizeModel (static_cast<SatEngine::Model> (satType));
+		const auto model = static_cast<SatEngine::Model> (satType);
 
 		SatEngine::EmphCoeffs ec;
 		switch (model)
 		{
-			case SatEngine::Model::Triode:
+			case SatEngine::Model::Tube:
 				ec.preHP  = SatEngine::detail::onePoleCoeff (20.0f,   sr);
 				ec.preSh  = SatEngine::detail::onePoleCoeff (3800.0f, sr);
 				ec.postLP = SatEngine::detail::onePoleCoeff (9500.0f, sr);
 				ec.postHP = SatEngine::detail::onePoleCoeff (30.0f,   sr);
 				break;
-			case SatEngine::Model::Cascade:
+			case SatEngine::Model::Transistor:
 				ec.preHP  = SatEngine::detail::onePoleCoeff (30.0f,   sr);
 				ec.preSh  = SatEngine::detail::onePoleCoeff (2600.0f, sr);
 				ec.postLP = SatEngine::detail::onePoleCoeff (9000.0f, sr);
 				ec.postHP = SatEngine::detail::onePoleCoeff (35.0f,   sr);
-				break;
-			case SatEngine::Model::PushPull:
-				ec.postLP = SatEngine::detail::onePoleCoeff (5000.0f, sr);
-				break;
-			case SatEngine::Model::Diode:
+				break;			case SatEngine::Model::Diode:
 				ec.preHP  = SatEngine::detail::onePoleCoeff (720.0f,  sr);
 				ec.postLP = SatEngine::detail::onePoleCoeff (723.0f,  sr);
 				break;
@@ -2477,34 +2432,10 @@ void CABTRAudioProcessor::calculateAutoAlignment()
 			case SatEngine::Model::Tape:
 				ec.preHP  = SatEngine::detail::onePoleCoeff (24.0f,    sr);
 				ec.postLP = SatEngine::detail::onePoleCoeff (16500.0f, sr);
-				break;
-			case SatEngine::Model::Fuzz:
-				ec.preSh  = SatEngine::detail::onePoleCoeff (2000.0f, sr);
-				ec.preHP  = SatEngine::detail::onePoleCoeff (14.0f,   sr);
-				ec.postHP = SatEngine::detail::onePoleCoeff (31.0f,   sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (8000.0f, sr);
-				break;
-			case SatEngine::Model::Doom:
-				ec.preSh  = SatEngine::detail::onePoleCoeff (1800.0f, sr);
-				ec.preHP  = SatEngine::detail::onePoleCoeff (20.0f,   sr);
-				ec.postHP = SatEngine::detail::onePoleCoeff (40.0f,   sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (5000.0f, sr);
-				break;
-			case SatEngine::Model::Destroy:
-				ec.preHP  = SatEngine::detail::onePoleCoeff (20.0f,    sr);
-				ec.postHP = SatEngine::detail::onePoleCoeff (20.0f,    sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (14000.0f, sr);
-				break;
-			case SatEngine::Model::Tundra:
-				ec.preHP  = SatEngine::detail::onePoleCoeff (70.0f,   sr);
-				ec.preSh  = SatEngine::detail::onePoleCoeff (2300.0f, sr);
-				ec.postHP = SatEngine::detail::onePoleCoeff (35.0f,   sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (5800.0f, sr);
-				break;
-			default: break;
+				break;			default: break;
 		}
 
-		float* data = ir.getWritePointer (0);
+		float* data = probe.getWritePointer (0);
 		const float irDrive = 1.0f;
 		for (int n = 0; n < irLen; ++n)
 		{
@@ -2513,16 +2444,16 @@ void CABTRAudioProcessor::calculateAutoAlignment()
 			x = SatEngine::deEmphasize  (x, empSt, model, irDrive, satMod, ec);
 			data[n] = x;
 		}
-		return ir;
+		return probe;
 	};
 
-	// Energy centroid of impulse response — measures effective group delay
+	// Energy centroid of the synthetic probe response � measures effective group delay
 	// Unlike peak-finding cross-correlation, this gives meaningful non-zero
-	// values even for minimum-phase IRs where the peak is always at sample 0.
-	auto calcCentroid = [&] (const juce::AudioBuffer<float>& ir) -> float
+	// values even for minimum-phase responses where the peak is always at sample 0.
+	auto calcCentroid = [&] (const juce::AudioBuffer<float>& probe) -> float
 	{
-		const float* data = ir.getReadPointer (0);
-		const int len = ir.getNumSamples();
+		const float* data = probe.getReadPointer (0);
+		const int len = probe.getNumSamples();
 		float energySum = 0.0f;
 		float weightedSum = 0.0f;
 		for (int n = 0; n < len; ++n)
@@ -2535,10 +2466,10 @@ void CABTRAudioProcessor::calculateAutoAlignment()
 	};
 
 	// Cross-correlation for polarity detection only (sign of correlation)
-	auto xcorrSign = [&] (const float* dataA, const juce::AudioBuffer<float>& irX) -> float
+	auto xcorrSign = [&] (const float* dataA, const juce::AudioBuffer<float>& probeX) -> float
 	{
-		const float* dataX = irX.getReadPointer (0);
-		const int len = juce::jmin (irLen, irX.getNumSamples());
+		const float* dataX = probeX.getReadPointer (0);
+		const int len = juce::jmin (irLen, probeX.getNumSamples());
 		float sum = 0.0f;
 		for (int n = 0; n < len; ++n)
 			sum += dataA[n] * dataX[n];
@@ -2547,11 +2478,11 @@ void CABTRAudioProcessor::calculateAutoAlignment()
 
 	const int typeA = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeA)->load());
 	const float modA = parameters.getRawParameterValue (kParamSatModA)->load();
-	auto irA = makeIR (typeA, modA);
-	const float* dataA = irA.getReadPointer (0);
-	const float centroidA = calcCentroid (irA);
+	auto probeA = makeAlignmentProbe (typeA, modA);
+	const float* dataA = probeA.getReadPointer (0);
+	const float centroidA = calcCentroid (probeA);
 
-	// Reset all delays and inversions first — ALIGN finds optimal from scratch
+	// Reset all delays and inversions first � ALIGN finds optimal from scratch
 	if (auto* p = parameters.getParameter (kParamDelayA))
 		p->setValueNotifyingHost (p->convertTo0to1 (0.0f));
 	if (auto* p = parameters.getParameter (kParamDelayB))
@@ -2574,21 +2505,21 @@ void CABTRAudioProcessor::calculateAutoAlignment()
 	{
 		const int typeB = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeB)->load());
 		const float modB = parameters.getRawParameterValue (kParamSatModB)->load();
-		auto irB = makeIR (typeB, modB);
-		centroidB = calcCentroid (irB);
-		corrSignB = xcorrSign (dataA, irB);
+		auto probeB = makeAlignmentProbe (typeB, modB);
+		centroidB = calcCentroid (probeB);
+		corrSignB = xcorrSign (dataA, probeB);
 	}
 
 	if (enabledC)
 	{
 		const int typeC = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeC)->load());
 		const float modC = parameters.getRawParameterValue (kParamSatModC)->load();
-		auto irC = makeIR (typeC, modC);
-		centroidC = calcCentroid (irC);
-		corrSignC = xcorrSign (dataA, irC);
+		auto probeC = makeAlignmentProbe (typeC, modC);
+		centroidC = calcCentroid (probeC);
+		corrSignC = xcorrSign (dataA, probeC);
 	}
 
-	// Find maximum centroid — loaders with smaller centroids need delay compensation
+	// Find maximum centroid � loaders with smaller centroids need delay compensation
 	const float maxCentroid = juce::jmax (centroidA,
 	                                      enabledB ? centroidB : centroidA,
 	                                      enabledC ? centroidC : centroidA);
@@ -2624,28 +2555,26 @@ void CABTRAudioProcessor::calculateAutoAlignment()
 }
 
 //==============================================================================
-bool CABTRAudioProcessor::hasEditor() const
+bool SATTRAudioProcessor::hasEditor() const
 {
     return true; // (change this to false if you choose to not supply an editor)
 }
 
-juce::AudioProcessorEditor* CABTRAudioProcessor::createEditor()
+juce::AudioProcessorEditor* SATTRAudioProcessor::createEditor()
 {
-    return new CABTRAudioProcessorEditor (*this);
+    return new SATTRAudioProcessorEditor (*this);
 }
 
 //==============================================================================
-// TIMER CALLBACK: Check for parameter changes and trigger IR reload on message thread
-// This ensures file I/O never happens in audio thread
-// Rate-limited: max 1 reload per 300ms to prevent excessive reloads when dragging sliders
+// TIMER CALLBACK: poll lightweight UI actions and maintenance tasks
 //==============================================================================
-void CABTRAudioProcessor::timerCallback()
+void SATTRAudioProcessor::timerCallback()
 {
 #if SAT_DSP_DIAG
 	SatDiag::getDiagWriter().drain (SatDiag::getDiagRing());
 #endif
 
-	// ALIGN: momentary action — calculate cross-correlation + set delay/inv, then auto-reset
+	// ALIGN: momentary action � calculate cross-correlation + set delay/inv, then auto-reset
 	{
 		const float alignVal = parameters.getRawParameterValue (kParamAlign)->load();
 		const juce::int64 now = juce::Time::currentTimeMillis();
@@ -2672,14 +2601,14 @@ void CABTRAudioProcessor::timerCallback()
 //==============================================================================
 // UI state persistence (non-automatable collapse state)
 //==============================================================================
-void CABTRAudioProcessor::setUiIoExpanded (int loaderIndex, bool expanded)
+void SATTRAudioProcessor::setUiIoExpanded (int loaderIndex, bool expanded)
 {
 	const char* keys[] = { UiStateKeys::ioExpandedA, UiStateKeys::ioExpandedB, UiStateKeys::ioExpandedC };
 	if (loaderIndex >= 0 && loaderIndex < 3)
 		parameters.state.setProperty (keys[loaderIndex], expanded, nullptr);
 }
 
-bool CABTRAudioProcessor::getUiIoExpanded (int loaderIndex) const noexcept
+bool SATTRAudioProcessor::getUiIoExpanded (int loaderIndex) const noexcept
 {
 	const char* keys[] = { UiStateKeys::ioExpandedA, UiStateKeys::ioExpandedB, UiStateKeys::ioExpandedC };
 	if (loaderIndex >= 0 && loaderIndex < 3)
@@ -2691,7 +2620,7 @@ bool CABTRAudioProcessor::getUiIoExpanded (int loaderIndex) const noexcept
 }
 
 //==============================================================================
-void CABTRAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+void SATTRAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
 	auto state = parameters.copyState();
 	auto xml = state.createXml();
@@ -2699,7 +2628,7 @@ void CABTRAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 		copyXmlToBinary (*xml, destData);
 }
 
-void CABTRAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
+void SATTRAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
 	auto xml = getXmlFromBinary (data, sizeInBytes);
 	if (xml != nullptr)
@@ -2707,24 +2636,7 @@ void CABTRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 		auto state = juce::ValueTree::fromXml (*xml);
 		if (state.isValid())
 		{
-			parameters.replaceState (state);
-
-			auto remapLegacySatType = [this] (const char* paramId)
-			{
-				if (auto* raw = parameters.getRawParameterValue (paramId))
-				{
-					if (juce::roundToInt (raw->load()) == static_cast<int> (SatEngine::Model::PushPull))
-					{
-						if (auto* param = parameters.getParameter (paramId))
-							param->setValueNotifyingHost (param->convertTo0to1 (static_cast<float> (SatEngine::Model::Triode)));
-					}
-				}
-			};
-
-			remapLegacySatType (kParamSatTypeA);
-			remapLegacySatType (kParamSatTypeB);
-			remapLegacySatType (kParamSatTypeC);
-		}
+			parameters.replaceState (state);		}
 	}
 }
 
@@ -2732,5 +2644,5 @@ void CABTRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 // This creates new instances of the plugin..
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new CABTRAudioProcessor();
+    return new SATTRAudioProcessor();
 }

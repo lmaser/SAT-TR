@@ -1,29 +1,29 @@
 #pragma once
 
 // ============================================================================
-// DspDebugLog.h — Simple file-based logger for CAB-TR diagnostics
+// DspDebugLog.h — Simple file-based logger for SAT-TR diagnostics
 //
-// Writes IR loading events and parameter changes to a text file on Desktop.
+// Writes DSP events and parameter changes to a text file on Desktop.
 // Thread-safe with mutex protection.
 //
 // Usage:
-//   #define CABTR_DSP_DEBUG_LOG 1   // enable logging (0 = no overhead)
+//   #define SATTR_DSP_DEBUG_LOG 1   // enable logging (0 = no overhead)
 //
-//   LOG_IR_EVENT("NORMALIZE applied: maxLevel=0.5, gain=2.0x (+6.0dB)");
-//   LOG_IR_EVENT("REVERSE applied to IR");
-//   LOG_IR_EVENT("IR loaded: " + filename);
+//   LOG_DSP_EVENT("NORMALIZE applied: maxLevel=0.5, gain=2.0x (+6.0dB)");
+//   LOG_DSP_EVENT("ALIGN applied");
+//   LOG_DSP_EVENT("Loader A updated");
 //
-// Output file: Desktop/CAB-TR_DebugLog.txt
+// Output file: Desktop/SAT-TR_DebugLog.txt
 // ============================================================================
 
 #include <JuceHeader.h>
 #include <mutex>
 
-#ifndef CABTR_DSP_DEBUG_LOG
- #define CABTR_DSP_DEBUG_LOG 0
+#ifndef SATTR_DSP_DEBUG_LOG
+ #define SATTR_DSP_DEBUG_LOG 0
 #endif
 
-#if CABTR_DSP_DEBUG_LOG
+#if SATTR_DSP_DEBUG_LOG
 
 class DspDebugLog
 {
@@ -67,13 +67,13 @@ private:
     {
         // Create log file on Desktop
         auto desktop = juce::File::getSpecialLocation (juce::File::userDesktopDirectory);
-        logFile = desktop.getChildFile ("CAB-TR_DebugLog.txt");
+        logFile = desktop.getChildFile ("SAT-TR_DebugLog.txt");
         
         if (! logFile.existsAsFile())
         {
             logFile.create();
             const juce::String header = "=================================================\n"
-                                       "CAB-TR Debug Log\n"
+                                       "SAT-TR Debug Log\n"
                                        "=================================================\n\n";
             logFile.appendText (header, false, false);
         }
@@ -83,13 +83,13 @@ private:
     std::mutex mutex;
 };
 
-#define LOG_IR_EVENT(msg) DspDebugLog::getInstance().log(msg)
-#define CLEAR_IR_LOG() DspDebugLog::getInstance().clear()
+#define LOG_DSP_EVENT(msg) DspDebugLog::getInstance().log(msg)
+#define CLEAR_DSP_LOG() DspDebugLog::getInstance().clear()
 
 #else
 
-#define LOG_IR_EVENT(msg) 
-#define CLEAR_IR_LOG()
+#define LOG_DSP_EVENT(msg) 
+#define CLEAR_DSP_LOG()
 
 #endif
 
