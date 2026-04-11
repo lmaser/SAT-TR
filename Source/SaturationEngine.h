@@ -5,25 +5,25 @@
 #include <atomic>
 #include "SatDspDiag.h"
 
-// ══════════════════════════════════════════════════════════════
-//  SaturationEngine — header-only DSP for SAT-TR
+// ----------------------------------------------------------------
+//  SaturationEngine -- header-only DSP for SAT-TR
 //  6 physically-modeled saturation algorithms with:
 //    ADAA (1st-order antiderivative anti-aliasing)
-//    REACT (Airwindows-inspired energy tracking → parameter modulation)
+//    REACT (Airwindows-inspired energy tracking -> parameter modulation)
 //    GIRTH (post-waveshaper wavefolding + sharpen)
 //    VARIATION (analog drift via Hermite S&H)
 //    MOD (input-domain power warp + model-specific secondary)
 //    Internal emphasis / de-emphasis EQ per model
 //    Auto-gain compensation
-//    Safety LPF for ×1 (no oversampling) mode
-// ══════════════════════════════════════════════════════════════
+//    Safety LPF for x1 (no oversampling) mode
+// ----------------------------------------------------------------
 
 namespace SatEngine
 {
 
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 //  Model enum
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 enum class Model : int
 {
     Clean       = 0,   // Bypass - 1:1 pass-through (no saturation)
@@ -35,9 +35,9 @@ enum class Model : int
     NumModels   = 6
 };
 
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 //  Constants
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 static constexpr float kPi         = 3.14159265358979323846f;
 static constexpr float kHalfPi     = 1.57079632679489661923f;
 static constexpr float kTwoPi      = 6.28318530717958647692f;
@@ -48,12 +48,12 @@ static constexpr int   kReactBufSize = 8192;
 static constexpr int   kTriodeSagBufSize = 512;
 static constexpr int   kMaxSeries    = 4;
 
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 //  ADAA1 helpers  (1st-order antiderivative anti-aliasing)
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 namespace adaa
 {
-    // ── Fast math helpers (avoid expensive std::exp/log1p in hot path) ──
+    // -- Fast math helpers (avoid expensive std::exp/log1p in hot path) --
     inline float fastExp (float x) noexcept
     {
         x = std::max (x, -87.0f);
@@ -71,11 +71,11 @@ namespace adaa
         // log1p(x) for x >= 0: Pade approximation
         // Accurate to ~1e-4 for x in [0, 2]
         if (x > 2.0f || x < -0.5f) return std::log1p (x);
-        // Pade [2/2]: log(1+x) ≈ x(6+x) / (6+4x)
+        // Pade [2/2]: log(1+x) ~= x(6+x) / (6+4x)
         return x * (6.0f + x) / (6.0f + 4.0f * x);
     }
 
-    // Antiderivative of tanh(k·x):  F1(x) = (1/k)·ln(cosh(k·x))
+    // Antiderivative of tanh(k*x):  F1(x) = (1/k)*ln(cosh(k*x))
     // Numerically stable form: (|kx| + log1p(exp(-2|kx|)) - ln2) / k
     inline float tanhAD1 (float x, float k) noexcept
     {
@@ -90,7 +90,7 @@ namespace adaa
         return -kInvPi * std::cos (kPi * x);
     }
 
-    // Generic ADAA1 processor for tanh(k·x)
+    // Generic ADAA1 processor for tanh(k*x)
     struct TanhADAA
     {
         float prev    = 0.0f;
@@ -341,17 +341,17 @@ namespace adaa
         }
     };
 
-    // ──────────────────────────────────────────────────────────────
+    // ----------------------------------------------------------------
     //  ADAA-2 (2nd-order antiderivative anti-aliasing) for steep hard clippers
-    //  F2(x) = second antiderivative of tanh(k·x)
-    // ──────────────────────────────────────────────────────────────
+    //  F2(x) = second antiderivative of tanh(k*x)
+    // ----------------------------------------------------------------
 
-    // Second antiderivative of tanh(k·x):
-    //   F2(x) = (1/k²) · [ Li₂(-e^{-2kx}) + kx·ln(1+e^{-2kx}) + (kx)²/2 ]
+    // Second antiderivative of tanh(k*x):
+    //   F2(x) = (1/k^2) * [ Li2(-e^{-2kx}) + kx*ln(1+e^{-2kx}) + (kx)^2/2 ]
     //   Stable approx: use direct integration of F1
-    //   F2(x) ≈ x·F1(x) - (1/(2k²))·ln²(cosh(k·x)) ... complex.
+    //   F2(x) ~= x*F1(x) - (1/(2k^2))*ln^2(cosh(k*x)) ... complex.
     //   Practical: numerical F2 via Simpson integration of F1.
-    //   Better: closed-form  F2(x) = x·F1(x) − (1/k²)·( Li₂(−e^{2kx}) + kx·ln(1+e^{−2kx}) )
+    //   Better: closed-form  F2(x) = x*F1(x) - (1/k^2)*( Li2(-e^{2kx}) + kx*ln(1+e^{-2kx}) )
     //   Simplest accurate approach: store two previous samples + AD1 values.
     inline float tanhAD2 (float x, float k) noexcept
     {
@@ -428,9 +428,9 @@ namespace adaa
     };
 } // namespace adaa
 
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 //  REACT  (Airwindows-inspired circular buffer energy tracker)
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 struct ReactState
 {
     float buf[kReactBufSize] = {};
@@ -467,12 +467,13 @@ inline void reactTrackEnergy (ReactState& s, float input, int windowSize) noexce
 inline float reactGetDepletion (const ReactState& s, int windowSize) noexcept
 {
     return s.control / ((float) windowSize + 0.001f);
+}
 
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 //  Multiband REACT  (3-band energy tracker: sub / mid / air)
 //  Crossover at ~200Hz (sub/mid) and ~4kHz (mid/air).
-//  Each band has its own energy window → frequency-dependent sag.
-// ──────────────────────────────────────────────────────────────
+//  Each band has its own energy window -> frequency-dependent sag.
+// ----------------------------------------------------------------
 struct MultibandReactState
 {
     // Per-band 1st-order crossover filter states (per-channel)
@@ -547,12 +548,12 @@ inline void multibandReactSplit (MultibandReactState& mb, float x,
                                  float coeffSub, float coeffAir,
                                  float& outSub, float& outMid, float& outAir) noexcept
 {
-    // 1st-order LP at ~200Hz → sub
+    // 1st-order LP at ~200Hz -> sub
     mb.lpSub += (x - mb.lpSub) * coeffSub;
     const float subBand = mb.lpSub;
     const float hiPass  = x - mb.lpSub;
 
-    // 1st-order LP at ~4kHz → mid (of hi-passed signal)
+    // 1st-order LP at ~4kHz -> mid (of hi-passed signal)
     mb.lpAir += (hiPass - mb.lpAir) * coeffAir;
     const float midBand = mb.lpAir;
     const float airBand = hiPass - mb.lpAir;
@@ -605,12 +606,13 @@ inline MultibandSagResult multibandReactProcess (
     r.sagPostAir = 1.0f / (1.0f + sAir * react * 4.0f);
 
     return r;
+}
 
-// ──────────────────────────────────────────────────────────────
-//  VARIATION — analog component tolerance + slow thermal drift
-//  Static tolerance (dominant, 70%): per-instance hash → fixed offset
+// ----------------------------------------------------------------
+//  VARIATION -- analog component tolerance + slow thermal drift
+//  Static tolerance (dominant, 70%): per-instance hash -> fixed offset
 //  Thermal drift (secondary, 30%): 3 incommensurate sub-Hz sines
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 struct DriftOsc
 {
     float phase1 = 0.0f;
@@ -631,7 +633,7 @@ struct DriftOsc
 
     void advance (float rate, float depth, float sampleRate) noexcept
     {
-        // Very slow non-periodic thermal drift (~0.03-0.15 Hz)
+        // Very slow non-periodic thermal drift (~0.03x0.15 Hz)
         phase1 += rate / sampleRate;
         phase2 += rate * 0.7937f / sampleRate;   // cube-root of 2
         phase3 += rate * 0.6180f / sampleRate;   // 1/phi (golden ratio inverse)
@@ -683,9 +685,9 @@ inline uint32_t nextVariationSeed() noexcept
     return counter.fetch_add (0x9E37'79B9u, std::memory_order_relaxed);
 }
 
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 //  Internal emphasis/de-emphasis EQ state (1st-order filters)
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 struct EmphasisState
 {
     float preHP  = 0.0f;
@@ -696,9 +698,9 @@ struct EmphasisState
     void reset() noexcept { preHP = 0.0f; preSh = 0.0f; postLP = 0.0f; postHP = 0.0f; }
 };
 
-// ──────────────────────────────────────────────────────────────
-//  Safety LPF for ×1 mode (2nd-order Butterworth at 0.4×fs)
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
+//  Safety LPF for x1 mode (2nd-order Butterworth at 0.4xfs)
+// ----------------------------------------------------------------
 struct SafetyLPF
 {
     float x1 = 0.0f, x2 = 0.0f;
@@ -707,9 +709,9 @@ struct SafetyLPF
     void reset() noexcept { x1 = x2 = y1 = y2 = 0.0f; }
 };
 
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 //  Full per-channel / per-loader state
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 struct State
 {
     // Per-stage dynamic state. Series should replicate the internal stage
@@ -739,7 +741,7 @@ struct State
     // Internal emphasis/de-emphasis (per-stage / per-channel)
     EmphasisState emphasis[kMaxSeries][2];
 
-    // ADAA states — main waveshaper [series pass][channel]
+    // ADAA states -- main waveshaper [series pass][channel]
     adaa::TanhADAA wsAdaa[kMaxSeries][2];
     adaa::StableTanhADAA triodeAdaa[kMaxSeries][2];
     adaa::TapeTanhADAA tapeAdaa[kMaxSeries][2];
@@ -754,7 +756,7 @@ struct State
     // Multiband REACT (per-stage / per-channel)
     MultibandReactState mbReact[kMaxSeries][2];
 
-    // Safety LPF (per-channel, for ×1 mode)
+    // Safety LPF (per-channel, for x1 mode)
     SafetyLPF safetyLpf[2];
 
     // TRANSISTOR black-box filters [series pass][channel]
@@ -915,9 +917,9 @@ struct State
     }
 };
 
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 //  Internal helpers
-// ──────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------
 namespace detail
 {
     inline float fastTanh (float x) noexcept
@@ -1201,13 +1203,13 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
         return r;
 
     // Airwindows-style power sag: short energy memory that directly deforms
-    // the sample before it hits the Tube2-style stage. In this plugin the
+    // the sample before it hits the Tube2ustyle stage. In this plugin the
     // SAG control is the depth control, so we have to map it much more
     // assertively than the fixed-intensity desk context Chris uses.
     const float depth = detail::clampF (react, 0.0f, 1.0f);
     const float depth2 = depth * depth;
     // Pro-style sag controls are usually subtle in the lower half and get
-    // much steeper near the top. Keep 0-30% gentle, but make 100% clearly
+    // much steeper near the top. Keep 0x30% gentle, but make 100% clearly
     // more extreme than the old near-linear mapping.
     const float depthCurve = juce::jlimit (0.0f, 1.5f,
                                            depth * (0.18f + depth * 1.18f));
@@ -1328,9 +1330,9 @@ inline float getTriodeLevelTrim (float drive, float mod, int seriesCount) noexce
     return juce::jmap (tubeMorph, trim12AX7, trimPower);
 }
 
-// ══════════════════════════════════════════════════════════════
-//  GIRTH — post-waveshaper fold + sharpen
-// ══════════════════════════════════════════════════════════════
+// ----------------------------------------------------------------
+//  GIRTH -- post-waveshaper fold + sharpen
+// ----------------------------------------------------------------
 inline float applyGirth (float shaped, float girth,
                          adaa::SinFoldADAA& foldAdaa) noexcept
 {
@@ -1393,9 +1395,9 @@ inline float applyTriodePreGirth (float x, float girth, float drive) noexcept
     return juce::jmap (g2 * 0.78f, x, pushed);
 }
 
-// ══════════════════════════════════════════════════════════════
+// ----------------------------------------------------------------
 //  Internal Emphasis / De-emphasis
-// ══════════════════════════════════════════════════════════════
+// ----------------------------------------------------------------
 struct EmphCoeffs {
     float preHP = 0, preSh = 0, postLP = 0, postHP = 0;
 };
@@ -1420,19 +1422,6 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
             const float body = juce::jmap (tubeMorph, body12AX7, bodyPower);
             const float bloom = st.preSh * tubeMorph * (0.004f + drive * 0.010f);
             return hp * body + edge * edgeMix + bloom;
-        }
-        case Model::Transistor:
-        {
-            st.preHP += (x - st.preHP) * ec.preHP;
-            const float hp = x - st.preHP;
-            st.preSh += (hp - st.preSh) * ec.preSh;
-            const float edge = hp - st.preSh;
-            const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
-            const float bjt = hp * (0.985f + drive * 0.025f)
-                            + edge * (0.018f + drive * 0.045f);
-            const float fet = juce::jmap (0.18f + drive * 0.08f, x, hp)
-                            + edge * (0.006f + drive * 0.020f);
-            return juce::jmap (type, bjt, fet);
         }
         case Model::Diode:
         {
@@ -1506,17 +1495,6 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
             const float brightKeep = (1.0f - tubeMorph) * (0.015f + drive * 0.025f);
             const float powerDamp = tubeMorph * (0.010f + drive * 0.025f);
             return softened + bright * (brightKeep - powerDamp);
-        }
-        case Model::Transistor:
-        {
-            st.postLP += (y - st.postLP) * ec.postLP;
-            const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
-            const float bright = y - st.postLP;
-            const float bjt = y + (st.postLP - y) * (0.08f + drive * 0.16f)
-                            + bright * (0.010f + (1.0f - drive) * 0.012f);
-            const float fet = y + (st.postLP - y) * (0.16f + drive * 0.24f)
-                            + bright * (0.004f + (1.0f - drive) * 0.008f);
-            return juce::jmap (type, bjt, fet);
         }
         case Model::Diode:
         {
@@ -1601,9 +1579,645 @@ inline float processSafetyLPF (SafetyLPF& st, float x, const SafetyLPFCoeffs& c)
     return y;
 }
 
-// ══════════════════════════════════════════════════════════════
+//  Per-sample waveshaper functions (new models)
+// ----------------------------------------------------------------
+
+// TUBE: 12AX7 -> EL34/6L6-inspired stage morph with Tube2ustyle core
+inline float processTriode (float x, float drive, float girth, float bias, float mod,
+                            float react, bool rawMode,
+                            State& state, int ch, float sr,
+                            adaa::StableTanhADAA& adaaState) noexcept
+{
+    const int sp = state.currentSeriesPass;
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float m = detail::clampF (mod,   0.0f, 1.0f);
+    const float b = detail::clampF (bias, -1.0f, 1.0f);
+    const float tubeMorph = detail::smoothStep01 (m);
+    const float tubeMorph2 = tubeMorph * tubeMorph;
+    juce::ignoreUnused (g);
+    auto& triodeSag = state.triodeReact[sp][ch];
+    float xStage = x;
+    float bEff = b;
+
+    if (!rawMode && react > 0.0001f)
+    {
+        const float sagSense = getTriodeSagSenseInput (xStage);
+        const TriodeReactResult triodeComp = processTriodeReact (
+            xStage, sagSense, triodeSag, react, sr);
+        xStage = triodeComp.sample;
+        state.sagEnvelope[sp][ch] = triodeComp.amount;
+    }
+    else
+    {
+        triodeSag.control *= 0.5f;
+        triodeSag.lastSag *= 0.5f;
+        triodeSag.lastSupply += (1.0f - triodeSag.lastSupply) * 0.25f;
+        state.sagEnvelope[sp][ch] = 0.0f;
+    }
+
+    // Tube2 semantics are much closer to an input pad plus a shape control
+    // than to an internal preamp boost. Using drive as a straight gain boost
+    // overheats the repeated series stages and buries sag, because later
+    // passes hit the same hard ceiling even at drive=0.
+    const float inputPad12AX7 = detail::interpDrive5 (d,
+                                                      0.42f, 0.52f, 0.66f, 0.82f, 1.00f);
+    const float inputPadPower = detail::interpDrive5 (d,
+                                                      0.48f, 0.58f, 0.72f, 0.90f, 1.08f);
+    const float inputPad = juce::jmap (tubeMorph, inputPad12AX7, inputPadPower);
+    xStage *= inputPad;
+    const float sagAmt = triodeSag.lastSag;
+    const float sagCore = detail::smoothStep01 (juce::jlimit (0.0f, 1.0f, sagAmt));
+
+    // Tube2ustyle stage inside the black box. MOD/GIRTH stay mostly outside
+    // for now so we can match the core behavior first.
+    const float overallscale = sr / 44100.0f;
+    float s = xStage;
+
+    if (!rawMode && overallscale > 1.9f)
+    {
+        const float stored = s;
+        s = 0.5f * (s + triodeSag.prevIn);
+        triodeSag.prevIn = stored;
+    }
+    else
+    {
+        triodeSag.prevIn = s;
+    }
+
+    // Supply starvation should alter the actual stage conditions, not only a
+    // pre-distortion input waveform. If we only deform the input and then hit
+    // the same hard ceiling, the effect becomes inaudible. Sag therefore also
+    // tightens headroom and shifts the operating point of the Tube2ustyle core.
+    const float biasPos = std::max (0.0f, bEff);
+    const float biasNeg = std::max (0.0f, -bEff);
+    const float stageBias12AX7 = bEff * 0.050f - sagCore * 0.095f;
+    const float stageBiasPower = bEff * 0.028f - sagCore * 0.072f;
+    const float stageBias = juce::jmap (tubeMorph, stageBias12AX7, stageBiasPower);
+
+    const float headroom12AX7 = juce::jlimit (0.54f, 1.0f,
+                                              1.0f - sagCore * 0.40f
+                                                    - biasPos * 0.05f + biasNeg * 0.02f);
+    const float headroomPower = juce::jlimit (0.58f, 1.08f,
+                                              1.04f - sagCore * 0.28f
+                                                     - biasPos * 0.08f + biasNeg * 0.05f);
+    const float stageHeadroom = juce::jmap (tubeMorph, headroom12AX7, headroomPower);
+    s += stageBias;
+    s = detail::clampF (s, -stageHeadroom, stageHeadroom);
+    s /= stageHeadroom;
+
+    const float iterations12AX7 = 1.0f - d;
+    const float iterationsPower = juce::jlimit (0.0f, 1.0f, 1.0f - d * 0.82f);
+    const float iterations = juce::jmap (tubeMorph, iterations12AX7, iterationsPower);
+    const int powerFactorBase = juce::jlimit (1, 10, 1 + (int) std::floor (9.0f * iterations));
+    const int sagPowerDrop = juce::jlimit (0, 4, (int) std::floor (sagCore * juce::jmap (tubeMorph, 4.0f, 2.5f) + 0.35f));
+    const int powerFactor = juce::jlimit (1, 10, powerFactorBase - sagPowerDrop);
+    const float asymPad = (float) powerFactor;
+    const float gainScaling = 1.0f / (float) (powerFactor + 1);
+
+    // First Tube2 asymmetry section.
+    const float asymAmt12AX7 = 0.25f + sagCore * 0.36f + biasPos * 0.08f;
+    const float asymAmtPower = 0.14f + sagCore * 0.20f + biasNeg * 0.06f;
+    const float asymAmt = juce::jmap (tubeMorph, asymAmt12AX7, asymAmtPower);
+    s = detail::tube2AsymSection (s, asymPad, asymAmt);
+    // Original Tube curve.
+    s = detail::airwindowsTubeCurve (s, powerFactor);
+
+    if (tubeMorph > 0.001f)
+    {
+        const float hotness = detail::clampF (0.55f + bEff * 0.35f, 0.0f, 1.0f);
+        const float idleBias = 0.010f + hotness * (0.012f + d * 0.010f);
+        const float crossover = 0.010f + (1.0f - hotness) * (0.012f + d * 0.008f);
+        const float powerGain = 1.0f + d * (0.70f + tubeMorph * 0.55f);
+
+        const float posV = s * powerGain + idleBias;
+        const float negV = -s * powerGain + idleBias;
+        const float posC = detail::smoothRect (posV, crossover);
+        const float negC = detail::smoothRect (negV, crossover);
+
+        float powerShape = posC - negC;
+        powerShape += s * std::abs (s) * (0.010f + tubeMorph * 0.035f);
+        powerShape = detail::clampF (powerShape * (0.92f + hotness * 0.08f), -1.20f, 1.20f);
+
+        const float satDrive = 1.0f + tubeMorph * (0.10f + 0.18f * d);
+        const float satK = 0.85f + d * (0.55f + 0.25f * tubeMorph);
+        const float satRaw = adaaState.process (powerShape * satDrive, satK);
+        const float satNorm = detail::normalizeSmallSignal (satRaw, 0.0f, satK * satDrive);
+        const float powerMix = tubeMorph * (0.35f + 0.35f * d);
+        s = juce::jmap (powerMix, s, satNorm);
+    }
+
+    if (!rawMode && overallscale > 1.9f)
+    {
+        const float stored = s;
+        s = 0.5f * (s + triodeSag.prevOut);
+        triodeSag.prevOut = stored;
+    }
+    else
+    {
+        triodeSag.prevOut = s;
+    }
+
+    // Tube2 hysteresis / spiky fuzz layer.
+    float slew = 1.0f;
+    if (!rawMode)
+    {
+        slew = triodeSag.prevHyst - s;
+        if (overallscale > 1.9f)
+        {
+            const float stored = s;
+            s = 0.5f * (s + triodeSag.prevHyst);
+            triodeSag.prevHyst = stored;
+        }
+        else
+        {
+            triodeSag.prevHyst = s;
+        }
+
+        if (slew > 0.0f)
+            slew = 1.0f + (std::sqrt (slew) * 0.5f);
+        else
+            slew = 1.0f - (std::sqrt (-slew) * 0.5f);
+
+        const float hystAmt = juce::jmap (tubeMorph, 1.0f + sagCore * 1.80f,
+                                                     0.65f + sagCore * 0.95f);
+        s -= s * std::abs (s) * slew * gainScaling * hystAmt;
+    }
+
+    const float ceiling = juce::jmap (tubeMorph2, 0.52f, 0.62f);
+    s = detail::clampF (s, -ceiling, ceiling);
+    s *= 1.0f / ceiling;
+
+    state.triodeBlock[sp][ch] = 0.0f;
+    return s;
+}
+
+inline float getTransistorLevelTrim (float drive, float mod) noexcept
+{
+    juce::ignoreUnused (drive, mod);
+    return 1.0f;
+}
+
+// TRANSISTOR: common-emitter/common-source inspired black box.
+// MOD morphs BJT punch into softer FET behaviour while GIRTH/BODY relaxes
+// degeneration and lets more low-mid energy hit the nonlinear stage.
+inline float processTransistorStage (float x, float drive, float girth, float bias, float mod,
+                                     float react, bool rawMode,
+                                     State& state, int ch, float sr,
+                                     adaa::TanhADAA& satAdaa,
+                                     adaa::ClipperADAA& clipAdaa) noexcept
+{
+    const int sp = state.currentSeriesPass;
+    auto& preHP = state.transistorPreHP[sp][ch];
+    auto& preEdge = state.transistorPreEdge[sp][ch];
+    auto& postLP = state.transistorPostLP[sp][ch];
+    auto& compState = state.tapeComp[sp][ch];
+
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float body = detail::clampF (girth, 0.0f, 1.0f);
+    const float b = detail::clampF (bias, -1.0f, 1.0f);
+    const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
+    const float bodyCurve = 1.0f - std::pow (1.0f - body, 1.55f);
+    juce::ignoreUnused (satAdaa);
+    auto trackDbg = [] (float& dst, float v) noexcept
+    {
+        dst = std::max (dst, std::abs (v));
+    };
+
+    if (!rawMode)
+    {
+        const float hpHz = juce::jmap (type,
+                                       34.0f + bodyCurve * 14.0f,
+                                       22.0f + bodyCurve * 10.0f);
+        const float hpC = detail::onePoleCoeff (hpHz, sr);
+        preHP += (x - preHP) * hpC;
+        const float hp = x - preHP;
+
+        const float edgeHz = juce::jmap (type,
+                                         2100.0f + d * 1200.0f,
+                                         1200.0f + d * 650.0f);
+        const float edgeC = detail::onePoleCoeff (edgeHz, sr);
+        preEdge += (hp - preEdge) * edgeC;
+        const float edge = hp - preEdge;
+
+        const float lowRetain = juce::jmap (type,
+                                            0.12f + bodyCurve * 0.12f,
+                                            0.28f + bodyCurve * 0.16f);
+        const float edgeAmt = juce::jmap (type,
+                                          0.010f + d * 0.050f,
+                                          0.004f + d * 0.025f);
+        x = juce::jmap (lowRetain, x, hp) + edge * edgeAmt;
+    }
+    else
+    {
+        preHP = preEdge = postLP = 0.0f;
+    }
+
+    if (react > 0.001f && !rawMode)
+    {
+        const float compAmt = detail::clampF (react, 0.0f, 1.0f);
+        const TapeCompResult comp = processTransistorComp (x, compState, compAmt, d, type, sr);
+        x = comp.sample;
+    }
+    else
+    {
+        compState.gain = 1.0f;
+        compState.env *= 0.5f;
+        compState.hfEnv *= 0.5f;
+    }
+
+    const float inputPadBjt = detail::interpDrive5 (d,
+                                                    0.14f, 0.30f, 0.68f, 1.32f, 2.75f)
+                            * juce::jmap (bodyCurve, 1.00f, 1.18f);
+    const float inputPadFet = detail::interpDrive5 (d,
+                                                    0.18f, 0.36f, 0.74f, 1.26f, 2.20f)
+                            * juce::jmap (bodyCurve, 1.00f, 1.10f);
+    const float inputPad = juce::jmap (type, inputPadBjt, inputPadFet);
+    x *= inputPad;
+    state.transistorDbgInputPad[sp][ch] = inputPad;
+    trackDbg (state.transistorDbgPre[sp][ch], x);
+
+    const float headroomBjt = juce::jlimit (0.48f, 1.14f,
+                                            1.10f - d * 0.60f
+                                                  - bodyCurve * 0.09f
+                                                  - juce::jmax (0.0f, b) * 0.11f
+                                                  + juce::jmax (0.0f, -b) * 0.05f);
+    const float headroomFet = juce::jlimit (0.50f, 1.16f,
+                                            1.10f - d * 0.44f
+                                                  - bodyCurve * 0.06f
+                                                  - juce::jmax (0.0f, b) * 0.08f
+                                                  + juce::jmax (0.0f, -b) * 0.03f);
+    const float headroom = juce::jmap (type, headroomBjt, headroomFet);
+
+    const float opBias = juce::jmap (type, b * 0.16f, b * 0.10f);
+    const float oddAmt = juce::jmap (type,
+                                     0.018f + bodyCurve * 0.022f + d * 0.040f,
+                                    -0.006f - bodyCurve * 0.010f - d * 0.012f);
+    const float cubicAmt = juce::jmap (type,
+                                       0.008f + d * 0.038f,
+                                       0.014f + d * 0.020f);
+
+    auto applyCoreShape = [oddAmt, cubicAmt] (float v) noexcept
+    {
+        return v
+             + v * std::abs (v) * oddAmt
+             + v * v * v * cubicAmt;
+    };
+
+    const float biasNorm = detail::clampF (opBias, -headroom, headroom) / headroom;
+    float z = x + opBias;
+    z = detail::clampF (z, -headroom, headroom);
+    z /= headroom;
+    trackDbg (state.transistorDbgCoreIn[sp][ch], z);
+
+    const float shifted = applyCoreShape (z);
+    const float z0 = applyCoreShape (biasNorm);
+    const float preDeriv0 = 1.0f
+                          + 2.0f * std::abs (biasNorm) * oddAmt
+                          + 3.0f * biasNorm * biasNorm * cubicAmt;
+
+    const float satK = juce::jmap (type,
+                                   0.98f + d * (2.24f + bodyCurve * 0.46f),
+                                   0.84f + d * (1.55f + bodyCurve * 0.26f));
+    state.transistorDbgSatK[sp][ch] = satK;
+    const float raw = std::tanh (satK * shifted);
+    const float raw0 = std::tanh (satK * z0);
+    const float slopeRef = satK * (1.0f - raw0 * raw0);
+    const float slope0 = std::max (1.0e-4f, slopeRef * preDeriv0 * (1.0f / headroom));
+    float core = detail::normalizeSmallSignal (raw, raw0, slope0);
+    trackDbg (state.transistorDbgCoreOut[sp][ch], core);
+
+    const float railDrive = juce::jmap (type,
+                                        1.02f + d * 1.02f,
+                                        0.96f + d * 0.68f)
+                          * juce::jmap (bodyCurve, 1.00f, 1.05f);
+    const float posThresh = juce::jmap (type, 1.24f - d * 0.24f,
+                                              1.34f - d * 0.14f)
+                          * (1.0f - juce::jmax (0.0f, b) * 0.18f
+                                   + juce::jmax (0.0f, -b) * 0.04f);
+    const float negThresh = juce::jmap (type, 1.16f - d * 0.22f,
+                                              1.28f - d * 0.12f)
+                          * (1.0f - juce::jmax (0.0f, -b) * 0.18f
+                                   + juce::jmax (0.0f,  b) * 0.04f);
+    const float kneeBase = juce::jmap (type,
+                                       juce::jmap (bodyCurve, 0.24f, 0.12f),
+                                       juce::jmap (bodyCurve, 0.30f, 0.16f));
+    const float kneePos = std::max (1.0e-4f, kneeBase * (1.0f - d * 0.10f));
+    const float kneeNeg = std::max (1.0e-4f, kneeBase * juce::jmap (type, 0.95f, 1.08f) * (1.0f - d * 0.08f));
+    state.transistorDbgRailThresh[sp][ch] = 0.5f * (posThresh + negThresh);
+
+    const float railIn = core * railDrive;
+    trackDbg (state.transistorDbgRailIn[sp][ch], railIn);
+    float out = clipAdaa.process (railIn, posThresh, negThresh, kneePos, kneeNeg);
+    trackDbg (state.transistorDbgRailOut[sp][ch], out);
+
+    if (!rawMode)
+    {
+        const float lpHz = juce::jmap (type,
+                                       9800.0f - d * 2600.0f,
+                                       6200.0f - d * 1700.0f);
+        const float lpC = detail::onePoleCoeff (detail::clampF (lpHz, 1800.0f, 12000.0f), sr);
+        postLP += (out - postLP) * lpC;
+        const float lpMix = juce::jmap (type,
+                                        0.03f + d * 0.08f,
+                                        0.08f + d * 0.12f);
+        out = out + (postLP - out) * lpMix;
+    }
+
+    trackDbg (state.transistorDbgPost[sp][ch], out);
+    return out;
+}
+
+inline float processDiodeStage (float x, float drive, float girth, float bias, float mod,
+                                adaa::ClipperADAA& adaaState) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float c = detail::clampF (girth, 0.0f, 1.0f);
+    const float s = detail::clampF (bias, -1.0f, 1.0f);
+    const float t = detail::clampF (mod, 0.0f, 1.0f);
+
+    const float condCurve = 1.0f - std::pow (1.0f - c, 1.7f);
+    const float condDriveCurve = 1.0f - std::pow (1.0f - c, 1.35f);
+    const float condThreshold = juce::jmap (condCurve, 0.68f, 1.14f);
+    const float condKnee = juce::jmap (condCurve, 0.24f, 0.075f);
+    const float condDrive = juce::jmap (condDriveCurve, 1.00f, 1.12f);
+
+    const float driveFb = detail::interpDrive5 (d, 1.00f, 1.45f, 2.80f, 5.80f, 9.50f);
+    const float driveHard = detail::interpDrive5 (d, 1.00f, 2.20f, 5.20f, 10.80f, 18.00f);
+    const float driveOpen = detail::interpDrive5 (d, 1.00f, 1.65f, 3.40f, 6.10f, 9.60f);
+
+    float driveGain = driveHard;
+    float thresholdMul = 1.0f;
+    float kneeMul = 1.0f;
+    float cleanBlend = 0.0f;
+    float voiceTrim = 1.0f;
+    float symRange = 0.34f;
+    float edgeShape = 0.0f;
+
+    if (t <= 0.5f)
+    {
+        const float u = detail::smoothStep01 (t * 2.0f);
+        driveGain = juce::jmap (u, driveFb, driveHard);
+        thresholdMul = juce::jmap (u, 0.92f, 0.82f);
+        kneeMul = juce::jmap (u, 1.35f, 0.58f);
+        cleanBlend = juce::jmap (u, 0.0f, 0.02f);
+        voiceTrim = juce::jmap (u, 1.00f, 0.96f);
+        symRange = juce::jmap (u, 0.28f, 0.38f);
+        edgeShape = juce::jmap (u, 0.10f, 0.03f);
+    }
+    else
+    {
+        const float u = detail::smoothStep01 ((t - 0.5f) * 2.0f);
+        driveGain = juce::jmap (u, driveHard, driveOpen);
+        thresholdMul = juce::jmap (u, 0.82f, 1.02f);
+        kneeMul = juce::jmap (u, 0.58f, 1.00f);
+        cleanBlend = juce::jmap (u, 0.02f, 0.16f);
+        voiceTrim = juce::jmap (u, 0.96f, 1.07f);
+        symRange = juce::jmap (u, 0.38f, 0.32f);
+        edgeShape = juce::jmap (u, 0.03f, 0.08f);
+    }
+
+    const float threshold = condThreshold * thresholdMul;
+    const float knee = std::max (1.0e-4f, condKnee * kneeMul);
+
+    const float thresholdPos = detail::clampF (threshold * (1.0f + s * symRange), 0.22f, 1.65f);
+    const float thresholdNeg = detail::clampF (threshold * (1.0f - s * symRange), 0.22f, 1.65f);
+    const float kneePos = std::max (1.0e-4f, knee * (1.0f - s * 0.18f));
+    const float kneeNeg = std::max (1.0e-4f, knee * (1.0f + s * 0.18f));
+
+    float clipIn = x * driveGain * condDrive;
+    clipIn += x * std::abs (x) * edgeShape;
+
+    float clipped = adaaState.process (clipIn, thresholdPos, thresholdNeg,
+                                       kneePos, kneeNeg);
+
+    clipped *= 2.0f / (thresholdPos + thresholdNeg);
+
+    if (cleanBlend > 0.0001f)
+    {
+        const float clean = detail::clampF (x * juce::jmap (c, 0.96f, 1.06f), -1.30f, 1.30f);
+        clipped = juce::jmap (cleanBlend, clipped, clean);
+    }
+
+    return clipped * voiceTrim;
+}
+
+// CLIPPER: threshold-driven clipper with continuous soft->hard knee control
+// and a voice morph from broadband classic -> TS-style -> Klon-style.
+inline float processClipper (float x, float drive, float girth, float bias, float mod,
+                             adaa::ClipperADAA& adaaState) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float k = detail::clampF (girth, 0.0f, 1.0f);
+    const float b = detail::clampF (bias, -1.0f, 1.0f);
+    const float m = detail::clampF (mod, 0.0f, 1.0f);
+
+    // DRIVE sets the clipping threshold, but we keep a fixed clip ceiling.
+    // This makes the control behave like a real threshold while preserving a
+    // practical output range similar to pro clippers and pedal stages.
+    const float threshold = detail::interpDrive5 (d,
+                                                  1.08f, 0.92f, 0.72f, 0.48f, 0.24f);
+
+    float voiceScale = 1.0f;
+    float cleanBlend = 0.0f;
+    float voiceLift = 1.0f;
+    if (m <= 0.5f)
+    {
+        const float t = detail::smoothStep01 (m * 2.0f);
+        voiceScale = juce::jmap (t, 1.00f, 1.08f); // TS gets slightly tighter
+    }
+    else
+    {
+        const float u = detail::smoothStep01 ((m - 0.5f) * 2.0f);
+        voiceScale = juce::jmap (u, 1.08f, 0.92f); // Klon opens back up
+        cleanBlend = 0.18f * u;
+        voiceLift = juce::jmap (u, 1.0f, 1.12f);
+    }
+
+    const float clipIn = x * (voiceScale / std::max (threshold, 0.05f));
+
+    // BIAS becomes symmetry / mismatch: shifts positive and negative clip
+    // thresholds independently, but keep their mean around unity.
+    const float thresholdPos = detail::clampF (1.0f + b * 0.45f, 0.45f, 1.55f);
+    const float thresholdNeg = detail::clampF (1.0f - b * 0.45f, 0.45f, 1.55f);
+    const float kneeSoft = 0.01f + (1.0f - k) * 0.56f;
+    const float kneePos = std::max (1.0e-4f, thresholdPos * kneeSoft);
+    const float kneeNeg = std::max (1.0e-4f, thresholdNeg * kneeSoft);
+
+    float clipped = adaaState.process (clipIn, thresholdPos, thresholdNeg,
+                                       kneePos, kneeNeg);
+
+    // Preserve average ceiling when asymmetry moves thresholds apart.
+    clipped *= 2.0f / (thresholdPos + thresholdNeg);
+
+    if (cleanBlend > 0.0001f)
+    {
+        const float clean = detail::clampF (x * (0.90f + 0.10f * voiceScale), -1.25f, 1.25f);
+        clipped = juce::jmap (cleanBlend, clipped, clean);
+    }
+
+    return clipped * voiceLift * juce::jmap (d, 0.98f, 0.92f);
+}
+
+// TAPE: ADAA tape stage with two fitted families:
+//   MOD=0   -> Rabbit-style grittier tape reference
+//   MOD=1   -> current smoother tape reference
+// Interpolate parameters, not outputs, so the mode remains a single cohesive
+// nonlinear path instead of behaving like a parallel blend.
+inline float processTape (float x, float drive, float bias, float mod,
+                          bool rawMode, State& state, int ch, float sr,
+                          adaa::TapeTanhADAA& adaaState,
+                          bool advanceOsc = true) noexcept
+{
+    const int sp = state.currentSeriesPass;
+    (void) sr;
+    (void) advanceOsc;
+
+    // Flutter/head-bump remain out for now, but keep tapeFlux alive so Rabbit
+    // can use a mild memory compression stage instead of sounding like a plain
+    // static level boost.
+    state.bumpZ1[sp][ch] = 0.0f;
+    state.bumpZ2[sp][ch] = 0.0f;
+    if (ch == 0)
+        state.flutterPhase = 0.0f;
+
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float m = detail::clampF (mod,   0.0f, 1.0f);
+    const float rabbitMod = 1.0f - m;
+
+    // Tape A: current smoother family (MOD=100%)
+    float pregainA;
+    float totalGainA;
+    {
+        constexpr float baseGainA = 1.1438f;
+        constexpr float pre0A     = 1.0f;
+        constexpr float pre50A    = 3.30f;
+        constexpr float pre100A   = 22.50f;
+        constexpr float mu50A     = 0.95f;
+        constexpr float mu100A    = 3.00f;
+
+        float makeupA = 1.0f;
+        if (d <= 0.5f)
+        {
+            const float t = detail::smoothStep01 (d * 2.0f);
+            pregainA = juce::jmap (t, pre0A, pre50A);
+            makeupA = juce::jmap (t, 1.0f, mu50A);
+        }
+        else
+        {
+            const float u = (d - 0.5f) * 2.0f;
+            const float t = detail::smoothStep01 (u);
+            pregainA = juce::jmap (t, pre50A, pre100A);
+            makeupA = juce::jmap (t, mu50A, mu100A);
+        }
+        totalGainA = baseGainA * makeupA;
+    }
+
+    // Tape B: Rabbit-style family measured from the second reference (MOD=0%).
+    const float pregainB = detail::interpDrive5 (d,
+                                                 0.78f, 1.02f, 1.55f, 2.00f, 2.55f);
+    const float totalGainB = detail::interpDrive5 (d,
+                                                   2.35f, 2.28f, 2.20f, 2.14f, 2.10f);
+
+    const float pregain = juce::jmap (rabbitMod, pregainA, pregainB);
+    const float totalGain = juce::jmap (rabbitMod, totalGainA, totalGainB);
+
+    // Tape bias is better treated as under/over-bias behaviour than as a plain
+    // DC offset. Negative values under-bias the record stage (brighter, grittier);
+    // positive values over-bias it (smoother, slightly softer, less HF aggression).
+    const float biasClamped = detail::clampF (bias, -1.0f, 1.0f);
+    const float underBias = std::max (-biasClamped, 0.0f);
+    const float overBias  = std::max ( biasClamped, 0.0f);
+    const float biasShift = biasClamped * (0.0005f + d * 0.0010f);
+    float satIn = (x + biasShift) * pregain;
+    satIn *= 1.0f + underBias * (0.04f + d * 0.08f)
+                  - overBias  * (0.03f + d * 0.05f);
+    if (underBias > 0.0001f)
+    {
+        const float oddBias = satIn * std::abs (satIn);
+        satIn += oddBias * underBias * (0.004f + d * 0.012f);
+    }
+
+    // Tape B needs a different transfer feel, not only different gain. Morph
+    // the drive shape itself so MOD becomes audible even at identical drive.
+    if (rabbitMod > 0.0001f)
+    {
+        const float rabbit = rabbitMod * rabbitMod;
+        const float hiTaper = 1.0f - 0.06f * detail::smoothStep01 ((d - 0.58f) * 1.55f);
+        const float odd2 = satIn * std::abs (satIn);
+        const float cubic = satIn * satIn * satIn;
+        satIn += odd2 * rabbit * (0.042f + d * 0.110f) * hiTaper;
+        satIn += cubic * rabbit * (0.0060f + d * 0.032f) * hiTaper;
+    }
+
+    // Use a fixed tanh ADAA kernel. Varying k inside the ADAA state was a
+    // likely source of the pathological spikes seen in the diagnostics.
+    float raw = adaaState.process (satIn, 1.0f);
+
+    if (underBias > 0.0001f)
+    {
+        const float oddBias = raw * std::abs (raw);
+        raw += oddBias * underBias * (0.006f + d * 0.015f);
+    }
+    if (overBias > 0.0001f)
+    {
+        const float oddBias = raw * std::abs (raw);
+        raw -= oddBias * overBias * (0.004f + d * 0.010f);
+        raw *= 1.0f - overBias * (0.02f + d * 0.03f);
+    }
+
+    if (!rawMode && rabbitMod > 0.0001f)
+    {
+        // Rabbit's drive curve is better described by a fitted odd-polynomial
+        // family than by the manual post-core boosts we were using before.
+        // These coefficients were extracted from comparison2 relative to
+        // Rabbit's own 0% drive path.
+        const float rabbit = rabbitMod * rabbitMod;
+        const float a1 = detail::interpDrive5 (d,
+                                               1.00000f, 1.21111f, 1.33567f, 1.35707f, 1.31288f);
+        const float a3 = detail::interpDrive5 (d,
+                                               0.00000f, -0.65204f, -1.19988f, -1.61318f, -1.83975f);
+        const float a5 = detail::interpDrive5 (d,
+                                               0.00000f, 0.50839f, 0.96282f, 1.34735f, 1.56277f);
+        const float raw2 = raw * raw;
+        const float rabbitRaw = a1 * raw + a3 * raw * raw2 + a5 * raw * raw2 * raw2;
+        raw = juce::jmap (rabbit, raw, rabbitRaw);
+
+        // Rabbit's perceived drive comes more from density/compression than
+        // from simply adding output. A light stateful squeeze keeps peaks under
+        // control while lifting sustain and small-signal material.
+        const float envIn = std::abs (raw);
+        const float atk = detail::onePoleCoeff (900.0f + d * 2200.0f, sr);
+        const float rel = detail::onePoleCoeff (3.0f + d * 5.0f, sr);
+        float& flux = state.tapeFlux[sp][ch];
+        const float envCoeff = envIn > flux ? atk : rel;
+        flux += (envIn - flux) * envCoeff;
+
+        const float squeeze = 1.0f / (1.0f + flux * (0.55f + d * 0.40f));
+        const float sustainLift = 1.0f + rabbit * (0.36f - d * 0.10f);
+        raw *= juce::jmap (rabbit, 1.0f, squeeze * sustainLift);
+
+        const float oddHard = raw * std::abs (raw);
+        raw += oddHard * rabbit * (0.010f + d * 0.022f);
+    }
+
+    float out = raw * (totalGain / pregain);
+
+    if (rabbitMod > 0.0001f)
+    {
+        const float rabbit = rabbitMod * rabbitMod;
+        const float rabbitMakeup = detail::interpDrive5 (d,
+                                                         1.24f, 1.20f, 1.16f, 1.13f, 1.10f);
+        out *= juce::jmap (rabbit, 1.0f, rabbitMakeup);
+    }
+
+    return out;
+}
+
+
+// ----------------------------------------------------------------
 //  Main block processor
-// ══════════════════════════════════════════════════════════════
+// ----------------------------------------------------------------
 inline void processBlock (State& state,
                           float* left, float* right,
                           int numSamples,
@@ -1622,11 +2236,11 @@ inline void processBlock (State& state,
                           SatDiag::Collector* diagCollector = nullptr) noexcept
 {
 
-    // CLEAN model: 1:1 pass-through — no saturation processing at all
+    // CLEAN model: 1:1 pass-through -- no saturation processing at all
     if (model == Model::Clean)
         return;
 
-    // ── Model-switch detection: reset filters & feedback to prevent transient explosions ──
+    // -- Model-switch detection: reset filters & feedback to prevent transient explosions --
     if (model != state.lastModel)
     {
         for (int ch = 0; ch < 2; ++ch)
@@ -1670,8 +2284,8 @@ inline void processBlock (State& state,
     }
 
     // Sample-rate-aware parameter smoothing (~15ms time constant at any SR).
-    // Using onePoleCoeff(11Hz) → 63% in ~15ms, 95% in ~43ms. Consistent
-    // whether running at 44.1kHz native or 176.4kHz (4× oversampled).
+    // Using onePoleCoeff(11Hz) -> 63% in ~15ms, 95% in ~43ms. Consistent
+    // whether running at 44.1kHz native or 176.4kHz (4x oversampled).
     const float oneMinusSmooth = detail::onePoleCoeff (11.0f, sampleRate);
 
     // DC blocker coefficient
@@ -1682,7 +2296,6 @@ inline void processBlock (State& state,
     switch (model)
     {
         case Model::Tube:        reactBaseWindow = 1024; break;
-        case Model::Transistor:  reactBaseWindow = 1024; break;
         case Model::Diode:       reactBaseWindow = 2048; break;
         case Model::Clipper:     reactBaseWindow = 2048; break;
         case Model::Tape:        reactBaseWindow = 2048; break;
@@ -1698,12 +2311,6 @@ inline void processBlock (State& state,
             emphCoeffs.preSh  = detail::onePoleCoeff (3800.0f, sampleRate);
             emphCoeffs.postLP = detail::onePoleCoeff (9500.0f, sampleRate);
             emphCoeffs.postHP = detail::onePoleCoeff (30.0f,   sampleRate);
-            break;
-        case Model::Transistor:
-            emphCoeffs.preHP  = detail::onePoleCoeff (30.0f,   sampleRate);
-            emphCoeffs.preSh  = detail::onePoleCoeff (2600.0f, sampleRate);
-            emphCoeffs.postLP = detail::onePoleCoeff (9000.0f, sampleRate);
-            emphCoeffs.postHP = detail::onePoleCoeff (35.0f,   sampleRate);
             break;
         case Model::Diode:
             emphCoeffs.preHP  = detail::onePoleCoeff (720.0f,  sampleRate);
@@ -1735,7 +2342,7 @@ inline void processBlock (State& state,
     // TRANSISTOR owns its colour inside the black box instead of relying on
     // generic interstage coupling.
 
-    // Precomputed safety LPF coefficients (constant since fc = 0.4×sr)
+    // Precomputed safety LPF coefficients (constant since fc = 0.4xsr)
     SafetyLPFCoeffs safetyCoeffs;
     if (isSafetyLpfOn)
     {
@@ -1752,7 +2359,7 @@ inline void processBlock (State& state,
         safetyCoeffs.a2 = (1.0f - alpha) / a0;
     }
 
-    // ── Per-block hoisted computations (avoid per-sample transcendentals) ──
+    // -- Per-block hoisted computations (avoid per-sample transcendentals) --
     // Drive curve: std::pow only once per block (driveParam is constant within a block)
     const float driveCurved = applyDriveCurve (driveParam, model);
 
@@ -1917,7 +2524,7 @@ inline void processBlock (State& state,
 
     for (int i = 0; i < numSamples; ++i)
     {
-        // ── Parameter smoothing (once per actual sample, NOT per series pass) ──
+        // -- Parameter smoothing (once per actual sample, NOT per series pass) --
         state.sDrive += (driveCurved - state.sDrive) * oneMinusSmooth;
         state.sGirth += (girthParam  - state.sGirth) * oneMinusSmooth;
         state.sMod   += (modParam   - state.sMod)   * oneMinusSmooth;
@@ -1932,10 +2539,10 @@ inline void processBlock (State& state,
         const float react = state.sReact;
         const float var   = state.sVar;
 
-        // ── VARIATION: analog component tolerance + slow thermal drift ──
+        // -- VARIATION: analog component tolerance + slow thermal drift --
         // Static tolerance (per-instance hash): each "unit" has unique character.
         // Thermal drift (sub-Hz sines): very slow cathode/plate temp changes.
-        // NO fast oscillation — real components don't modulate at Hz rates.
+        // NO fast oscillation -- real components don't modulate at Hz rates.
         float driveMod = 1.0f, biasMod = 0.0f, shapeMod = 0.0f, asymMod = 0.0f;
         if (var > 0.001f)
         {
@@ -1948,21 +2555,21 @@ inline void processBlock (State& state,
                 state.variation.initTolerances (state.variationSeed);
             }
 
-            // Very slow thermal drift: 0.03-0.15 Hz (one full cycle per 7-33 seconds)
+            // Very slow thermal drift: 0.03x0.15 Hz (one full cycle per 7x33 seconds)
             const float rate = 0.03f + var * 0.12f;
             state.variation.gainDrift.advance  (rate,         var, sampleRate);
             state.variation.biasDrift.advance  (rate * 0.37f, var, sampleRate);
             state.variation.shapeDrift.advance (rate * 1.43f, var, sampleRate);
             state.variation.asymDrift.advance  (rate * 0.61f, var, sampleRate);
 
-            // Output already incorporates var scaling (depth) — no double-scaling
-            driveMod = 1.0f + state.variation.gainDrift.output  * 0.08f;  // ±8% gain (tube gm + resistor dividers)
-            biasMod  =        state.variation.biasDrift.output  * 0.04f;  // ±4% bias (cathode R + grid leak)
-            shapeMod =        state.variation.shapeDrift.output * 0.02f;  // ±2% shape (plate Rp variation)
-            asymMod  =        state.variation.asymDrift.output  * 0.025f; // ±2.5% L/R (matched pair mismatch)
+            // Output already incorporates var scaling (depth) -- no double-scaling
+            driveMod = 1.0f + state.variation.gainDrift.output  * 0.08f;  // +/-8% gain (tube gm + resistor dividers)
+            biasMod  =        state.variation.biasDrift.output  * 0.04f;  // +/-4% bias (cathode R + grid leak)
+            shapeMod =        state.variation.shapeDrift.output * 0.02f;  // +/-2% shape (plate Rp variation)
+            asymMod  =        state.variation.asymDrift.output  * 0.025f; // +/-2.5% L/R (matched pair mismatch)
         }
 
-        // ── Per-sample series passes ──
+        // -- Per-sample series passes --
         // Series replicates the model's internal black-box stage N times.
         // Loader-level flow (ENV/FILTER/DELAY/etc.) stays outside SatEngine,
         // and there is no generic interstage colouring here. If a future
@@ -1987,21 +2594,21 @@ inline void processBlock (State& state,
                 auto& stageDcX = state.dcX[sp][ch];
                 auto& stageDcY = state.dcY[sp][ch];
 
-                // ── Safety LPF (first pass only, ×1 mode) ──
+                // -- Safety LPF (first pass only, x1 mode) --
                 if (isSafetyLpfOn && isFirst && !rawMode)
                     x = processSafetyLPF (state.safetyLpf[ch], x, safetyCoeffs);
 
 
-                // ── Apply VARIATION per-channel (L/R asymmetry decorrelation) ──
+                // -- Apply VARIATION per-channel (L/R asymmetry decorrelation) --
                 float effDrive = drive * driveMod;
                 float effBias  = bias  + biasMod + (ch == 0 ? asymMod : -asymMod);
                 float effMod   = detail::clampF (mod + shapeMod, 0.0f, 1.0f);
 
-                // ── INTERNAL PRE-EMPHASIS (per series pass, unless rawMode) ──
+                // -- INTERNAL PRE-EMPHASIS (per series pass, unless rawMode) --
                 if (!rawMode && model != Model::Transistor)
                     x = preEmphasize (x, stageEmphasis, model, effDrive, effMod, emphCoeffs);
 
-                // ── REACT: per-stage energy tracking + model processing ──
+                // -- REACT: per-stage energy tracking + model processing --
                 float sagPre  = 1.0f;
                 float sagPost = 1.0f;
                 float sagBias = 0.0f;
@@ -2027,7 +2634,7 @@ inline void processBlock (State& state,
                     const float sagEnv = stageSagEnvelope;
 
                     switch (model)
-                    {                        }
+                    {
                         case Model::Diode:
                         {
                             const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
@@ -2061,7 +2668,8 @@ inline void processBlock (State& state,
                             sagPost = 1.0f;
                             stageSagEnvelope = comp.amount;
                             break;
-                        }                        default: break;
+                        }
+                        default: break;
                     }
                 }
                 else if (model == Model::Tape)
@@ -2095,7 +2703,7 @@ inline void processBlock (State& state,
                 {
                     if (useMbSag)
                     {
-                        // Apply multiband pre-sag: split→boost per band→recombine
+                        // Apply multiband pre-sag: split->boost per band->recombine
                         float subSig, midSig, airSig;
                         multibandReactSplit (stageMbReact, x, mbSubCoeff, mbAirCoeff,
                                             subSig, midSig, airSig);
@@ -2114,7 +2722,7 @@ inline void processBlock (State& state,
                     x = applyTriodePreGirth (x, juce::jlimit (0.0f, 1.0f, preGirth), effDrive);
                 }
 
-                // ── WAVESHAPER (all passes, with per-pass ADAA state) ──
+                // -- WAVESHAPER (all passes, with per-pass ADAA state) --
                 if (diagCollector != nullptr && isLast && ch == 0)
                 {
                     diagCollector->feedLastPassIn (x);
@@ -2155,8 +2763,8 @@ inline void processBlock (State& state,
                 if (diagCollector != nullptr && isLast && ch == 0)
                     diagCollector->feedCore (x);
 
-                // ── Intermediate safety: prevent extreme values entering girth/filters ──
-                // Soft clip: transparent below ±2, asymptotic to ±3
+                // -- Intermediate safety: prevent extreme values entering girth/filters --
+                // Soft clip: transparent below +/-2, asymptotic to +/-3
                 {
                     const float absX = std::abs (x);
                     if (absX > 2.0f)
@@ -2169,11 +2777,11 @@ inline void processBlock (State& state,
                 if (diagCollector != nullptr && isLast && ch == 0)
                     diagCollector->feedClip (x);
 
-                // ── Post-sag ceiling (per series pass) ──
+                // -- Post-sag ceiling (per series pass) --
                 {
                     if (useMbSag)
                     {
-                        // Multiband post-sag: split→attenuate per band→recombine
+                        // Multiband post-sag: split->attenuate per band->recombine
                         float subSig, midSig, airSig;
                         multibandReactSplit (stageMbReact, x, mbSubCoeff, mbAirCoeff,
                                             subSig, midSig, airSig);
@@ -2186,7 +2794,7 @@ inline void processBlock (State& state,
                 }
 
 
-                // ── GIRTH (all passes) ──
+                // -- GIRTH (all passes) --
                 if (model == Model::Tape)
                 {
                     x = applyTapeGirth (x, girth);
@@ -2203,11 +2811,11 @@ inline void processBlock (State& state,
                 else
                     x = applyGirth (x, girth, state.girthAdaa[sp][ch]);
 
-                // ── INTERNAL DE-EMPHASIS (per series pass, unless rawMode) ──
+                // -- INTERNAL DE-EMPHASIS (per series pass, unless rawMode) --
                 if (!rawMode && model != Model::Transistor)
                     x = deEmphasize (x, stageEmphasis, model, effDrive, effMod, emphCoeffs);
 
-                // ── DC BLOCKER (1st-order HPF at 5Hz, per series pass) ──
+                // -- DC BLOCKER (1st-order HPF at 5Hz, per series pass) --
                 if (!rawMode)
                 {
                     const float dcOut = x - stageDcX + dcR * stageDcY;
@@ -2219,7 +2827,7 @@ inline void processBlock (State& state,
                 if (diagCollector != nullptr && isLast && ch == 0)
                     diagCollector->feedDc (x);
 
-                // ── AUTO-GAIN COMPENSATION (per series pass, unless skipped) ──
+                // -- AUTO-GAIN COMPENSATION (per series pass, unless skipped) --
                 if (isLast)
                 {
                     if (model == Model::Tape)
@@ -2232,8 +2840,8 @@ inline void processBlock (State& state,
                         x *= state.blockCoeffs.autoGain;
                 }
 
-                // ── Final safety soft-limiter (AFTER auto-gain) ──
-                // Transparent below ±1.5, smooth compression above, max ±2.5
+                // -- Final safety soft-limiter (AFTER auto-gain) --
+                // Transparent below +/-1.5, smooth compression above, max +/-2.5
                 // Prevents auto-gain from amplifying clamped signal past safe levels
                 // and eliminates hard-clip discontinuities that cause audible clicks.
                 if (isLast)
@@ -2256,3 +2864,4 @@ inline void processBlock (State& state,
 }
 
 } // namespace SatEngine
+

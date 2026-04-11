@@ -9,16 +9,16 @@ using namespace TR;
  #include <windows.h>
 #endif
 
-// --------------------------------------------------------------
+// ----------------------------------------------------------------
 //  Timer & display constants
-// --------------------------------------------------------------
+// ----------------------------------------------------------------
 static constexpr int kCrtTimerHz   = 10;
 static constexpr int kIdleTimerHz  = 4;
 static constexpr float kSilenceDb  = -80.0f;
 
-// --------------------------------------------------------------
+// ----------------------------------------------------------------
 //  Parameter listener IDs
-// --------------------------------------------------------------
+// ----------------------------------------------------------------
 static constexpr std::array<const char*, 10> kUiMirrorParamIds {
 	SATTRAudioProcessor::kParamUiPalette,
 	SATTRAudioProcessor::kParamUiFxTail,
@@ -32,9 +32,9 @@ static constexpr std::array<const char*, 10> kUiMirrorParamIds {
 	SATTRAudioProcessor::kParamSatTypeC
 };
 
-// --------------------------------------------------------------
+// ----------------------------------------------------------------
 //  Popup helper classes
-// --------------------------------------------------------------
+// ----------------------------------------------------------------
 namespace
 {
 	constexpr int satTypeModelToVisibleComboId (int modelIndex) noexcept
@@ -106,9 +106,9 @@ namespace
 
 }
 
-// --------------------------------------------------------------
+// ----------------------------------------------------------------
 //  Popup static layout helpers
-// --------------------------------------------------------------
+// ----------------------------------------------------------------
 static void syncGraphicsPopupState (juce::AlertWindow& aw,
                                     const std::array<juce::Colour, 2>& defaultPalette,
                                     const std::array<juce::Colour, 2>& customPalette,
@@ -415,9 +415,9 @@ static void layoutInfoPopupContent (juce::AlertWindow& aw)
 	content->setSize (innerW, juce::jmax (contentH, y));
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  BarSlider::getTextFromValue
-//==============================================================================
+// ----------------------------------------------------------------
 juce::String SATTRAudioProcessorEditor::BarSlider::getTextFromValue (double v)
 {
 	if (owner == nullptr)
@@ -473,9 +473,9 @@ juce::String SATTRAudioProcessorEditor::BarSlider::getTextFromValue (double v)
 	return juce::Slider::getTextFromValue (v);
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  FilterBarComponent implementations
-//==============================================================================
+// ----------------------------------------------------------------
 juce::Rectangle<float> SATTRAudioProcessorEditor::FilterBarComponent::getInnerArea() const
 {
 	return getLocalBounds().toFloat().reduced (kPad);
@@ -710,9 +710,9 @@ void SATTRAudioProcessorEditor::FilterBarComponent::mouseDoubleClick (const juce
 	}
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  DualMixBarComponent implementations
-//==============================================================================
+// ----------------------------------------------------------------
 juce::Rectangle<float> SATTRAudioProcessorEditor::DualMixBarComponent::getInnerArea() const
 {
 	return getLocalBounds().toFloat().reduced (kPad);
@@ -862,9 +862,9 @@ void SATTRAudioProcessorEditor::DualMixBarComponent::mouseMove (const juce::Mous
 		setTooltip (label + ": " + juce::String (dB, 1) + " dB");
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  LookAndFeel implementations
-//==============================================================================
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::MinimalLNF::drawLinearSlider (
 	juce::Graphics& g, int x, int y, int width, int height,
 	float sliderPos, float /*minSliderPos*/, float /*maxSliderPos*/,
@@ -1141,9 +1141,9 @@ void SATTRAudioProcessorEditor::MinimalLNF::drawTooltip (juce::Graphics& g,
 	                  1);
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  Static loader param-ID table
-//==============================================================================
+// ----------------------------------------------------------------
 const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoaderParams[3] =
 {
 	{ // A
@@ -1190,9 +1190,9 @@ const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoad
 	}
 };
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  Loader ref accessors
-//==============================================================================
+// ----------------------------------------------------------------
 SATTRAudioProcessorEditor::LoaderRefs SATTRAudioProcessorEditor::getLoaderRefs (int i)
 {
 	switch (i)
@@ -1240,9 +1240,9 @@ SATTRAudioProcessorEditor::AttachRefs SATTRAudioProcessorEditor::getAttachRefs (
 	}
 }
 
-//==============================================================================
-//  setupLoaderUI — unified per-loader component initialisation
-//==============================================================================
+// ----------------------------------------------------------------
+//  setupLoaderUI - unified per-loader component initialisation
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
                                                 const char* chaosAmtId, const char* chaosSpdId)
 {
@@ -1384,9 +1384,9 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 	setupSlider (r.satSag,   "React " + suffix + " (energy react)",   ST::SatSag);
 }
 
-//==============================================================================
-//  createLoaderAttachments — unified per-loader param attachment wiring
-//==============================================================================
+// ----------------------------------------------------------------
+//  createLoaderAttachments - unified per-loader param attachment wiring
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::createLoaderAttachments (juce::AudioProcessorValueTreeState& params,
                                                           int loaderIndex,
                                                           LoaderRefs ui, AttachRefs a)
@@ -1462,9 +1462,9 @@ void SATTRAudioProcessorEditor::commitSatTypeComboSelection (int loaderIndex)
 	}
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  Constructor
-//==============================================================================
+// ----------------------------------------------------------------
 SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 	: AudioProcessorEditor (&p), audioProcessor (p)
 {
@@ -1681,9 +1681,9 @@ SATTRAudioProcessorEditor::~SATTRAudioProcessorEditor()
 		params.removeParameterListener (paramId, this);
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  Paint
-//==============================================================================
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 {
 	using namespace TR;
@@ -1750,7 +1750,7 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 			g.drawText (juce::String ("v") + InfoContent::version, versionX, versionY, versionW, versionH,
 			            juce::Justification::bottomRight, false);
 
-		// Footer combo labels — explicit font + colour
+		// Footer combo labels - explicit font + colour
 		g.setColour (activeScheme.text);
 		g.setFont (juce::Font (juce::FontOptions (14.0f).withStyle ("Bold")));
 
@@ -1876,7 +1876,7 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 		g.fillEllipse (cachedInfoGearHole);
 	}
 
-	// (oversampling label removed — now in footer combo)
+	// (oversampling label removed - now in footer combo)
 
 	// Draw value legends for all bar sliders
 	{
@@ -1957,9 +1957,9 @@ void SATTRAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 	drawToggleBar (cachedToggleBarAreaC_, ioExpandedC_);
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  Resized & Layout
-//==============================================================================
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::resized()
 {
 	// Persist window size to processor
@@ -2029,7 +2029,7 @@ void SATTRAudioProcessorEditor::resized()
 	footer.removeFromTop (rowGap);
 	auto footerRow2 = footer;
 
-	// Row 1: MIX / OUTPUT / LIM — uniform bar widths across full width
+	// Row 1: MIX / OUTPUT / LIM - uniform bar widths across full width
 	{
 		const int mixValW    = 60;
 		const int outValW    = 70;
@@ -2067,7 +2067,7 @@ void SATTRAudioProcessorEditor::resized()
 		limThresholdSlider.setBounds (row.removeFromLeft (barW));
 	}
 
-	// Row 2: ROUTE | MATCH | MIX | LIMIT | INV POL | INV STR — uniform
+	// Row 2: ROUTE | MATCH | MIX | LIMIT | INV POL | INV STR - uniform
 	{
 		auto area = footerRow2.reduced (footerMargin, 0);
 		auto row  = area.withSizeKeepingCentre (area.getWidth(), 26);
@@ -2108,7 +2108,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	enableBtn.setBounds (area.removeFromTop (buttonH));
 	area.removeFromTop (gap);
 
-	// Toggle bar area — full column width (union computed in resized)
+	// Toggle bar area - full column width (union computed in resized)
 	auto toggleBarArea = area.removeFromTop (toggleBarH);
 	if (loaderIndex == 0)
 		cachedToggleBarAreaA_ = toggleBarArea;
@@ -2191,7 +2191,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		mix.setVisible (true);
 		area.removeFromTop (gap);
 
-		// MODE IN / MODE OUT / F/T / SUM BUS combos (2×2 grid, same height as sliders)
+		// MODE IN / MODE OUT / F/T / SUM BUS combos (2x2 grid, same height as sliders)
 		area.removeFromTop (modeLabelGap);
 		const int modeComboW = (sliderW - gap) / 2;
 		auto modeRow1 = area.removeFromTop (sliderH);
@@ -2207,7 +2207,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		sumBusCmb.setVisible (true);
 		area.removeFromTop (gap * 2);
 
-		// CHSF + CHSD checkboxes — CHSF aligned with sliders, CHSD aligned with value column
+		// CHSF + CHSD checkboxes - CHSF aligned with sliders, CHSD aligned with value column
 		auto checkArea = area.removeFromTop (checkH);
 		constexpr int valuePadPx = 8;
 		const int chsfW = sliderW;
@@ -2333,9 +2333,9 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	}
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  Loader enabled/disabled visual state
-//==============================================================================
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::updateLoaderEnabledState (int loaderIndex)
 {
 	auto r = getLoaderRefs (loaderIndex);
@@ -2390,9 +2390,9 @@ void SATTRAudioProcessorEditor::updateSatControlsEnabledState (int loaderIndex)
 	}
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  Callbacks
-//==============================================================================
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::timerCallback()
 {
 	// Sync filter bars from processor
@@ -2500,9 +2500,9 @@ void SATTRAudioProcessorEditor::parameterChanged (const juce::String& paramID, f
 	}
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  Mouse Events
-//==============================================================================
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 {
 	const auto p = e.getEventRelativeTo (this).getPosition();
@@ -2534,7 +2534,7 @@ void SATTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 		return;
 	}
 
-	// Click on OS label — no longer needed (now a footer combo)
+	// Click on OS label - no longer needed (now a footer combo)
 	// (removed)
 
 	// CHAOS checkboxes: left-click toggles, right-click opens chaos amount/speed prompt
@@ -2637,9 +2637,9 @@ void SATTRAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
 	}
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  TR-style label/value system helpers
-//==============================================================================
+// ----------------------------------------------------------------
 
 void SATTRAudioProcessorEditor::setupBar (juce::Slider& s)
 {
@@ -2694,8 +2694,16 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 		biasLabels[l]  = "BIAS";
 		switch (satModel)
 		{
-			case 1:                          reactLabels[l] = "COMP";  break; // Tape
-			case 2:                          reactLabels[l] = "SAG";   break; // Tube
+            case 1:
+                girthLabels[l] = "BODY";
+                modLabels[l]   = "FORM";
+                reactLabels[l] = "COMP";
+                break; // Tape
+            case 2:
+                girthLabels[l] = "BODY";
+                modLabels[l]   = "TYPE";
+                reactLabels[l] = "SAG";
+                break; // Tube
 			case 3:
 				driveLabels[l] = "GAIN";
 				girthLabels[l] = "BODY";
@@ -2764,7 +2772,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 					ct.short_  = juce::String (juce::roundToInt (val)) + " ms";
 					ct.intOnly = juce::String (juce::roundToInt (val));
 					break;
-				case 3: // Percent (value is 0..1 range ? display as %)
+				case 3: // Percent (value is 0..1 range -> display as %)
 				{
 					const int pct = juce::roundToInt (val * 100.0);
 					ct.full    = juce::String (pct) + "% " + fmt.label;
@@ -2782,7 +2790,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 					ct.short_  = juce::String (val, 1) + " dB";
 					ct.intOnly = juce::String (juce::roundToInt (val));
 					break;
-				case 6: // Bipolar percent (-1..1 ? -100..100%)
+				case 6: // Bipolar percent (-1..1 -> -100..100%)
 				{
 					const int pct = juce::roundToInt (val * 100.0);
 					ct.full    = juce::String (pct) + "% " + fmt.label;
@@ -2931,7 +2939,7 @@ void SATTRAudioProcessorEditor::updateInfoIconCache()
 	cachedInfoGearHole = { center.x - holeR, center.y - holeR, holeR * 2.0f, holeR * 2.0f };
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::setPromptOverlayActive (bool shouldBeActive)
 {
 	if (promptOverlayActive == shouldBeActive)
@@ -2999,9 +3007,9 @@ void SATTRAudioProcessorEditor::parentHierarchyChanged()
 		promptOverlay.toFront (false);
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  Prompts
-//==============================================================================
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 {
 	using namespace TR;
@@ -3311,7 +3319,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 			const juce::String numericToken = t.initialSectionContainingOnly ("0123456789.,-");
 			double v = numericToken.getDoubleValue();
 
-			// Percent-based sliders: user typed 0-100/200, slider stores 0-1/2
+			// Percent-based sliders: user typed 0x100/200, slider stores 0x1/2
 			auto* barPtr = dynamic_cast<BarSlider*> (sliderPtr);
 			const auto st = barPtr ? barPtr->getType() : BarSlider::Type::Unknown;
 			const bool needsPercentConvert = (st == BarSlider::Type::Pan ||
@@ -3329,9 +3337,9 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		}));
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  MIX SEND prompt (DRY + WET levels)
-//==============================================================================
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::openMixSendPrompt()
 {
 	using namespace TR;
@@ -3445,7 +3453,7 @@ void SATTRAudioProcessorEditor::openMixSendPrompt()
 		safeThis->dualMixBar_.updateFromProcessor();
 	};
 
-	// Wire bar ? text sync
+	// Wire bar -> text sync
 	auto barToText = [aw, syncing, pushParams, dbString] (const char* editorId, float v01)
 	{
 		if (*syncing) return;
@@ -3462,7 +3470,7 @@ void SATTRAudioProcessorEditor::openMixSendPrompt()
 	dryBar->onValueChanged = [barToText] (float v) { barToText ("dryLevel", v); };
 	wetBar->onValueChanged = [barToText] (float v) { barToText ("wetLevel", v); };
 
-	// Wire text ? bar sync
+	// Wire text -> bar sync
 	auto textToBar = [syncing, pushParams, dbToLinear] (juce::TextEditor* te, PromptBar* bar)
 	{
 		if (*syncing || te == nullptr || bar == nullptr) return;
@@ -3613,7 +3621,7 @@ void SATTRAudioProcessorEditor::openMixSendPrompt()
 
 			if (result != 1)
 			{
-				// CANCEL — restore original values
+				// CANCEL - restore original values
 				auto& p = safeThis->audioProcessor;
 				auto setP = [&p] (const char* id, float plain)
 				{
@@ -3630,9 +3638,9 @@ void SATTRAudioProcessorEditor::openMixSendPrompt()
 		false);
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  FILTER prompt (HP + LP frequencies, on/off, slope)
-//==============================================================================
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 {
 	using namespace TR;
@@ -3742,7 +3750,7 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	lpToggle->setLookAndFeel (&lnf);
 	aw->addAndMakeVisible (lpToggle);
 
-	// -- Clickable slope labels (cycle 6?12?24?6 on click) --
+	// -- Clickable slope labels (cycle 6->12->24->6 on click) --
 	auto slopeToText = [] (int s) -> juce::String
 	{
 		if (s == 0) return "6dB";
@@ -3814,7 +3822,7 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 		fb.updateFromProcessor();
 	};
 
-	// Slope label click ? cycle value and push
+	// Slope label click -> cycle value and push
 	struct SlopeCycler : public juce::MouseListener
 	{
 		std::shared_ptr<int> val;
@@ -3856,7 +3864,7 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	hpToggle->onClick = pushParams;
 	lpToggle->onClick = pushParams;
 
-	// Wire bar ? text sync
+	// Wire bar -> text sync
 	auto barToText = [aw, syncing, normToFreq, freqToNorm, pushParams, hpBar, lpBar] (const char* editorId, float v01, bool isHp)
 	{
 		if (*syncing) return;
@@ -4085,7 +4093,7 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 
 			if (result != 1)
 			{
-				// CANCEL — restore original values
+				// CANCEL - restore original values
 				auto& vts = safeThis->audioProcessor.getValueTreeState();
 				auto setP = [&vts] (const juce::String& id, float plain)
 				{
@@ -4110,9 +4118,9 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 		false);
 }
 
-//==============================================================================
+// ----------------------------------------------------------------
 //  CHAOS prompt (AMOUNT + SPEED)
-//==============================================================================
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 {
 	using namespace TR;
@@ -4254,7 +4262,7 @@ void SATTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 	setupField ("amt", "AMT", "%",  false, amtSuffix, amtUnitLabel);
 	setupField ("spd", "SPD", "Hz", true,  spdSuffix, spdUnitLabel);
 
-	// Bars: AMOUNT 0-100 ? 0..1, SPEED 0.01-100 Hz ? 0..1 (logarithmic)
+	// Bars: AMOUNT 0x100 -> 0..1, SPEED 0.01x100 Hz -> 0..1 (logarithmic)
 	const float spdLogMin = std::log (SATTRAudioProcessor::kChaosSpdMin);
 	const float spdLogMax = std::log (SATTRAudioProcessor::kChaosSpdMax);
 	const float spdLogRange = spdLogMax - spdLogMin;
@@ -4287,7 +4295,7 @@ void SATTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 	auto* amtApvts = audioProcessor.getValueTreeState().getParameter (amtId);
 	auto* spdApvts = audioProcessor.getValueTreeState().getParameter (spdId);
 
-	// Bar ? text + APVTS
+	// Bar -> text + APVTS
 	auto barToTextAmt = [aw, syncing, amtApvts] (float v01)
 	{
 		if (*syncing) return;
@@ -4388,7 +4396,7 @@ void SATTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 		placeRow (spdTe, spdSuffix, spdUnitLabel, spdBar, startY + rowTotal + gap);
 	};
 
-	// Text ? bar + APVTS
+	// Text -> bar + APVTS
 	auto textToBar = [syncing, hzToBar] (juce::TextEditor* te, PromptBar* bar,
 	                            juce::RangedAudioParameter* param, bool isSpeed)
 	{
@@ -4530,9 +4538,9 @@ void SATTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 		false);
 }
 
-//==============================================================================
-//  EXP Prompt — right-click on EXP button opens ORDER/RATIO/THRESHOLD
-//==============================================================================
+// ----------------------------------------------------------------
+//  EXP Prompt - right-click on EXP button opens ORDER/RATIO/THRESHOLD
+// ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 {
 	using namespace TR;
@@ -4720,20 +4728,6 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	if (atkSuffix    != nullptr) atkSuffix->pairedBar    = atkBar;
 	if (relSuffix    != nullptr) relSuffix->pairedBar    = relBar;
 
-	// -- Preset labels: GATE | DUCK | SOFT --
-	auto* presetGate = new juce::Label ("", "GATE");
-	auto* presetDuck = new juce::Label ("", "DUCK");
-	auto* presetSoft = new juce::Label ("", "SOFT");
-	for (auto* pl : { presetGate, presetDuck, presetSoft })
-	{
-		pl->setJustificationType (juce::Justification::centred);
-		applyLabelTextColour (*pl, scheme.text);
-		pl->setFont (f);
-		pl->setInterceptsMouseClicks (true, false);
-		pl->setColour (juce::Label::outlineColourId, scheme.outline);
-		bodyContent->addAndMakeVisible (pl);
-	}
-
 	// -- Viewport wrapping the body --
 	auto* viewport = new juce::Viewport();
 	viewport->setComponentID ("expViewport");
@@ -4771,7 +4765,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	orderHandler->param = orderApvts;
 	orderLabel->addMouseListener (orderHandler, false);
 
-	// -- Bar ? text + APVTS --
+	// -- Bar -> text + APVTS --
 	ratioBar->onValueChanged = [aw, syncing, ratioApvts] (float v01)
 	{
 		if (*syncing) return;
@@ -4818,49 +4812,12 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		*syncing = false;
 	};
 
-	// -- Preset click handlers --
-	auto applyPreset = [aw, atkBar, relBar, atkApvts, relApvts, atkNormRange, relNormRange, syncing]
-	                   (float atkMs, float relMs)
-	{
-		if (*syncing) return;
-		*syncing = true;
-		atkBar->value = atkNormRange.convertTo0to1 (atkMs);
-		relBar->value = relNormRange.convertTo0to1 (relMs);
-		atkBar->repaint();
-		relBar->repaint();
-		if (auto* te = aw->getTextEditor ("atk"))
-		{ te->setText (juce::String (atkMs, 2), juce::sendNotification); te->selectAll(); }
-		if (auto* te = aw->getTextEditor ("rel"))
-		{ te->setText (juce::String (relMs, 1), juce::sendNotification); te->selectAll(); }
-		if (atkApvts) atkApvts->setValueNotifyingHost (atkApvts->convertTo0to1 (atkMs));
-		if (relApvts) relApvts->setValueNotifyingHost (relApvts->convertTo0to1 (relMs));
-		*syncing = false;
-	};
-
-	struct PresetClickHandler : public juce::MouseListener
-	{
-		std::function<void()> onClick;
-		void mouseDown (const juce::MouseEvent&) override { if (onClick) onClick(); }
-	};
-	auto* gateClick = new PresetClickHandler();
-	gateClick->onClick = [applyPreset] () { applyPreset (0.1f, 25.0f); };
-	presetGate->addMouseListener (gateClick, false);
-
-	auto* duckClick = new PresetClickHandler();
-	duckClick->onClick = [applyPreset] () { applyPreset (5.0f, 200.0f); };
-	presetDuck->addMouseListener (duckClick, false);
-
-	auto* softClick = new PresetClickHandler();
-	softClick->onClick = [applyPreset] () { applyPreset (2.0f, 500.0f); };
-	presetSoft->addMouseListener (softClick, false);
-
 	// -- Layout: positions body content inside viewport --
 	auto layoutBody = [aw, viewport, bodyContent,
 	                   orderLegend, orderLabel,
 	                   ratioSuffix, threshSuffix, atkSuffix, relSuffix,
 	                   ratioUnit, threshUnit, atkUnit, relUnit,
-	                   ratioBar, threshBar, atkBar, relBar,
-	                   presetGate, presetDuck, presetSoft] ()
+	                   ratioBar, threshBar, atkBar, relBar] ()
 	{
 		auto* ratioTe  = aw->getTextEditor ("ratio");
 		auto* threshTe = aw->getTextEditor ("thresh");
@@ -4883,7 +4840,6 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		const int barGap  = juce::jmax (2, rowH / 8);
 		const int rowTotal = rowH + barGap + barH;
 		const int gap     = juce::jmax (3, rowH / 5);
-		const int presetH = juce::jmax (16, rowH * 2 / 3);
 		const int contentW = vpW - 10; // leave room for scrollbar
 		const auto& font = ratioTe->getFont();
 		const int spaceW = juce::jmax (2, stringWidth (font, " "));
@@ -4944,15 +4900,6 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		placeRow (threshTe, threshSuffix, threshUnit, threshBar, y);
 		y += rowTotal + gap;
 
-		// Preset row
-		{
-			const int presetW = barW / 3;
-			presetGate->setBounds (barX,              y, presetW, presetH);
-			presetDuck->setBounds (barX + presetW,    y, presetW, presetH);
-			presetSoft->setBounds (barX + presetW * 2, y, barW - presetW * 2, presetH);
-		}
-		y += presetH + gap;
-
 		placeRow (atkTe, atkSuffix, atkUnit, atkBar, y);
 		y += rowTotal + gap;
 		placeRow (relTe, relSuffix, relUnit, relBar, y);
@@ -4961,7 +4908,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		bodyContent->setSize (contentW, y);
 	};
 
-	// -- Text ? bar + APVTS --
+	// -- Text -> bar + APVTS --
 	auto textToBarRatio = [syncing, ratioApvts] (juce::TextEditor* te, PromptBar* bar)
 	{
 		if (*syncing || !te || !bar) return;
@@ -5091,11 +5038,11 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	aw->enterModalState (true,
 		juce::ModalCallbackFunction::create (
 			[safeThis, aw, orderState, ratioBar, threshBar, atkBar, relBar,
-			 orderLegend, orderLabel, presetGate, presetDuck, presetSoft,
+			 orderLegend, orderLabel,
 			 ratioSuffix, threshSuffix, atkSuffix, relSuffix,
 			 ratioUnit, threshUnit, atkUnit, relUnit,
 			 viewport,
-			 orderHandler, gateClick, duckClick, softClick,
+			 orderHandler,
 			 savedOrder = currentOrder, savedRatio = currentRatio, savedThresh = currentThresh,
 			 savedAtk = currentAtk, savedRel = currentRel,
 			 orderParamId, ratioParamId, threshParamId, atkParamId, relParamId,
@@ -5110,7 +5057,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			{
 				// bodyContent (+ its children) is owned by viewport via setViewedComponent(,true)
 				delete viewport;
-				delete orderHandler; delete gateClick; delete duckClick; delete softClick;
+				delete orderHandler;
 				return;
 			}
 
@@ -5150,7 +5097,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 			// bodyContent (+ bars, labels, presets) owned by viewport
 			delete viewport;
-			delete orderHandler; delete gateClick; delete duckClick; delete softClick;
+			delete orderHandler;
 		}),
 		false);
 }
