@@ -517,6 +517,10 @@ public:
 		float lastPan = -1.0f;
 		float lastPanLeft = 1.0f;
 		float lastPanRight = 1.0f;
+		float lastInGain = 1.0f;
+		float lastOutGain = 1.0f;
+		float lastMix = 1.0f;
+		float lastPosGain = 1.0f;
 		
 		// FRED (Fredman miking) state: fractional delay buffer for off-axis simulation
 		// ~159 us delay ~= 5 cm path difference (realistic Fredman setup)
@@ -777,8 +781,15 @@ private:
 	float limRel2_  = 0.0f;
 
 	inline void applyLimiter (float* leftData, float* rightData, int numSamples,
-	                         float thresholdGain) noexcept
+	                         float thresholdGainStart, float thresholdGainEnd) noexcept
 	{
+		if (numSamples <= 0)
+			return;
+
+		const float invSamples = 1.0f / static_cast<float> (numSamples);
+		float thresholdGain = thresholdGainStart;
+		const float thresholdStep = (thresholdGainEnd - thresholdGainStart) * invSamples;
+
 		for (int i = 0; i < numSamples; ++i)
 		{
 			const float peakL = std::abs (leftData[i]);
@@ -817,6 +828,7 @@ private:
 
 			leftData[i]  *= gr;
 			rightData[i] *= gr;
+			thresholdGain += thresholdStep;
 		}
 	}
 
@@ -838,6 +850,11 @@ private:
 	float cachedDcBlockR_         = 0.0f;  // 1 - 2*pi*5/sr
 	float cachedNormFastCoeff_    = 0.0f;  // for NORM AGC 10ms tau
 	float cachedNormSlowCoeff_    = 0.0f;  // for NORM AGC 20ms tau
+	float lastInputGain_          = 1.0f;
+	float lastOutputGain_         = 1.0f;
+	float lastGlobalDryMix_       = 0.0f;
+	float lastGlobalWetMix_       = 1.0f;
+	float lastLimiterThresholdLin_ = 1.0f;
 
 	// DC blocking filter state (per-channel)
 	float dcBlockX_[2] = { 0.0f, 0.0f };
