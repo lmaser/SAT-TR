@@ -2154,62 +2154,69 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 
 	// Compute per-view: expanded has 8 rows, collapsed has 9
 	const int numRows = expanded ? 8 : 9;
-	const int gapsBetweenSliders = expanded ? (gap * 5) : (gap * 7);
-	const int layoutOverhead = gapsBetweenSliders + modeLabelGap + comboLabelGap2 + gap * 2 + checkH;
-	const int sliderH = juce::jmax (18, (area.getHeight() - layoutOverhead) / numRows);
+	const int bottomSpacer = expanded ? (gap * 2) : (comboLabelGap2 + gap * 2);
+	auto contentArea = area;
+	auto checkArea = contentArea.removeFromBottom (checkH);
+	contentArea.removeFromBottom (bottomSpacer);
+
+	// Keep the bottom checkbox row anchored to the same baseline regardless of
+	// expanded/collapsed state. The variable-height content above it is what
+	// absorbs resize rounding.
+	const int layoutOverhead = expanded
+	                         ? ((gap * 6) + modeLabelGap + comboLabelGap2)
+	                         : (modeLabelGap + (gap * 7));
+	const int sliderH = juce::jmax (18, (contentArea.getHeight() - layoutOverhead) / numRows);
 
 	if (expanded)
 	{
 		// -- Expanded IO view: IN, OUT, TILT, FILTER, PAN, MIX, MODE IN/OUT, CHAOS --
 
-		auto sliderRow = area.removeFromTop (sliderH);
+		auto sliderRow = contentArea.removeFromTop (sliderH);
 		in_.setBounds (sliderRow.removeFromLeft (sliderW));
 		in_.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		out.setBounds (sliderRow.removeFromLeft (sliderW));
 		out.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		tilt.setBounds (sliderRow.removeFromLeft (sliderW));
 		tilt.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		filterBar.setBounds (sliderRow.removeFromLeft (sliderW));
 		filterBar.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		pan.setBounds (sliderRow.removeFromLeft (sliderW));
 		pan.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		mix.setBounds (sliderRow.removeFromLeft (sliderW));
 		mix.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
 		// MODE IN / MODE OUT / F/T / SUM BUS combos (2x2 grid, same height as sliders)
-		area.removeFromTop (modeLabelGap);
+		contentArea.removeFromTop (modeLabelGap);
 		const int modeComboW = (sliderW - gap) / 2;
-		auto modeRow1 = area.removeFromTop (sliderH);
+		auto modeRow1 = contentArea.removeFromTop (sliderH);
 		modeInCmb.setBounds  (modeRow1.getX(), modeRow1.getY(), modeComboW, sliderH);
 		modeOutCmb.setBounds (modeRow1.getX() + modeComboW + gap, modeRow1.getY(), modeComboW, sliderH);
 		modeInCmb.setVisible (true);
 		modeOutCmb.setVisible (true);
-		area.removeFromTop (comboLabelGap2);
-		auto modeRow2 = area.removeFromTop (sliderH);
+		contentArea.removeFromTop (comboLabelGap2);
+		auto modeRow2 = contentArea.removeFromTop (sliderH);
 		filterPosCmb.setBounds (modeRow2.getX(), modeRow2.getY(), modeComboW, sliderH);
 		sumBusCmb.setBounds    (modeRow2.getX() + modeComboW + gap, modeRow2.getY(), modeComboW, sliderH);
 		filterPosCmb.setVisible (true);
 		sumBusCmb.setVisible (true);
-		area.removeFromTop (gap * 2);
 
 		// CHSF + CHSD checkboxes - CHSF aligned with sliders, CHSD aligned with value column
-		auto checkArea = area.removeFromTop (checkH);
 		constexpr int valuePadPx = 8;
 		const int chsfW = sliderW;
 		const int chsdX = checkArea.getX() + sliderW + valuePadPx;
@@ -2251,14 +2258,14 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		// SatType combo (same height as sliders) + RAW checkbox
 		auto& satTypeCmb = pick (satTypeComboA, satTypeComboB, satTypeComboC);
 		auto& rawBtn     = pick (rawButtonA,    rawButtonB,    rawButtonC);
-		auto comboRow = area.removeFromTop (sliderH);
+		auto comboRow = contentArea.removeFromTop (sliderH);
 		satTypeCmb.setBounds (comboRow.removeFromLeft (sliderW));
 		satTypeCmb.setVisible (true);
 		// RAW checkbox sits to the right of the combo
 		constexpr int rawGap = 6;
 		rawBtn.setBounds (comboRow.getX() + rawGap, comboRow.getY(), comboRow.getWidth() - rawGap, sliderH);
 		rawBtn.setVisible (true);
-		area.removeFromTop (modeLabelGap);
+		contentArea.removeFromTop (modeLabelGap);
 
 		// Saturation sliders
 		auto& drive = pick (satDriveSliderA, satDriveSliderB, satDriveSliderC);
@@ -2268,50 +2275,48 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		auto& sSag  = pick (satSagSliderA,   satSagSliderB,   satSagSliderC);
 		auto& sVar  = pick (varSliderA,      varSliderB,      varSliderC);
 
-		auto sliderRow = area.removeFromTop (sliderH);
+		auto sliderRow = contentArea.removeFromTop (sliderH);
 		drive.setBounds (sliderRow.removeFromLeft (sliderW));
 		drive.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		girth.setBounds (sliderRow.removeFromLeft (sliderW));
 		girth.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		sMod.setBounds (sliderRow.removeFromLeft (sliderW));
 		sMod.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		sBias.setBounds (sliderRow.removeFromLeft (sliderW));
 		sBias.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		sSag.setBounds (sliderRow.removeFromLeft (sliderW));
 		sSag.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		series.setBounds (sliderRow.removeFromLeft (sliderW));
 		series.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		sVar.setBounds (sliderRow.removeFromLeft (sliderW));
 		sVar.setVisible (true);
-		area.removeFromTop (gap);
+		contentArea.removeFromTop (gap);
 
 		// Delay slider (read-only, driven by ALIGN)
 		auto& delayS = pick (delaySliderA, delaySliderB, delaySliderC);
-		sliderRow = area.removeFromTop (sliderH);
+		sliderRow = contentArea.removeFromTop (sliderH);
 		delayS.setBounds (sliderRow.removeFromLeft (sliderW));
 		delayS.setVisible (true);
-		area.removeFromTop (comboLabelGap2 + gap * 2);
 
 		// Checkbox: INV + EXP
-		auto checkArea = area.removeFromTop (checkH);
 		constexpr int valuePadPx2 = 8;
 		const int invW = sliderW;
 		const int expX = checkArea.getX() + sliderW + valuePadPx2;
