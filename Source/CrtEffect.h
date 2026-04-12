@@ -238,7 +238,7 @@ public:
 private:
     //-- tunable constants ---------------------------------------------
     static constexpr float kDistortion      = 0.02f;   // barrel curvature
-    static constexpr float kChromaticSpread = 0.010f;  // radial R/B spread (UV units)
+    static constexpr float kChromaticSpread = 0.0045f; // radial R/B spread (UV units)
     static constexpr float kNoise        = 0.10f;      // noise intensity
     static constexpr float kScanline     = 0.18f;      // scanline dim %
     static constexpr float kVignetteStr  = 0.30f;      // edge darkening
