@@ -266,6 +266,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamExpThreshA, "Exp Thresh A",
 		juce::NormalisableRange<float> (kExpThreshMin, kExpThreshMax, 0.1f), kExpThreshDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamExpKneeA, "Exp Knee A",
+		juce::NormalisableRange<float> (kExpKneeMin, kExpKneeMax, 0.1f), kExpKneeDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpAtkA, "Exp Atk A",
 		juce::NormalisableRange<float> (kExpAtkMin, kExpAtkMax, 0.01f, 0.3f), kExpAtkDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -391,6 +394,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamExpThreshB, "Exp Thresh B",
 		juce::NormalisableRange<float> (kExpThreshMin, kExpThreshMax, 0.1f), kExpThreshDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamExpKneeB, "Exp Knee B",
+		juce::NormalisableRange<float> (kExpKneeMin, kExpKneeMax, 0.1f), kExpKneeDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpAtkB, "Exp Atk B",
 		juce::NormalisableRange<float> (kExpAtkMin, kExpAtkMax, 0.01f, 0.3f), kExpAtkDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -515,6 +521,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpThreshC, "Exp Thresh C",
 		juce::NormalisableRange<float> (kExpThreshMin, kExpThreshMax, 0.1f), kExpThreshDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamExpKneeC, "Exp Knee C",
+		juce::NormalisableRange<float> (kExpKneeMin, kExpKneeMax, 0.1f), kExpKneeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpAtkC, "Exp Atk C",
 		juce::NormalisableRange<float> (kExpAtkMin, kExpAtkMax, 0.01f, 0.3f), kExpAtkDefault));
@@ -781,18 +790,21 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pExpOrderA  = parameters.getRawParameterValue (kParamExpOrderA);
 	pExpRatioA  = parameters.getRawParameterValue (kParamExpRatioA);
 	pExpThreshA = parameters.getRawParameterValue (kParamExpThreshA);
+	pExpKneeA   = parameters.getRawParameterValue (kParamExpKneeA);
 	pExpAtkA    = parameters.getRawParameterValue (kParamExpAtkA);
 	pExpRelA    = parameters.getRawParameterValue (kParamExpRelA);
 	pExpB       = parameters.getRawParameterValue (kParamExpB);
 	pExpOrderB  = parameters.getRawParameterValue (kParamExpOrderB);
 	pExpRatioB  = parameters.getRawParameterValue (kParamExpRatioB);
 	pExpThreshB = parameters.getRawParameterValue (kParamExpThreshB);
+	pExpKneeB   = parameters.getRawParameterValue (kParamExpKneeB);
 	pExpAtkB    = parameters.getRawParameterValue (kParamExpAtkB);
 	pExpRelB    = parameters.getRawParameterValue (kParamExpRelB);
 	pExpC       = parameters.getRawParameterValue (kParamExpC);
 	pExpOrderC  = parameters.getRawParameterValue (kParamExpOrderC);
 	pExpRatioC  = parameters.getRawParameterValue (kParamExpRatioC);
 	pExpThreshC = parameters.getRawParameterValue (kParamExpThreshC);
+	pExpKneeC   = parameters.getRawParameterValue (kParamExpKneeC);
 	pExpAtkC    = parameters.getRawParameterValue (kParamExpAtkC);
 	pExpRelC    = parameters.getRawParameterValue (kParamExpRelC);
 
@@ -1854,6 +1866,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	const bool  expPost    = loadRelaxedBool (pick (pExpOrderA,  pExpOrderB,  pExpOrderC));
 	const float expRatio   = loadRelaxed     (pick (pExpRatioA,  pExpRatioB,  pExpRatioC));
 	const float expThreshDb = loadRelaxed    (pick (pExpThreshA, pExpThreshB, pExpThreshC));
+	const float expKneeDb  = loadRelaxed     (pick (pExpKneeA,   pExpKneeB,   pExpKneeC));
 	const float expAtkMs   = loadRelaxed     (pick (pExpAtkA,    pExpAtkB,    pExpAtkC));
 	const float expRelMs   = loadRelaxed     (pick (pExpRelA,    pExpRelB,    pExpRelC));
 	const auto model = static_cast<SatEngine::Model> (
@@ -2055,11 +2068,11 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 		if (!expanderEnabled || expRatio <= 1.01f)
 			return;
 
-		const float threshLin = fastDecibelsToGain (expThreshDb);
 		const float sr = (float) currentSampleRate;
 		const float attCoeff = std::exp (-1.0f / (sr * juce::jmax (0.00001f, expAtkMs * 0.001f)));
 		const float relCoeff = std::exp (-1.0f / (sr * juce::jmax (0.001f,   expRelMs * 0.001f)));
 		const float ratio = juce::jlimit (1.0f, 10.0f, expRatio);
+		const float kneeDb = juce::jlimit (kExpKneeMin, kExpKneeMax, expKneeDb);
 		const float slope = ratio - 1.0f;  // downward expansion slope in dB below threshold
 
 		const int chCount = juce::jmin (numChannels, 2);
@@ -2074,8 +2087,8 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			for (int ch = 0; ch < chCount; ++ch)
 				peak = juce::jmax (peak, std::abs (channelData[ch][i]));
 
-			// Envelope follower (per-channel linked)
-			float& env = state.expEnv[0];
+			// Envelope follower (stereo-linked)
+			float& env = state.expLinkedEnv;
 			if (peak > env)
 				env = attCoeff * env + (1.0f - attCoeff) * peak;
 			else
@@ -2083,13 +2096,33 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 
 			// Below-threshold expansion gain
 			float gr = 1.0f;
-			if (env < threshLin && env > 1.0e-12f)
+			if (env > 1.0e-12f)
 			{
-				// dB domain: gainReduction = slope * (threshDb - envDb)
-				// Linear approximation via fast log/exp
 				const float envDb = 20.0f * std::log10 (env);
-				const float reductionDb = juce::jlimit (0.0f, 120.0f,
-				                                        slope * (expThreshDb - envDb));
+				float reductionDb = 0.0f;
+
+				if (kneeDb <= 1.0e-6f)
+				{
+					if (envDb < expThreshDb)
+						reductionDb = slope * (expThreshDb - envDb);
+				}
+				else
+				{
+					const float deltaBelowThreshDb = expThreshDb - envDb;
+					const float halfKneeDb = 0.5f * kneeDb;
+
+					if (deltaBelowThreshDb >= halfKneeDb)
+					{
+						reductionDb = slope * deltaBelowThreshDb;
+					}
+					else if (deltaBelowThreshDb > -halfKneeDb)
+					{
+						const float kneePos = deltaBelowThreshDb + halfKneeDb; // 0..kneeDb
+						reductionDb = slope * (kneePos * kneePos) / (2.0f * kneeDb);
+					}
+				}
+
+				reductionDb = juce::jlimit (0.0f, 120.0f, reductionDb);
 				gr = fastDecibelsToGain (-reductionDb);
 			}
 

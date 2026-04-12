@@ -142,8 +142,9 @@ Per-loader alignment delay. In the current UI this is shown as a readout and is 
 Per-loader expander accessible from the `EXP` button. Parameters:
 
 - **ORDER**: `PRE` (before saturation) or `POST` (after saturation)
-- **RATIO** (`1:1` to `1:10`): expansion ratio
 - **THRESH** (`-60.0` to `0.0 dB`): gate threshold
+- **RATIO** (`1:1` to `1:10`): expansion ratio
+- **KNEE** (`0.0` to `12.0 dB`): softens the transition around threshold; `0.0 dB` keeps the original hard-knee behavior
 - **ATK** (`0.01` to `100.00 ms`): envelope attack time
 - **REL** (`5.00` to `2000.00 ms`): envelope release time
 

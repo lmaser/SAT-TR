@@ -4666,6 +4666,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	const auto& threshParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpThreshA
 	                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpThreshB
 	                                             : SATTRAudioProcessor::kParamExpThreshC;
+	const auto& kneeParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpKneeA
+	                        : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpKneeB
+	                                           : SATTRAudioProcessor::kParamExpKneeC;
 	const auto& atkParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpAtkA
 	                       : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpAtkB
 	                                          : SATTRAudioProcessor::kParamExpAtkC;
@@ -4676,6 +4679,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	const bool  currentOrder  = audioProcessor.getValueTreeState().getRawParameterValue (orderParamId)->load() >= 0.5f;
 	const float currentRatio  = audioProcessor.getValueTreeState().getRawParameterValue (ratioParamId)->load();
 	const float currentThresh = audioProcessor.getValueTreeState().getRawParameterValue (threshParamId)->load();
+	const float currentKnee   = audioProcessor.getValueTreeState().getRawParameterValue (kneeParamId)->load();
 	const float currentAtk    = audioProcessor.getValueTreeState().getRawParameterValue (atkParamId)->load();
 	const float currentRel    = audioProcessor.getValueTreeState().getRawParameterValue (relParamId)->load();
 
@@ -4761,19 +4765,21 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	bodyContent->addAndMakeVisible (orderLabel);
 
 	// -- TextEditors (added to aw so getTextEditor works, but re-parented to body) --
-	aw->addTextEditor ("ratio",  juce::String (currentRatio, 1), juce::String());
 	aw->addTextEditor ("thresh", juce::String (currentThresh, 1), juce::String());
+	aw->addTextEditor ("ratio",  juce::String (currentRatio, 1), juce::String());
+	aw->addTextEditor ("knee",   juce::String (currentKnee, 1), juce::String());
 	aw->addTextEditor ("atk",    juce::String (currentAtk, 2), juce::String());
 	aw->addTextEditor ("rel",    juce::String (currentRel, 2), juce::String());
 
 	// Re-parent text editors into body
-	for (auto* edId : { "ratio", "thresh", "atk", "rel" })
+	for (auto* edId : { "thresh", "ratio", "knee", "atk", "rel" })
 		if (auto* te = aw->getTextEditor (edId))
 			bodyContent->addChildComponent (te);
 
 	// Suffix/unit labels
 	ResetLabel* ratioSuffix  = nullptr;  juce::Label* ratioUnit  = nullptr;
 	ResetLabel* threshSuffix = nullptr;  juce::Label* threshUnit = nullptr;
+	ResetLabel* kneeSuffix   = nullptr;  juce::Label* kneeUnit   = nullptr;
 	ResetLabel* atkSuffix    = nullptr;  juce::Label* atkUnit    = nullptr;
 	ResetLabel* relSuffix    = nullptr;  juce::Label* relUnit    = nullptr;
 
@@ -4786,8 +4792,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			te->setFont (f);
 			te->applyFontToAllText (f);
 			const juce::String id (editorId);
-			const int maxChars = (id == "ratio"  ? 4
-			                    : id == "thresh" ? 5
+			const int maxChars = (id == "thresh" ? 5
+			                    : id == "ratio"  ? 4
+			                    : id == "knee"   ? 4
 			                    : id == "atk"    ? 6
 			                                       : 7);
 			const juce::String allowed = (id == "thresh") ? "0123456789.-"
@@ -4815,33 +4822,39 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		}
 	};
 
-	setupField ("ratio",  "RATIO",  ":1", ratioSuffix,  ratioUnit);
 	setupField ("thresh", "THRESH", "dB", threshSuffix, threshUnit);
+	setupField ("ratio",  "RATIO",  ":1", ratioSuffix,  ratioUnit);
+	setupField ("knee",   "KNEE",   "dB", kneeSuffix,   kneeUnit);
 	setupField ("atk",    "ATK",    "ms", atkSuffix,    atkUnit);
 	setupField ("rel",    "REL",    "ms", relSuffix,    relUnit);
 
 	// -- Bars --
-	const float ratioNorm  = (currentRatio - SATTRAudioProcessor::kExpRatioMin)
-	                       / (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin);
 	const float threshNorm = (currentThresh - SATTRAudioProcessor::kExpThreshMin)
 	                       / (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin);
+	const float ratioNorm  = (currentRatio - SATTRAudioProcessor::kExpRatioMin)
+	                       / (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin);
+	const float kneeNorm   = (currentKnee - SATTRAudioProcessor::kExpKneeMin)
+	                       / (SATTRAudioProcessor::kExpKneeMax - SATTRAudioProcessor::kExpKneeMin);
 
 	auto atkNormRange = juce::NormalisableRange<float> (SATTRAudioProcessor::kExpAtkMin, SATTRAudioProcessor::kExpAtkMax, 0.01f, 0.3f);
 	auto relNormRange = juce::NormalisableRange<float> (SATTRAudioProcessor::kExpRelMin, SATTRAudioProcessor::kExpRelMax, 0.01f, 0.3f);
 	const float atkNorm = atkNormRange.convertTo0to1 (currentAtk);
 	const float relNorm = relNormRange.convertTo0to1 (currentRel);
 
-	auto* ratioBar  = new PromptBar (scheme, ratioNorm,  0.0f);
 	auto* threshBar = new PromptBar (scheme, threshNorm, 1.0f);
+	auto* ratioBar  = new PromptBar (scheme, ratioNorm,  0.0f);
+	auto* kneeBar   = new PromptBar (scheme, kneeNorm,   0.0f);
 	auto* atkBar    = new PromptBar (scheme, atkNorm, atkNormRange.convertTo0to1 (SATTRAudioProcessor::kExpAtkDefault));
 	auto* relBar    = new PromptBar (scheme, relNorm, relNormRange.convertTo0to1 (SATTRAudioProcessor::kExpRelDefault));
-	bodyContent->addAndMakeVisible (ratioBar);
 	bodyContent->addAndMakeVisible (threshBar);
+	bodyContent->addAndMakeVisible (ratioBar);
+	bodyContent->addAndMakeVisible (kneeBar);
 	bodyContent->addAndMakeVisible (atkBar);
 	bodyContent->addAndMakeVisible (relBar);
 
-	if (ratioSuffix  != nullptr) ratioSuffix->pairedBar  = ratioBar;
 	if (threshSuffix != nullptr) threshSuffix->pairedBar = threshBar;
+	if (ratioSuffix  != nullptr) ratioSuffix->pairedBar  = ratioBar;
+	if (kneeSuffix   != nullptr) kneeSuffix->pairedBar   = kneeBar;
 	if (atkSuffix    != nullptr) atkSuffix->pairedBar    = atkBar;
 	if (relSuffix    != nullptr) relSuffix->pairedBar    = relBar;
 
@@ -4866,8 +4879,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		int formatDecimals = 0;
 	};
 
-	const EnvPromptNumericSpec ratioSpec  { false, 2, 1, SATTRAudioProcessor::kExpRatioMin,  SATTRAudioProcessor::kExpRatioMax,  1 };
 	const EnvPromptNumericSpec threshSpec { true,  2, 1, SATTRAudioProcessor::kExpThreshMin, SATTRAudioProcessor::kExpThreshMax, 1 };
+	const EnvPromptNumericSpec ratioSpec  { false, 2, 1, SATTRAudioProcessor::kExpRatioMin,  SATTRAudioProcessor::kExpRatioMax,  1 };
+	const EnvPromptNumericSpec kneeSpec   { false, 2, 1, SATTRAudioProcessor::kExpKneeMin,   SATTRAudioProcessor::kExpKneeMax,   1 };
 	const EnvPromptNumericSpec atkSpec    { false, 3, 2, SATTRAudioProcessor::kExpAtkMin,    SATTRAudioProcessor::kExpAtkMax,   2 };
 	const EnvPromptNumericSpec relSpec    { false, 4, 2, SATTRAudioProcessor::kExpRelMin,    SATTRAudioProcessor::kExpRelMax,   2 };
 
@@ -4926,8 +4940,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		return out;
 	};
 
-	auto* ratioApvts  = audioProcessor.getValueTreeState().getParameter (ratioParamId);
 	auto* threshApvts = audioProcessor.getValueTreeState().getParameter (threshParamId);
+	auto* ratioApvts  = audioProcessor.getValueTreeState().getParameter (ratioParamId);
+	auto* kneeApvts   = audioProcessor.getValueTreeState().getParameter (kneeParamId);
 	auto* orderApvts  = audioProcessor.getValueTreeState().getParameter (orderParamId);
 	auto* atkApvts    = audioProcessor.getValueTreeState().getParameter (atkParamId);
 	auto* relApvts    = audioProcessor.getValueTreeState().getParameter (relParamId);
@@ -4977,6 +4992,18 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		*syncing = false;
 	};
 
+	kneeBar->onValueChanged = [aw, syncing, kneeApvts] (float v01)
+	{
+		if (*syncing) return;
+		*syncing = true;
+		const float knee = SATTRAudioProcessor::kExpKneeMin
+		                 + v01 * (SATTRAudioProcessor::kExpKneeMax - SATTRAudioProcessor::kExpKneeMin);
+		if (auto* te = aw->getTextEditor ("knee"))
+		{ te->setText (juce::String (knee, 1), juce::sendNotification); te->selectAll(); }
+		if (kneeApvts) kneeApvts->setValueNotifyingHost (kneeApvts->convertTo0to1 (knee));
+		*syncing = false;
+	};
+
 	atkBar->onValueChanged = [aw, syncing, atkApvts, atkNormRange] (float v01)
 	{
 		if (*syncing) return;
@@ -5002,15 +5029,16 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	// -- Layout: positions body content inside viewport --
 	auto layoutBody = [aw, viewport, bodyContent,
 	                   orderLegend, orderLabel,
-	                   ratioSuffix, threshSuffix, atkSuffix, relSuffix,
-	                   ratioUnit, threshUnit, atkUnit, relUnit,
-	                   ratioBar, threshBar, atkBar, relBar] ()
+	                   threshSuffix, ratioSuffix, kneeSuffix, atkSuffix, relSuffix,
+	                   threshUnit, ratioUnit, kneeUnit, atkUnit, relUnit,
+	                   threshBar, ratioBar, kneeBar, atkBar, relBar] ()
 	{
-		auto* ratioTe  = aw->getTextEditor ("ratio");
 		auto* threshTe = aw->getTextEditor ("thresh");
+		auto* ratioTe  = aw->getTextEditor ("ratio");
+		auto* kneeTe   = aw->getTextEditor ("knee");
 		auto* atkTe    = aw->getTextEditor ("atk");
 		auto* relTe    = aw->getTextEditor ("rel");
-		if (!ratioTe || !threshTe || !atkTe || !relTe) return;
+		if (!threshTe || !ratioTe || !kneeTe || !atkTe || !relTe) return;
 
 		// Position viewport between top padding and buttons
 		layoutAlertWindowButtons (*aw);
@@ -5022,22 +5050,26 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		viewport->setBounds (vpX, vpTop, vpW, vpH);
 
 		// Metrics for body content (coordinates relative to bodyContent, not aw)
-		const int rowH    = ratioTe->getHeight();
+		const int rowH    = threshTe->getHeight();
 		const int barH    = juce::jmax (8, rowH / 3);
 		const int barGap  = juce::jmax (2, rowH / 8);
 		const int rowTotal = rowH + barGap + barH;
 		const int gap     = juce::jmax (3, rowH / 5);
 		constexpr int kBodyInsetX = 5;
 		const int contentW = vpW;
-		const int innerW = juce::jmax (40, contentW - kBodyInsetX * 2);
+		const int scrollReserve = viewport->getScrollBarThickness() + 8;
+		const int contentLeft = kBodyInsetX;
+		const int contentRight = juce::jmax (contentLeft + 40, contentW - kBodyInsetX - scrollReserve);
+		const int innerW = juce::jmax (40, contentRight - contentLeft);
 		const auto& font = ratioTe->getFont();
 		const int spaceW = juce::jmax (2, stringWidth (font, " "));
 
-		const int barX = kBodyInsetX;
+		const int barX = contentLeft;
 		const int barW = innerW;
-		const int ratioEditorW  = juce::jlimit (24, 160, stringWidth (font, juce::String (SATTRAudioProcessor::kExpRatioMax, 1)) + 16);
 		const int threshEditorW = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpThreshMin, 1)),
 		                                                             stringWidth (font, juce::String (SATTRAudioProcessor::kExpThreshMax, 1))) + 16);
+		const int ratioEditorW  = juce::jlimit (24, 160, stringWidth (font, juce::String (SATTRAudioProcessor::kExpRatioMax, 1)) + 16);
+		const int kneeEditorW   = juce::jlimit (24, 160, stringWidth (font, juce::String (SATTRAudioProcessor::kExpKneeMax, 1)) + 16);
 		const int atkEditorW    = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpAtkMin, 2)),
 		                                                             stringWidth (font, juce::String (SATTRAudioProcessor::kExpAtkMax, 2))) + 16);
 		const int relEditorW    = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpRelMin, 2)),
@@ -5052,7 +5084,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			const int legendW = stringWidth (font, "ORDER:") + 4;
 			const int valueW  = stringWidth (font, "POST") + 8;
 			const int pairW   = legendW + spaceW + valueW;
-			const int pairX   = kBodyInsetX + juce::jmax (0, (innerW - pairW) / 2);
+			const int pairX   = contentLeft + juce::jmax (0, (innerW - pairW) / 2);
 			orderLegend->setBounds (pairX, y, legendW, rowH);
 			orderLabel->setBounds (pairX + legendW + spaceW, y, valueW, rowH);
 		}
@@ -5066,7 +5098,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			const int labelW = stringWidth (suffix->getFont(), suffix->getText()) + 2;
 			const int unitW  = (unitLabel != nullptr) ? stringWidth (font, unitLabel->getText()) + 2 : 0;
 			const int groupW = labelW + labelGap + editorW + (unitLabel != nullptr ? unitGapPx + unitW : 0);
-			const int blockLeft = kBodyInsetX + juce::jmax (0, (innerW - groupW) / 2);
+			const int blockLeft = contentLeft + juce::jmax (0, (innerW - groupW) / 2);
 
 			suffix->setBounds (blockLeft, rowY, labelW, rowH);
 			const int teX = blockLeft + labelW + labelGap;
@@ -5080,11 +5112,12 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			bar->setBounds (barX, rowY + rowH + barGap, barW, barH);
 		};
 
-		placeRow (ratioTe,  ratioSuffix,  ratioUnit,  ratioBar,  y, ratioEditorW);
-		y += rowTotal + gap;
 		placeRow (threshTe, threshSuffix, threshUnit, threshBar, y, threshEditorW);
 		y += rowTotal + gap;
-
+		placeRow (ratioTe,  ratioSuffix,  ratioUnit,  ratioBar,  y, ratioEditorW);
+		y += rowTotal + gap;
+		placeRow (kneeTe,   kneeSuffix,   kneeUnit,   kneeBar,   y, kneeEditorW);
+		y += rowTotal + gap;
 		placeRow (atkTe, atkSuffix, atkUnit, atkBar, y, atkEditorW);
 		y += rowTotal + gap;
 		placeRow (relTe, relSuffix, relUnit, relBar, y, relEditorW);
@@ -5107,6 +5140,14 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		if (*syncing || !bar) return;
 		bar->value = (raw - SATTRAudioProcessor::kExpThreshMin) / (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin);
 		if (threshApvts) threshApvts->setValueNotifyingHost (threshApvts->convertTo0to1 (raw));
+		bar->repaint();
+	};
+
+	auto textToBarKnee = [syncing, kneeApvts] (float raw, PromptBar* bar)
+	{
+		if (*syncing || !bar) return;
+		bar->value = (raw - SATTRAudioProcessor::kExpKneeMin) / (SATTRAudioProcessor::kExpKneeMax - SATTRAudioProcessor::kExpKneeMin);
+		if (kneeApvts) kneeApvts->setValueNotifyingHost (kneeApvts->convertTo0to1 (raw));
 		bar->repaint();
 	};
 
@@ -5150,12 +5191,15 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		layoutBody();
 	};
 
-	if (auto* te = aw->getTextEditor ("ratio"))
-		te->onTextChange = [te, ratioBar, ratioSpec, handleEnvPromptText, textToBarRatio] () mutable
-		{ handleEnvPromptText (te, ratioBar, ratioSpec, textToBarRatio); };
 	if (auto* te = aw->getTextEditor ("thresh"))
 		te->onTextChange = [te, threshBar, threshSpec, handleEnvPromptText, textToBarThresh] () mutable
 		{ handleEnvPromptText (te, threshBar, threshSpec, textToBarThresh); };
+	if (auto* te = aw->getTextEditor ("ratio"))
+		te->onTextChange = [te, ratioBar, ratioSpec, handleEnvPromptText, textToBarRatio] () mutable
+		{ handleEnvPromptText (te, ratioBar, ratioSpec, textToBarRatio); };
+	if (auto* te = aw->getTextEditor ("knee"))
+		te->onTextChange = [te, kneeBar, kneeSpec, handleEnvPromptText, textToBarKnee] () mutable
+		{ handleEnvPromptText (te, kneeBar, kneeSpec, textToBarKnee); };
 	if (auto* te = aw->getTextEditor ("atk"))
 		te->onTextChange = [te, atkBar, atkSpec, handleEnvPromptText, textToBarAtk] () mutable
 		{ handleEnvPromptText (te, atkBar, atkSpec, textToBarAtk); };
@@ -5170,8 +5214,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	layoutBody();
 
 	const auto& kExpFont = kBoldFont40();
-	preparePromptTextEditor (*aw, "ratio",  scheme.bg, scheme.text, scheme.fg, kExpFont, false);
 	preparePromptTextEditor (*aw, "thresh", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+	preparePromptTextEditor (*aw, "ratio",  scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+	preparePromptTextEditor (*aw, "knee",   scheme.bg, scheme.text, scheme.fg, kExpFont, false);
 	preparePromptTextEditor (*aw, "atk",    scheme.bg, scheme.text, scheme.fg, kExpFont, false);
 	preparePromptTextEditor (*aw, "rel",    scheme.bg, scheme.text, scheme.fg, kExpFont, false);
 	layoutBody();
@@ -5198,8 +5243,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	// Final styling pass
 	{
-		preparePromptTextEditor (*aw, "ratio",  scheme.bg, scheme.text, scheme.fg, kExpFont, false);
 		preparePromptTextEditor (*aw, "thresh", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+		preparePromptTextEditor (*aw, "ratio",  scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+		preparePromptTextEditor (*aw, "knee",   scheme.bg, scheme.text, scheme.fg, kExpFont, false);
 		preparePromptTextEditor (*aw, "atk",    scheme.bg, scheme.text, scheme.fg, kExpFont, false);
 		preparePromptTextEditor (*aw, "rel",    scheme.bg, scheme.text, scheme.fg, kExpFont, false);
 		layoutBody();
@@ -5213,8 +5259,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 					if (unit != nullptr) unit->setFont (te->getFont());
 				}
 		};
-		syncFonts (ratioSuffix,  ratioUnit,  "ratio");
 		syncFonts (threshSuffix, threshUnit, "thresh");
+		syncFonts (ratioSuffix,  ratioUnit,  "ratio");
+		syncFonts (kneeSuffix,   kneeUnit,   "knee");
 		syncFonts (atkSuffix,    atkUnit,    "atk");
 		syncFonts (relSuffix,    relUnit,    "rel");
 		layoutBody();
@@ -5230,15 +5277,15 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	aw->enterModalState (true,
 		juce::ModalCallbackFunction::create (
-			[safeThis, aw, orderState, ratioBar, threshBar, atkBar, relBar,
+			[safeThis, aw, orderState, threshBar, ratioBar, kneeBar, atkBar, relBar,
 			 orderLegend, orderLabel,
-			 ratioSuffix, threshSuffix, atkSuffix, relSuffix,
-			 ratioUnit, threshUnit, atkUnit, relUnit,
+			 threshSuffix, ratioSuffix, kneeSuffix, atkSuffix, relSuffix,
+			 threshUnit, ratioUnit, kneeUnit, atkUnit, relUnit,
 			 viewport,
 			 orderHandler,
-			 savedOrder = currentOrder, savedRatio = currentRatio, savedThresh = currentThresh,
+			 savedOrder = currentOrder, savedThresh = currentThresh, savedRatio = currentRatio, savedKnee = currentKnee,
 			 savedAtk = currentAtk, savedRel = currentRel,
-			 orderParamId, ratioParamId, threshParamId, atkParamId, relParamId,
+			 orderParamId, threshParamId, ratioParamId, kneeParamId, atkParamId, relParamId,
 			 loaderIndex] (int result) mutable
 		{
 			std::unique_ptr<juce::AlertWindow> killer (aw);
@@ -5260,10 +5307,12 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 				auto& vts = safeThis->audioProcessor.getValueTreeState();
 				if (auto* p = vts.getParameter (orderParamId))
 					p->setValueNotifyingHost (savedOrder ? 1.0f : 0.0f);
-				if (auto* p = vts.getParameter (ratioParamId))
-					p->setValueNotifyingHost (p->convertTo0to1 (savedRatio));
 				if (auto* p = vts.getParameter (threshParamId))
 					p->setValueNotifyingHost (p->convertTo0to1 (savedThresh));
+				if (auto* p = vts.getParameter (ratioParamId))
+					p->setValueNotifyingHost (p->convertTo0to1 (savedRatio));
+				if (auto* p = vts.getParameter (kneeParamId))
+					p->setValueNotifyingHost (p->convertTo0to1 (savedKnee));
 				if (auto* p = vts.getParameter (atkParamId))
 					p->setValueNotifyingHost (p->convertTo0to1 (savedAtk));
 				if (auto* p = vts.getParameter (relParamId))
@@ -5272,17 +5321,23 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			else
 			{
 				// OK: update tooltip
-				const float newRatio = juce::jlimit (SATTRAudioProcessor::kExpRatioMin,
-				                                     SATTRAudioProcessor::kExpRatioMax,
-				                                     SATTRAudioProcessor::kExpRatioMin
-				                                     + ratioBar->value * (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin));
 				const float newThresh = juce::jlimit (SATTRAudioProcessor::kExpThreshMin,
 				                                      SATTRAudioProcessor::kExpThreshMax,
 				                                      SATTRAudioProcessor::kExpThreshMin
 				                                      + threshBar->value * (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin));
-				auto tip = juce::String (*orderState ? "POST" : "PRE") + " | 1:"
-				         + juce::String (juce::roundToInt (newRatio))
-				         + " | " + juce::String (juce::roundToInt (newThresh)) + " dB";
+				const float newRatio = juce::jlimit (SATTRAudioProcessor::kExpRatioMin,
+				                                     SATTRAudioProcessor::kExpRatioMax,
+				                                     SATTRAudioProcessor::kExpRatioMin
+				                                     + ratioBar->value * (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin));
+				const float newKnee = juce::jlimit (SATTRAudioProcessor::kExpKneeMin,
+				                                    SATTRAudioProcessor::kExpKneeMax,
+				                                    SATTRAudioProcessor::kExpKneeMin
+				                                    + kneeBar->value * (SATTRAudioProcessor::kExpKneeMax - SATTRAudioProcessor::kExpKneeMin));
+				auto tip = juce::String (*orderState ? "POST" : "PRE")
+				         + " | " + juce::String (newThresh, 1) + " dB"
+				         + " | 1:" + juce::String (newRatio, 1);
+				if (newKnee > 0.05f)
+					tip += " | K " + juce::String (newKnee, 1) + " dB";
 				auto& disp = loaderIndex == 0 ? safeThis->expDisplayA
 				           : (loaderIndex == 1 ? safeThis->expDisplayB : safeThis->expDisplayC);
 				disp.setTooltip (tip);

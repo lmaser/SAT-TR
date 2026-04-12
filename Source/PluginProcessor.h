@@ -57,6 +57,7 @@ public:
 	static constexpr const char* kParamExpOrderA    = "exp_order_a";   // 0=PRE, 1=POST
 	static constexpr const char* kParamExpRatioA    = "exp_ratio_a";
 	static constexpr const char* kParamExpThreshA   = "exp_thresh_a";
+	static constexpr const char* kParamExpKneeA     = "exp_knee_a";
 	static constexpr const char* kParamExpAtkA      = "exp_atk_a";
 	static constexpr const char* kParamExpRelA      = "exp_rel_a";
 
@@ -103,6 +104,7 @@ public:
 	static constexpr const char* kParamExpOrderB    = "exp_order_b";
 	static constexpr const char* kParamExpRatioB    = "exp_ratio_b";
 	static constexpr const char* kParamExpThreshB   = "exp_thresh_b";
+	static constexpr const char* kParamExpKneeB     = "exp_knee_b";
 	static constexpr const char* kParamExpAtkB      = "exp_atk_b";
 	static constexpr const char* kParamExpRelB      = "exp_rel_b";
 
@@ -149,6 +151,7 @@ public:
 	static constexpr const char* kParamExpOrderC    = "exp_order_c";
 	static constexpr const char* kParamExpRatioC    = "exp_ratio_c";
 	static constexpr const char* kParamExpThreshC   = "exp_thresh_c";
+	static constexpr const char* kParamExpKneeC     = "exp_knee_c";
 	static constexpr const char* kParamExpAtkC      = "exp_atk_c";
 	static constexpr const char* kParamExpRelC      = "exp_rel_c";
 
@@ -315,6 +318,9 @@ public:
 	static constexpr float kExpThreshMin             = -60.0f; // dB
 	static constexpr float kExpThreshMax             = 0.0f;   // dB
 	static constexpr float kExpThreshDefault          = 0.0f;  // 0 dB = off
+	static constexpr float kExpKneeMin               = 0.0f;   // dB, 0 = hard knee
+	static constexpr float kExpKneeMax               = 12.0f;  // dB
+	static constexpr float kExpKneeDefault           = 0.0f;
 	static constexpr float kExpAtkMin                = 0.01f;  // ms
 	static constexpr float kExpAtkMax                = 100.0f; // ms
 	static constexpr float kExpAtkDefault            = 0.1f;   // ms
@@ -568,8 +574,8 @@ public:
 		// Saturation engine state
 		SatEngine::State satState;
 
-		// Expander envelope follower state (per-channel)
-		float expEnv[2] = { 0.0f, 0.0f };
+		// Expander envelope follower state (stereo-linked)
+		float expLinkedEnv = 0.0f;
 
 		// Delay line for phase alignment (max ~0.5s)
 		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> delayLine { 96000 };
@@ -731,18 +737,21 @@ private:
 	std::atomic<float>* pExpOrderA  = nullptr;
 	std::atomic<float>* pExpRatioA  = nullptr;
 	std::atomic<float>* pExpThreshA = nullptr;
+	std::atomic<float>* pExpKneeA   = nullptr;
 	std::atomic<float>* pExpAtkA    = nullptr;
 	std::atomic<float>* pExpRelA    = nullptr;
 	std::atomic<float>* pExpB       = nullptr;
 	std::atomic<float>* pExpOrderB  = nullptr;
 	std::atomic<float>* pExpRatioB  = nullptr;
 	std::atomic<float>* pExpThreshB = nullptr;
+	std::atomic<float>* pExpKneeB   = nullptr;
 	std::atomic<float>* pExpAtkB    = nullptr;
 	std::atomic<float>* pExpRelB    = nullptr;
 	std::atomic<float>* pExpC       = nullptr;
 	std::atomic<float>* pExpOrderC  = nullptr;
 	std::atomic<float>* pExpRatioC  = nullptr;
 	std::atomic<float>* pExpThreshC = nullptr;
+	std::atomic<float>* pExpKneeC   = nullptr;
 	std::atomic<float>* pExpAtkC    = nullptr;
 	std::atomic<float>* pExpRelC    = nullptr;
 
