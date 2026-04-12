@@ -3025,6 +3025,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	const bool isHpLp  = (stype == BarSlider::Type::HpFreq || stype == BarSlider::Type::LpFreq);
 	const bool isIn    = (stype == BarSlider::Type::Input);
 	const bool isOut   = (stype == BarSlider::Type::Output || stype == BarSlider::Type::GlobalOutput);
+	const bool isLimThresh = (stype == BarSlider::Type::LimThreshold);
 	const bool isTilt  = (stype == BarSlider::Type::Tilt);
 	const bool isSeries = (stype == BarSlider::Type::Series);
 	const bool isVar   = (stype == BarSlider::Type::Var);
@@ -3101,6 +3102,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	if (isHpLp)             { suffix = " Hz";          suffixShort = " Hz"; }
 	else if (isIn)          { suffix = " dB INPUT";    suffixShort = " dB"; }
 	else if (isOut)         { suffix = " dB OUTPUT";   suffixShort = " dB"; }
+	else if (isLimThresh)   { suffix = " dB THRESH";   suffixShort = " dB THRESH"; }
 	else if (isTilt)        { suffix = " dB TILT"; suffixShort = " dB"; }
 	else if (isSeries)      { suffix = "x SERIES";     suffixShort = "x"; }
 	else if (isVar)         { suffix = " % VAR";       suffixShort = " %"; }
@@ -3124,7 +3126,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	juce::String currentDisplay;
 	if (isHpLp)
 		currentDisplay = juce::String (s.getValue(), 3);
-	else if (isIn || isOut)
+	else if (isIn || isOut || isLimThresh)
 		currentDisplay = juce::String (s.getValue(), 1);
 	else if (isTilt)
 		currentDisplay = juce::String (s.getValue(), 2);
@@ -3173,6 +3175,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		if (isHpLp)              worstCaseText = "20000.000";
 		else if (isIn)           worstCaseText = "-100.0";
 		else if (isOut)          worstCaseText = "-100.0";
+		else if (isLimThresh)    worstCaseText = "-36.0";
 		else if (isTilt)         worstCaseText = "-6.00";
 		else if (isSeries)       worstCaseText = "6";
 		else if (isVar)          worstCaseText = "100.0";
@@ -3263,6 +3266,12 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		{
 			minVal = -100.0; maxVal = 24.0;
 			maxDecs = 1;     maxLen = 6;     // "-100.0"
+		}
+		else if (isLimThresh)
+		{
+			minVal = SATTRAudioProcessor::kLimThresholdMin;
+			maxVal = SATTRAudioProcessor::kLimThresholdMax;
+			maxDecs = 1;     maxLen = 5;     // "-36.0"
 		}
 		else if (isTilt)
 		{
