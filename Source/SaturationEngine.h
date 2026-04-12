@@ -508,7 +508,7 @@ struct MultibandSagResult
     float sagPostAir = 1.0f;
 };
 
-struct TapeCompState
+struct DynamicsCompState
 {
     float scLP  = 0.0f;
     float env   = 0.0f;
@@ -732,7 +732,7 @@ struct State
     // black box, so these states must not be shared across passes.
     ReactState react[kMaxSeries][2];
     float sagEnvelope[kMaxSeries][2] = {};
-    TapeCompState tapeComp[kMaxSeries][2];
+    DynamicsCompState dynamicsComp[kMaxSeries][2];
     ClipperPeakState clipperPeak[kMaxSeries][2];
     TriodeReactState triodeReact[kMaxSeries][2];
 
@@ -759,8 +759,8 @@ struct State
     EmphasisState emphasis[kMaxSeries][2];
 
     // ADAA states -- main waveshaper [series pass][channel]
-    adaa::TanhADAA wsAdaa[kMaxSeries][2];
     adaa::StableTanhADAA triodeAdaa[kMaxSeries][2];
+    adaa::StableTanhADAA transistorCoreAdaa[kMaxSeries][2];
     adaa::TapeTanhADAA tapeAdaa[kMaxSeries][2];
     adaa::ClipperADAA clipperAdaa[kMaxSeries][2];
     // GIRTH wavefolder ADAA [series pass][channel]
@@ -837,7 +837,7 @@ struct State
                 react[sp][ch].reset();
                 mbReact[sp][ch].reset();
                 sagEnvelope[sp][ch] = 0.0f;
-                tapeComp[sp][ch].reset();
+                dynamicsComp[sp][ch].reset();
                 clipperPeak[sp][ch].reset();
                 triodeReact[sp][ch].reset();
                 dcX[sp][ch] = dcY[sp][ch] = 0.0f;
@@ -848,8 +848,8 @@ struct State
                 tapeFlux[sp][ch] = 0.0f;
                 triodeBodyPreLP[sp][ch] = 0.0f;
                 triodeBodyPostLP[sp][ch] = 0.0f;
-                wsAdaa[sp][ch].reset();
                 triodeAdaa[sp][ch].reset();
+                transistorCoreAdaa[sp][ch].reset();
                 tapeAdaa[sp][ch].reset();
                 clipperAdaa[sp][ch].reset();
                 girthAdaa[sp][ch].reset();
@@ -902,10 +902,10 @@ struct State
                 fl (emphasis[sp][ch].preSh);
                 fl (emphasis[sp][ch].postHP);
                 fl (emphasis[sp][ch].postLP);
-                fl (tapeComp[sp][ch].scLP);
-                fl (tapeComp[sp][ch].env);
-                fl (tapeComp[sp][ch].hfEnv);
-                fl (tapeComp[sp][ch].gain);
+                fl (dynamicsComp[sp][ch].scLP);
+                fl (dynamicsComp[sp][ch].env);
+                fl (dynamicsComp[sp][ch].hfEnv);
+                fl (dynamicsComp[sp][ch].gain);
                 fl (clipperPeak[sp][ch].peakEnv);
                 fl (clipperPeak[sp][ch].bodyEnv);
                 fl (triodeReact[sp][ch].control);
@@ -1055,7 +1055,7 @@ namespace detail
     }
 } // namespace detail
 
-struct TapeCompResult
+struct DynamicsCompResult
 {
     float sample    = 0.0f;
     float driveLift = 1.0f;
@@ -1076,11 +1076,11 @@ struct TriodeReactResult
     float amount    = 0.0f;
 };
 
-inline TapeCompResult processTapeComp (float x, TapeCompState& st,
-                                       float react, float drive, float program,
-                                       float sr) noexcept
+inline DynamicsCompResult processTapeComp (float x, DynamicsCompState& st,
+                                           float react, float drive, float program,
+                                           float sr) noexcept
 {
-    TapeCompResult r;
+    DynamicsCompResult r;
     r.sample = x;
 
     if (react <= 0.0001f)
@@ -1150,11 +1150,11 @@ inline TapeCompResult processTapeComp (float x, TapeCompState& st,
     return r;
 }
 
-inline TapeCompResult processTransistorComp (float x, TapeCompState& st,
-                                             float react, float drive, float type,
-                                             float sr) noexcept
+inline DynamicsCompResult processTransistorComp (float x, DynamicsCompState& st,
+                                                 float react, float drive, float type,
+                                                 float sr) noexcept
 {
-    TapeCompResult r;
+    DynamicsCompResult r;
     r.sample = x;
 
     if (react <= 0.0001f)
@@ -1887,33 +1887,27 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     return s;
 }
 
-inline float getTransistorLevelTrim (float drive, float mod) noexcept
-{
-    juce::ignoreUnused (drive, mod);
-    return 1.0f;
-}
-
 // TRANSISTOR: common-emitter/common-source inspired black box.
 // MOD morphs BJT punch into softer FET behaviour while GIRTH/BODY relaxes
 // degeneration and lets more low-mid energy hit the nonlinear stage.
 inline float processTransistorStage (float x, float drive, float girth, float bias, float mod,
                                      float react, bool rawMode,
                                      State& state, int ch, float sr,
-                                     adaa::TanhADAA& satAdaa,
                                      adaa::ClipperADAA& clipAdaa) noexcept
 {
     const int sp = state.currentSeriesPass;
     auto& preHP = state.transistorPreHP[sp][ch];
     auto& preEdge = state.transistorPreEdge[sp][ch];
     auto& postLP = state.transistorPostLP[sp][ch];
-    auto& compState = state.tapeComp[sp][ch];
+    auto& compState = state.dynamicsComp[sp][ch];
+    auto& coreAdaa = state.transistorCoreAdaa[sp][ch];
 
     const float d = detail::clampF (drive, 0.0f, 1.0f);
     const float body = detail::clampF (girth, 0.0f, 1.0f);
     const float b = detail::clampF (bias, -1.0f, 1.0f);
     const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
-    const float bodyCurve = 1.0f - std::pow (1.0f - body, 1.55f);
-    juce::ignoreUnused (satAdaa);
+    const float bodyToneCurve = 1.0f - std::pow (1.0f - body, 1.85f);
+    const float bodyClipCurve = 1.0f - std::pow (1.0f - body, 1.10f);
     auto trackDbg = [] (float& dst, float v) noexcept
     {
         dst = std::max (dst, std::abs (v));
@@ -1922,8 +1916,8 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
     if (!rawMode)
     {
         const float hpHz = juce::jmap (type,
-                                       34.0f + bodyCurve * 14.0f,
-                                       22.0f + bodyCurve * 10.0f);
+                                       34.0f + bodyToneCurve * 18.0f,
+                                       22.0f + bodyToneCurve * 13.0f);
         const float hpC = detail::onePoleCoeff (hpHz, sr);
         preHP += (x - preHP) * hpC;
         const float hp = x - preHP;
@@ -1936,8 +1930,8 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
         const float edge = hp - preEdge;
 
         const float lowRetain = juce::jmap (type,
-                                            0.12f + bodyCurve * 0.12f,
-                                            0.28f + bodyCurve * 0.16f);
+                                            0.12f + bodyToneCurve * 0.16f,
+                                            0.28f + bodyToneCurve * 0.20f);
         const float edgeAmt = juce::jmap (type,
                                           0.010f + d * 0.050f,
                                           0.004f + d * 0.025f);
@@ -1951,7 +1945,7 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
     if (react > 0.001f && !rawMode)
     {
         const float compAmt = detail::clampF (react, 0.0f, 1.0f);
-        const TapeCompResult comp = processTransistorComp (x, compState, compAmt, d, type, sr);
+        const DynamicsCompResult comp = processTransistorComp (x, compState, compAmt, d, type, sr);
         x = comp.sample;
     }
     else
@@ -1963,10 +1957,10 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
 
     const float inputPadBjt = detail::interpDrive5 (d,
                                                     0.14f, 0.30f, 0.68f, 1.32f, 2.75f)
-                            * juce::jmap (bodyCurve, 1.00f, 1.18f);
+                            * juce::jmap (bodyToneCurve, 1.00f, 1.22f);
     const float inputPadFet = detail::interpDrive5 (d,
                                                     0.18f, 0.36f, 0.74f, 1.26f, 2.20f)
-                            * juce::jmap (bodyCurve, 1.00f, 1.10f);
+                            * juce::jmap (bodyToneCurve, 1.00f, 1.14f);
     const float inputPad = juce::jmap (type, inputPadBjt, inputPadFet);
     x *= inputPad;
     state.transistorDbgInputPad[sp][ch] = inputPad;
@@ -1974,20 +1968,20 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
 
     const float headroomBjt = juce::jlimit (0.48f, 1.14f,
                                             1.10f - d * 0.60f
-                                                  - bodyCurve * 0.09f
+                                                  - bodyClipCurve * 0.05f
                                                   - juce::jmax (0.0f, b) * 0.11f
                                                   + juce::jmax (0.0f, -b) * 0.05f);
     const float headroomFet = juce::jlimit (0.50f, 1.16f,
                                             1.10f - d * 0.44f
-                                                  - bodyCurve * 0.06f
+                                                  - bodyClipCurve * 0.035f
                                                   - juce::jmax (0.0f, b) * 0.08f
                                                   + juce::jmax (0.0f, -b) * 0.03f);
     const float headroom = juce::jmap (type, headroomBjt, headroomFet);
 
     const float opBias = juce::jmap (type, b * 0.16f, b * 0.10f);
     const float oddAmt = juce::jmap (type,
-                                     0.018f + bodyCurve * 0.022f + d * 0.040f,
-                                    -0.006f - bodyCurve * 0.010f - d * 0.012f);
+                                     0.018f + bodyClipCurve * 0.016f + d * 0.040f,
+                                    -0.006f - bodyClipCurve * 0.007f - d * 0.012f);
     const float cubicAmt = juce::jmap (type,
                                        0.008f + d * 0.038f,
                                        0.014f + d * 0.020f);
@@ -2012,10 +2006,10 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
                           + 3.0f * biasNorm * biasNorm * cubicAmt;
 
     const float satK = juce::jmap (type,
-                                   0.98f + d * (2.24f + bodyCurve * 0.46f),
-                                   0.84f + d * (1.55f + bodyCurve * 0.26f));
+                                   0.98f + d * (2.24f + bodyClipCurve * 0.24f),
+                                   0.84f + d * (1.55f + bodyClipCurve * 0.14f));
     state.transistorDbgSatK[sp][ch] = satK;
-    const float raw = std::tanh (satK * shifted);
+    const float raw = coreAdaa.process (satK * shifted, 1.0f);
     const float raw0 = std::tanh (satK * z0);
     const float slopeRef = satK * (1.0f - raw0 * raw0);
     const float slope0 = std::max (1.0e-4f, slopeRef * preDeriv0 * (1.0f / headroom));
@@ -2025,7 +2019,7 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
     const float railDrive = juce::jmap (type,
                                         1.02f + d * 1.02f,
                                         0.96f + d * 0.68f)
-                          * juce::jmap (bodyCurve, 1.00f, 1.05f);
+                          * juce::jmap (bodyClipCurve, 1.00f, 1.025f);
     const float posThresh = juce::jmap (type, 1.24f - d * 0.24f,
                                               1.34f - d * 0.14f)
                           * (1.0f - juce::jmax (0.0f, b) * 0.18f
@@ -2035,8 +2029,8 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
                           * (1.0f - juce::jmax (0.0f, -b) * 0.18f
                                    + juce::jmax (0.0f,  b) * 0.04f);
     const float kneeBase = juce::jmap (type,
-                                       juce::jmap (bodyCurve, 0.24f, 0.12f),
-                                       juce::jmap (bodyCurve, 0.30f, 0.16f));
+                                       juce::jmap (bodyClipCurve, 0.24f, 0.17f),
+                                       juce::jmap (bodyClipCurve, 0.30f, 0.22f));
     const float kneePos = std::max (1.0e-4f, kneeBase * (1.0f - d * 0.10f));
     const float kneeNeg = std::max (1.0e-4f, kneeBase * juce::jmap (type, 0.95f, 1.08f) * (1.0f - d * 0.08f));
     state.transistorDbgRailThresh[sp][ch] = 0.5f * (posThresh + negThresh);
@@ -2385,13 +2379,13 @@ inline void processBlock (State& state,
                 state.react[sp][ch].reset();
                 state.mbReact[sp][ch].reset();
                 state.sagEnvelope[sp][ch] = 0.0f;
-                state.tapeComp[sp][ch].reset();
+                state.dynamicsComp[sp][ch].reset();
                 state.clipperPeak[sp][ch].reset();
                 state.triodeReact[sp][ch].reset();
                 state.emphasis[sp][ch].reset();
                 state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
-                state.wsAdaa[sp][ch].reset();
                 state.triodeAdaa[sp][ch].reset();
+                state.transistorCoreAdaa[sp][ch].reset();
                 state.tapeAdaa[sp][ch].reset();
                 state.clipperAdaa[sp][ch].reset();
                 state.girthAdaa[sp][ch].reset();
@@ -2532,11 +2526,12 @@ inline void processBlock (State& state,
                     state.mbReact[sp][ch].reset();
                     state.sagEnvelope[sp][ch] = 0.0f;
                     state.emphasis[sp][ch].reset();
-                    state.tapeComp[sp][ch].reset();
+                    state.dynamicsComp[sp][ch].reset();
                     state.clipperPeak[sp][ch].reset();
                     state.triodeReact[sp][ch].reset();
                     state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
                     state.triodeAdaa[sp][ch].reset();
+                    state.transistorCoreAdaa[sp][ch].reset();
                     state.tapeAdaa[sp][ch].reset();
                     state.clipperAdaa[sp][ch].reset();
                     state.interStageDCx[sp][ch] = 0.0f;
@@ -2591,11 +2586,11 @@ inline void processBlock (State& state,
                     state.react[sp][ch].reset();
                     state.mbReact[sp][ch].reset();
                     state.sagEnvelope[sp][ch] = 0.0f;
-                    state.tapeComp[sp][ch].reset();
+                    state.dynamicsComp[sp][ch].reset();
                     state.clipperPeak[sp][ch].reset();
                     state.emphasis[sp][ch].reset();
                     state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
-                    state.wsAdaa[sp][ch].reset();
+                    state.transistorCoreAdaa[sp][ch].reset();
                     state.tapeAdaa[sp][ch].reset();
                     state.clipperAdaa[sp][ch].reset();
                     state.powerSag[sp][ch] = 0.0f;
@@ -2650,12 +2645,12 @@ inline void processBlock (State& state,
 
                 if (model == Model::Tape)
                 {
-                    state.tapeComp[sp][ch].reset();
+                    state.dynamicsComp[sp][ch].reset();
                     state.tapeFlux[sp][ch] = 0.0f;
                 }
 
                 if (model == Model::Transistor || model == Model::Diode)
-                    state.tapeComp[sp][ch].reset();
+                    state.dynamicsComp[sp][ch].reset();
 
                 if (model == Model::Clipper)
                     state.clipperPeak[sp][ch].reset();
@@ -2732,7 +2727,7 @@ inline void processBlock (State& state,
                 auto& stageReact = state.react[sp][ch];
                 auto& stageMbReact = state.mbReact[sp][ch];
                 auto& stageSagEnvelope = state.sagEnvelope[sp][ch];
-                auto& stageTapeComp = state.tapeComp[sp][ch];
+                auto& stageDynamicsComp = state.dynamicsComp[sp][ch];
                 auto& stageClipperPeak = state.clipperPeak[sp][ch];
                 auto& stageTriodeReact = state.triodeReact[sp][ch];
                 auto& stageEmphasis = state.emphasis[sp][ch];
@@ -2783,8 +2778,8 @@ inline void processBlock (State& state,
                         case Model::Diode:
                         {
                             const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
-                            const TapeCompResult comp = processTapeComp (
-                                x, stageTapeComp, react, effDrive, program, sampleRate);
+                            const DynamicsCompResult comp = processTapeComp (
+                                x, stageDynamicsComp, react, effDrive, program, sampleRate);
                             x = comp.sample;
                             sagPre = 1.0f;
                             sagPost = 1.0f;
@@ -2794,8 +2789,8 @@ inline void processBlock (State& state,
                         case Model::Tape:
                         {
                             const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
-                            const TapeCompResult comp = processTapeComp (
-                                x, stageTapeComp, react, effDrive, program, sampleRate);
+                            const DynamicsCompResult comp = processTapeComp (
+                                x, stageDynamicsComp, react, effDrive, program, sampleRate);
                             x = comp.sample;
                             sagPre = 1.0f;
                             sagPost = 1.0f;
@@ -2819,16 +2814,16 @@ inline void processBlock (State& state,
                 }
                 else if (model == Model::Tape)
                 {
-                    stageTapeComp.gain = 1.0f;
-                    stageTapeComp.env *= 0.5f;
-                    stageTapeComp.hfEnv *= 0.5f;
+                    stageDynamicsComp.gain = 1.0f;
+                    stageDynamicsComp.env *= 0.5f;
+                    stageDynamicsComp.hfEnv *= 0.5f;
                     stageSagEnvelope = 0.0f;
                 }
                 else if (model == Model::Diode)
                 {
-                    stageTapeComp.gain = 1.0f;
-                    stageTapeComp.env *= 0.5f;
-                    stageTapeComp.hfEnv *= 0.5f;
+                    stageDynamicsComp.gain = 1.0f;
+                    stageDynamicsComp.env *= 0.5f;
+                    stageDynamicsComp.hfEnv *= 0.5f;
                     stageSagEnvelope = 0.0f;
                 }
                 else if (model == Model::Clipper)
@@ -2886,7 +2881,6 @@ inline void processBlock (State& state,
                         x = processTransistorStage (x, effDrive, girth, effBias, effMod,
                                                     react, rawMode,
                                                     state, ch, sampleRate,
-                                                    state.wsAdaa[sp][ch],
                                                     state.clipperAdaa[sp][ch]);
                         break;
                     case Model::Diode:
@@ -2975,8 +2969,6 @@ inline void processBlock (State& state,
                         x *= getTapeLevelTrim (drive, mod, girth, react);
                     else if (model == Model::Tube)
                         x *= getTriodeLevelTrim (drive, mod, state.currentSeriesCount);
-                    else if (model == Model::Transistor)
-                        x *= getTransistorLevelTrim (drive, mod);
                     if (!skipAutoGain)
                         x *= state.blockCoeffs.autoGain;
                 }

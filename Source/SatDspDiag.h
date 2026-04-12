@@ -24,7 +24,7 @@ namespace SatDiag
 // ── Per-block snapshot ──────────────────────────────────────────────────────
 struct BlockSnap
 {
-    int      implRev        = 24041048;
+    int      implRev        = 24041249;
 
     // Timing
     double   blockTimeUs    = 0.0;   // wall-clock time for processBlock (µs)
