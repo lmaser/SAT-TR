@@ -2,31 +2,31 @@
 
 <br/><br/>
 
-SAT-TR is a 3-slot saturation engine with integrated IR convolution, per-loader filtering, and flexible routing topologies.
-It combines 10 physically-modeled distortion algorithms with zero-latency partitioned convolution, oversampling up to ×16, and a minimal CRT-inspired interface.
+SAT-TR is a 3-slot saturation router focused on stacked drive, per-slot filtering, and flexible routing topologies.
+It combines 6 saturation algorithms, oversampling up to x16, per-loader dynamics/modulation tools, and a minimal text-first interface with optional graphics styling.
 
 ## Concept
 
-SAT-TR models analog saturation circuits at the component level rather than applying generic waveshaping. Each of the 10 algorithms replicates a specific topology — vacuum tube preamps, power amp push-pull stages, transistor fuzz, diode clippers, tape hysteresis, and extreme ring-fuzz — with per-model transfer functions, bias behavior, and frequency-dependent nonlinearities.
+SAT-TR does not use one generic waveshaper for every mode. It combines physically-informed stages and fitted black-box models, depending on the algorithm, so each saturation family keeps its own gain staging, voicing, dynamics, and anti-aliasing strategy.
 
-Three independent loader slots can each run their own saturation model alongside an IR convolver, filters, expander/gate, and chaos modulation. Loaders are routed through one of four topologies (series, parallel, or hybrid), with Mid/Side bus assignment at the summing stage.
+Three independent loader slots can each run their own saturation model alongside per-loader gain staging, tilt, filters, expander/gate, chaos modulation, delay compensation, and Mid/Side bus routing. Loaders are routed through one of four topologies (series, parallel, or hybrid), with optional global wet limiting, normalization, oversampling, and auto-alignment.
 
-The saturation engine features ADAA (antiderivative anti-aliasing) on all hard-clipping stages, multiband REACT energy tracking for frequency-dependent power-supply sag, analog component tolerance modeling (VARIATION), and a pitch-tracked sub-octave synthesizer for the high-gain models.
+The saturation engine uses ADAA-backed nonlinear stages where they matter, per-model dynamics blocks (`SAG`, `COMP`, `PEAK` depending on algorithm), analog-style variation/drift, and multi-pass series processing for denser amplifier-style stacking.
 
 ## Interface
 
-SAT-TR uses a text-based UI with horizontal bar sliders. All controls are visible at once — no pages, tabs, or hidden menus.
+SAT-TR uses a text-based UI with horizontal bar sliders. Most core controls stay visible at once, with prompts used for deeper parameter entry and utility configuration.
 
 - **Bar sliders**: Click and drag horizontally. Right-click for numeric entry.
-- **Toggle buttons**: Click to enable/disable (INV, RAW, EXP, CHAOS D, CHAOS F).
-- **Combo boxes**: Click to cycle options (MODE IN, MODE OUT, SUM BUS, SAT TYPE).
+- **Toggle buttons**: Click to enable/disable (`RAW`, `INV`, `EXP`, `CHAOS D`, `CHAOS F`).
+- **Combo boxes**: Click to choose routing, mode, algorithm, oversampling, normalization, and limiter placement.
 - **Collapsible IO section**: Click the toggle bar (triangle) to show/hide per-loader I/O controls. State persists across sessions.
-- **Browse button**: Opens a built-in file explorer with drive selector, folder navigation, and scrollable file list. Supports WAV, AIFF, FLAC, MP3, OGG.
 - **Filter bar**: Click to open the HP/LP filter configuration prompt.
-- **EXP label**: Click to open the expander/gate configuration prompt with scrollable parameters.
-- **ALIGN button**: Momentary trigger — cross-correlates loaders and auto-sets delay/invert for phase alignment.
-- **Gear icon** (top-right): Opens info popup with version, credits, and Graphics settings.
-- **Graphics popup**: Toggle CRT post-processing, switch between default/custom colour palettes.
+- **EXP button**: Left-click enables/disables the expander. Right-click opens the expander prompt.
+- **CHAOS buttons**: Left-click enables/disables the target. Right-click opens the amount/speed prompt for delay or filter chaos.
+- **ALIGN button**: Momentary trigger. Auto-sets per-loader delay compensation and invert state from synthetic probe analysis.
+- **Gear icon** (top-right): Opens the info popup with version, credits, and the Graphics prompt.
+- **Graphics popup**: Toggles graphic FX and switches between default/custom colour palettes.
 - **Resize**: Drag the bottom-right corner. Size persists across sessions.
 
 ## Parameters
@@ -35,64 +35,80 @@ SAT-TR uses a text-based UI with horizontal bar sliders. All controls are visibl
 
 #### SAT TYPE
 
-Saturation model selector. 10 algorithms:
+Saturation model selector. 6 algorithms:
 
-| Model | Algorithm | MOD Control | BIAS Control |
-|-------|-----------|-------------|--------------|
-| **CLEAN** | Bypass — 1:1 pass-through | — | — |
-| **TAPE** | Jiles-Atherton hysteresis + flutter + head bump | Tape speed / flutter depth | Record level |
-| **TRIODE** | 12AX7 preamp — Koren asymmetric | Grid conduction knee | Operating point shift |
-| **PUSH-PULL** | EL34/6L6 power amp — Class AB | Saturation knee hardness | Class A ↔ cold crossover |
-| **CASCADE** | Cascaded triode stages (1–4 fractional) | Number of stages (0→4, 1→1) | Operating point shift |
-| **DIODE** | Shockley clipper — Ge/Si blend | Topology (feedback ↔ shunt) | Germanium ↔ Silicon |
-| **TUNDRA** | Metal Zone → Modern morph | MT-2 classic ↔ modern tight | Clipping asymmetry |
-| **FUZZ** | Transistor fuzz — Ge/Si stages | Clipping symmetry | PNP Germanium ↔ NPN Silicon |
-| **DOOM** | Big Muff 3-stage doom fuzz | Feedback amount | Voltage starving |
-| **DESTROY** | Ring-fuzz — pitch-tracked ring mod | Fuzz ↔ ring mod blend | Ring freq ratio (÷2 → ×3) |
+| Model | Algorithm | Active Control Labels |
+|-------|-----------|-----------------------|
+| **CLEAN** | 1:1 pass-through | `-` |
+| **TAPE** | Tape-style saturation with fitted family morphing | `DRIVE`, `BODY`, `FORM`, `BIAS`, `COMP` |
+| **TUBE** | Triode / power-tube inspired stage | `DRIVE`, `BODY`, `TYPE`, `BIAS`, `SAG` |
+| **TRANSISTOR** | BJT <-> FET solid-state preamp / fuzz stage | `GAIN`, `BODY`, `TYPE`, `BIAS`, `COMP` |
+| **DIODE** | Diode overdrive family (`feedback -> hard -> open`) | `DRIVE`, `COND`, `TOPO`, `SYM`, `COMP` |
+| **CLIPPER** | Broadband / pedal clipper family (`classic -> TS -> Klon`) | `THR`, `KNEE`, `VOICE`, `SYM`, `PEAK` |
 
-#### DRIVE (0–100%)
+#### DRIVE / GAIN / THR
 
-Saturation amount. Per-model drive curves normalize perceived distortion so that mid-range feels consistent across all models. Higher-gain models (Fuzz, Doom, Destroy, Tundra) use steeper exponential curves to spread the usable range.
+Primary amount control. The visible label changes with the selected algorithm:
 
-#### GIRTH (0–100%)
+- **DRIVE**: primary saturation amount
+- **GAIN**: transistor input drive / stage push
+- **THR**: clip-threshold style control in `CLIPPER`
 
-Post-waveshaper wavefolding + transfer function sharpening. Adds harmonic density and edge to the saturated signal.
+#### GIRTH / BODY / COND / KNEE
 
-#### MOD (0–100%)
+Secondary shape or body control. Its behavior depends on the algorithm:
 
-Model-specific secondary control. See SAT TYPE table above for per-model behavior.
+- **BODY**: low-mid/body/depth emphasis inside the model
+- **COND**: conditioning before the diode clipper
+- **KNEE**: clip softness / transition sharpness
 
-#### BIAS (−100% to +100%)
+#### MOD / FORM / TYPE / TOPO / VOICE
 
-Operating point / character blend. Per-model behavior ranges from bias shift (tubes) to germanium/silicon blend (fuzz, diodes) to voltage starving (doom).
+Model-specific voicing or topology morph:
 
-#### REACT (0–100%)
+- **FORM**: tape family contour / character morph
+- **TYPE**: tube or transistor family blend
+- **TOPO**: diode topology / openness
+- **VOICE**: clipper voicing family
 
-Multiband energy-dependent parameter modulation. Tracks signal energy in three bands (sub, mid, air) and modulates drive, bias, and headroom to simulate power-supply sag. Also controls sub-octave synthesizer blend for Fuzz, Doom, Destroy, and Tundra models.
+#### BIAS / SYM
 
-#### VARIATION (0–100%)
+Operating-point or asymmetry control, depending on the model:
 
-Analog component tolerance simulation. 70% static per-instance tolerance (hash-seeded — each "unit" has unique character) + 30% very slow thermal drift (sub-Hz incommensurate sine oscillators simulating cathode temperature). No fast modulation — real components don't oscillate at Hz rates.
+- **BIAS**: stage bias / operating point
+- **SYM**: positive/negative clipping symmetry
 
-#### SERIES (1–4)
+#### REACT / COMP / SAG / PEAK
 
-Number of cascaded saturation passes. Each pass includes inter-stage Miller-cap LPF, coupling-cap DC blocker, and independent ADAA state. Simulates multi-stage amplifier cascading.
+Model-dependent dynamics control:
+
+- **COMP**: dynamics conditioning before or inside the stage
+- **SAG**: tube-style reactive compression / supply behavior
+- **PEAK**: pre-clip transient shaving in `CLIPPER`
+
+#### VARIATION (0-100%)
+
+Analog-style tolerance / drift control. Adds per-instance spread and slow movement to the model response without turning into obvious modulation.
+
+#### SERIES (1-4)
+
+Number of cascaded saturation passes for the active loader. Each pass runs the model again through its own series state for denser stacking.
 
 #### RAW
 
-Bypasses internal pre-emphasis/de-emphasis EQ and auto-gain compensation. Exposes the raw waveshaper output for external processing or analysis.
+Bypasses the model's internal colour-shaping path where supported, exposing a rawer stage response. Useful when you want external filtering or want to hear more of the bare nonlinear core.
 
 ### Per-Loader
 
-#### IN (−100 to 0 dB)
+#### IN (-100 to 0 dB)
 
 Per-loader input gain.
 
-#### OUT (−100 to +24 dB)
+#### OUT (-100 to +24 dB)
 
 Per-loader output gain.
 
-#### TILT (−6 to +6 dB)
+#### TILT (-6 to +6 dB)
 
 Per-loader tilt EQ. First-order symmetric shelf pivoted at 1 kHz. Positive values boost highs and cut lows.
 
@@ -100,169 +116,134 @@ Per-loader tilt EQ. First-order symmetric shelf pivoted at 1 kHz. Positive value
 
 Per-loader high-pass and low-pass filters. Accessible via the filter bar in the I/O section.
 
-- **Frequency**: 20–20 000 Hz.
-- **Slope**: 6 dB/oct, 12 dB/oct, or 24 dB/oct.
-- **Enable**: Independent toggle for each filter.
-- **Position**: F▼T▼ / F▲T▲ / F▲T▼ / F▼T▲ for pre/post saturation and tilt routing.
+- **Frequency**: 20-20 000 Hz
+- **Slope**: 6 dB/oct, 12 dB/oct, or 24 dB/oct
+- **Enable**: independent toggle for each filter
+- **Position**: `F post / T post`, `F pre / T pre`, `F pre / T post`, or `F post / T pre` for filter/tilt routing
 
-#### PAN (L–C–R)
+#### PAN (L-C-R)
 
 Stereo pan for the loader output.
 
-#### MIX (0–100%)
+#### MIX (0-100%)
 
 Per-loader dry/wet balance.
 
 #### INV
 
-Phase invert per-loader.
+Per-loader polarity invert.
 
-#### DELAY (0–5 ms)
+#### DELAY (0-5 ms)
 
-Phase alignment delay per-loader. Used by ALIGN auto-correlation or set manually.
-
-#### FRED (0–100%)
-
-Fredman miking simulation. Models off-axis microphone positioning with ~159 µs inter-channel delay.
-
-#### POS (0–100%)
-
-Microphone distance simulation.
-
-#### RESO (0–200%)
-
-IR resonance control. Scales the resonant character of the loaded impulse response.
-
-### IR Controls
-
-#### START / END (0–10 000 ms)
-
-IR trim window. Sets the start and end points within the loaded impulse response.
-
-#### SIZE (25–400%)
-
-IR time-stretch. Resamples the IR to change its effective length without changing spectral content.
+Per-loader alignment delay. In the current UI this is shown as a readout and is primarily driven by `ALIGN`.
 
 ### Expander / Gate
 
-Per-loader noise gate accessible via the EXP label. Parameters:
+Per-loader expander accessible from the `EXP` button. Parameters:
 
-- **ORDER**: PRE (before saturation) or POST (after saturation).
-- **RATIO** (1:1 – 1:10): Expansion ratio.
-- **THRESHOLD** (−60 to 0 dB): Gate threshold.
-- **ATTACK** (0.01–100 ms): Envelope attack time.
-- **RELEASE** (5–2000 ms): Envelope release time.
+- **ORDER**: `PRE` (before saturation) or `POST` (after saturation)
+- **RATIO** (`1:1` to `1:10`): expansion ratio
+- **THRESH** (`-60.0` to `0.0 dB`): gate threshold
+- **ATK** (`0.01` to `100.00 ms`): envelope attack time
+- **REL** (`5.00` to `2000.00 ms`): envelope release time
 
 ### Chaos
 
-Per-loader micro-variation engine. Two independent targets:
+Per-loader micro-variation engine with two independent targets:
 
-- **CHAOS D**: Delay modulation — adds organic timing drift.
-- **CHAOS F**: Filter modulation — modulates HP/LP cutoff frequencies.
+- **CHAOS D**: delay-domain drift before saturation
+- **CHAOS F**: filter cutoff drift
 
 Each target has:
-- **AMOUNT** (0–100%): Modulation depth.
-- **SPEED** (0.01–100 Hz): Random target rate.
 
-Uses Hermite cubic interpolation between random targets with per-channel quadrature drift LFO.
+- **AMOUNT** (`0-100%`): modulation depth
+- **SPEED** (`0.01-100 Hz`): random target rate
 
 ### Global
-
-#### INPUT (−100 to 0 dB)
-
-Global input gain.
-
-#### OUTPUT (−100 to +24 dB)
-
-Global output gain.
 
 #### ROUTE
 
 Loader topology:
-- **A|B|C**: Parallel — all loaders process input independently, summed at output.
-- **A>B>C**: Series — output of A feeds B, output of B feeds C.
-- **A>B|C**: Hybrid — A feeds B in series, C in parallel.
-- **A|B>C**: Hybrid — A in parallel, B feeds C in series.
 
-#### MIX (0–100%)
+- **A>B>C**: full series
+- **A|B|C**: full parallel
+- **A>B|C**: A into B, with C in parallel
+- **A|B>C**: A in parallel with B into C
 
-Global dry/wet balance. Works in INSERT or SEND mode.
+#### MIX (0-100%)
+
+Global dry/wet balance.
 
 #### MIX MODE
 
-- **INSERT**: Single mix knob crossfades between dry and wet.
-- **SEND**: Independent DRY LEVEL and WET LEVEL controls.
+- **INSERT**: single wet/dry crossfade
+- **SEND**: independent `DRY LEVEL` and `WET LEVEL`
 
-#### MATCH
+#### OS
 
-Spectral tilt profile applied to the wet signal:
-- **None**: No tilt.
-- **White**: Flat response.
-- **Pink** (−3 dB/oct): Natural roll-off.
-- **Brown** (−6 dB/oct): Steep low-end emphasis.
-- **Bright** (+3 dB/oct): High-frequency boost.
-- **Bright+** (+6 dB/oct): Aggressive brightness.
+Global oversampling factor: `x1`, `x2`, `x4`, `x8`, `x16`. Higher factors reduce aliasing and add host-reported latency.
 
 #### NORM
 
-Peak normalization target for loaded IRs:
-- **Off**: No normalization.
-- **0 dB / −3 dB / −6 dB / −12 dB / −18 dB**: IR peak normalized to target.
+Wet peak normalization target:
 
-#### OVERSAMPLING
+- **Off**
+- **0 dB**
+- **-3 dB**
+- **-6 dB**
+- **-12 dB**
+- **-18 dB**
 
-Global oversampling factor: ×1, ×2, ×4, ×8, ×16. Higher factors reduce aliasing but increase CPU. Latency is reported to the DAW for automatic compensation.
+#### OUTPUT (-100 to +24 dB)
+
+Global output gain.
 
 #### ALIGN
 
-Momentary trigger. Cross-correlates all enabled loaders against the first and auto-sets per-loader delay and phase invert for optimal coherence.
+Momentary trigger. Calculates relative alignment from the active loader responses and writes per-loader delay compensation plus invert state automatically.
 
 #### LIMITER
 
-Dual-stage transparent peak limiter:
-- **Stage 1 (Leveler)**: 2 ms attack, 10 ms release — catches sustained overs.
-- **Stage 2 (Brickwall)**: Instant attack, 100 ms release — catches transient peaks.
+Dual-stage peak limiter with placement control:
 
-Settings:
-- **THRESHOLD** (−36 to 0 dB): Limiter ceiling.
-- **MODE**: NONE / WET / GLOBAL placement.
+- **THRESH** (`-36.0` to `0.0 dB`): limiter threshold
+- **MODE**: `NONE`, `WET`, `GLOBAL`
 
 #### INV POLARITY
 
-Phase inversion scope: NONE / WET / GLOBAL.
+Polarity inversion scope: `NONE`, `WET`, `GLOBAL`.
 
 #### INV STEREO
 
-Stereo channel swap scope: NONE / WET / GLOBAL.
+Stereo channel swap scope: `NONE`, `WET`, `GLOBAL`.
 
 ### Mode In / Mode Out / Sum Bus
 
-Per-loader routing for Mid/Side processing:
+Per-loader Mid/Side routing:
 
-- **MODE IN**: L+R / MID / SIDE — selects which signal component enters the loader.
-- **MODE OUT**: L+R / MID / SIDE — selects which signal component exits the loader.
-- **SUM BUS**: ST / →M / →S — routes the loader output to the stereo, mid, or side summing bus.
+- **MODE IN**: `L+R`, `MID`, `SIDE`
+- **MODE OUT**: `L+R`, `MID`, `SIDE`
+- **SUM BUS**: `ST`, `->M`, `->S`
 
 ## Technical Details
 
 ### DSP Architecture
-- **Saturation**: Header-only engine (SaturationEngine.h). All models inline, per-sample processing.
-- **ADAA**: 1st-order (Triode, PushPull, Cascade, Tundra) and 2nd-order (Fuzz, Doom, Destroy) antiderivative anti-aliasing on all hard-clipping stages.
-- **YIN Pitch Tracker**: Cumulative Mean Normalized Difference autocorrelation with parabolic interpolation. 96-sample hop, 512-lag search (supports down to ~86 Hz). Adaptive smoothing — fast snap on note changes (~2.4 ms), slow smooth on sustain (~24 ms).
-- **Sub-Octave**: Pitch-tracked sine oscillator at f/2, shaped by envelope follower (0.3 ms attack, 53 ms release), output LPF tracks detected frequency.
-- **REACT**: 3-band energy tracker (sub/mid/air crossovers at 150/3000 Hz). Asymmetric envelope follower per band → drive boost, bias shift, headroom modulation.
-- **Smoothing**: Sample-rate-aware one-pole IIR on all parameters (~15 ms time constant, consistent across oversampling rates).
-- **Drive Curves**: Per-model power-law exponents normalize perceived distortion (1.5 for gentle models up to 4.0 for extreme models).
-- **Auto-Gain**: Per-model output normalization with unity-at-zero protection.
-- **Variation**: Deterministic hash-seeded static tolerance + 3 incommensurate sub-Hz sines for thermal drift.
-- **Convolution**: Partitioned FFT convolution via FFTConvolver library, zero added latency.
-- **Filters**: Transposed Direct Form II biquads. Coefficients updated once per block (or per configurable interval).
-- **Tilt EQ**: First-order symmetric shelf at 1 kHz. Coefficient caching with tolerance-based update.
-- **Limiter**: Dual-stage (leveler + brickwall), stereo-linked gain reduction.
+
+- **Saturation**: header-only engine (`SaturationEngine.h`) with per-sample processing and per-model state.
+- **Models**: `CLEAN`, `TAPE`, `TUBE`, `TRANSISTOR`, `DIODE`, `CLIPPER`.
+- **ADAA**: used on the main nonlinear stages where needed; exact placement varies by model.
+- **Series Processing**: up to 4 internal passes per loader.
+- **REACT / Dynamics**: model-specific dynamics blocks rather than one universal behavior (`SAG`, `COMP`, `PEAK` depend on algorithm).
+- **Variation**: deterministic spread plus slow drift.
+- **Oversampling**: global `x1` to `x16`, with latency reported to the host.
+- **Filters**: per-loader HP/LP plus tilt filtering with pre/post routing options.
+- **Alignment**: synthetic probe analysis used to estimate per-loader compensation delay and invert state.
+- **NORM**: wet peak normalization stage with fixed targets.
+- **Limiter**: dual-stage user limiter with `WET` or `GLOBAL` placement, plus final safety protection.
 
 ### Build
+
 - **Framework**: JUCE 7
 - **Format**: VST3
 - **Compiler**: Visual Studio 2022 (MSVC)
 - **Platform**: Windows x64
-- **Third-party**: FFTConvolver, FFTW3 (float, single-precision)

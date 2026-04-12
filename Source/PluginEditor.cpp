@@ -344,8 +344,9 @@ static void layoutInfoPopupContent (juce::AlertWindow& aw)
 		return;
 
 	constexpr int kItemGap = 10;
+	constexpr int kBodyInsetX = 5;
 	int y = 0;
-	const int innerW = bodyW - 10;
+	const int innerW = juce::jmax (0, bodyW - kBodyInsetX * 2);
 
 	for (int i = 0; i < content->getNumChildComponents(); ++i)
 	{
@@ -381,7 +382,7 @@ static void layoutInfoPopupContent (juce::AlertWindow& aw)
 			itemH = 28;
 		}
 
-		child->setBounds (0, y, innerW, itemH);
+		child->setBounds (kBodyInsetX, y, innerW, itemH);
 
 		if (auto* label = dynamic_cast<juce::Label*> (child))
 		{
@@ -412,7 +413,7 @@ static void layoutInfoPopupContent (juce::AlertWindow& aw)
 	if (y > kItemGap)
 		y -= kItemGap;
 
-	content->setSize (innerW, juce::jmax (contentH, y));
+	content->setSize (bodyW, juce::jmax (contentH, y));
 }
 
 // ----------------------------------------------------------------
@@ -5015,12 +5016,14 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		const int barGap  = juce::jmax (2, rowH / 8);
 		const int rowTotal = rowH + barGap + barH;
 		const int gap     = juce::jmax (3, rowH / 5);
-		const int contentW = vpW - 10; // leave room for scrollbar
+		constexpr int kBodyInsetX = 5;
+		const int contentW = vpW;
+		const int innerW = juce::jmax (40, contentW - kBodyInsetX * 2);
 		const auto& font = ratioTe->getFont();
 		const int spaceW = juce::jmax (2, stringWidth (font, " "));
 
-		const int barX = 0;
-		const int barW = contentW;
+		const int barX = kBodyInsetX;
+		const int barW = innerW;
 		const int ratioEditorW  = juce::jlimit (24, 160, stringWidth (font, juce::String (SATTRAudioProcessor::kExpRatioMax, 1)) + 16);
 		const int threshEditorW = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpThreshMin, 1)),
 		                                                             stringWidth (font, juce::String (SATTRAudioProcessor::kExpThreshMax, 1))) + 16);
@@ -5038,7 +5041,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			const int legendW = stringWidth (font, "ORDER:") + 4;
 			const int valueW  = stringWidth (font, "POST") + 8;
 			const int pairW   = legendW + spaceW + valueW;
-			const int pairX   = (contentW - pairW) / 2;
+			const int pairX   = kBodyInsetX + juce::jmax (0, (innerW - pairW) / 2);
 			orderLegend->setBounds (pairX, y, legendW, rowH);
 			orderLabel->setBounds (pairX + legendW + spaceW, y, valueW, rowH);
 		}
@@ -5052,7 +5055,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			const int labelW = stringWidth (suffix->getFont(), suffix->getText()) + 2;
 			const int unitW  = (unitLabel != nullptr) ? stringWidth (font, unitLabel->getText()) + 2 : 0;
 			const int groupW = labelW + labelGap + editorW + (unitLabel != nullptr ? unitGapPx + unitW : 0);
-			const int blockLeft = juce::jmax (0, (contentW - groupW) / 2);
+			const int blockLeft = kBodyInsetX + juce::jmax (0, (innerW - groupW) / 2);
 
 			suffix->setBounds (blockLeft, rowY, labelW, rowH);
 			const int teX = blockLeft + labelW + labelGap;
