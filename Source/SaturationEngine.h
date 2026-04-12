@@ -522,6 +522,20 @@ struct TapeCompState
     }
 };
 
+struct ClipperPeakState
+{
+    float peakEnv = 0.0f;
+    float bodyEnv = 0.0f;
+    float gain    = 1.0f;
+
+    void reset() noexcept
+    {
+        peakEnv = 0.0f;
+        bodyEnv = 0.0f;
+        gain = 1.0f;
+    }
+};
+
 struct TriodeReactState
 {
     float sagBuf[kTriodeSagBufSize] = {};
@@ -719,6 +733,7 @@ struct State
     ReactState react[kMaxSeries][2];
     float sagEnvelope[kMaxSeries][2] = {};
     TapeCompState tapeComp[kMaxSeries][2];
+    ClipperPeakState clipperPeak[kMaxSeries][2];
     TriodeReactState triodeReact[kMaxSeries][2];
 
     // Per-stage DC blocker (1st-order HPF, post-saturation)
@@ -823,6 +838,7 @@ struct State
                 mbReact[sp][ch].reset();
                 sagEnvelope[sp][ch] = 0.0f;
                 tapeComp[sp][ch].reset();
+                clipperPeak[sp][ch].reset();
                 triodeReact[sp][ch].reset();
                 dcX[sp][ch] = dcY[sp][ch] = 0.0f;
                 emphasis[sp][ch].reset();
@@ -890,6 +906,8 @@ struct State
                 fl (tapeComp[sp][ch].env);
                 fl (tapeComp[sp][ch].hfEnv);
                 fl (tapeComp[sp][ch].gain);
+                fl (clipperPeak[sp][ch].peakEnv);
+                fl (clipperPeak[sp][ch].bodyEnv);
                 fl (triodeReact[sp][ch].control);
                 fl (triodeReact[sp][ch].prevIn);
                 fl (triodeReact[sp][ch].prevOut);
@@ -1044,6 +1062,12 @@ struct TapeCompResult
     float amount    = 0.0f;
 };
 
+struct ClipperPeakResult
+{
+    float sample = 0.0f;
+    float amount = 0.0f;
+};
+
 struct TriodeReactResult
 {
     float sample    = 0.0f;
@@ -1184,6 +1208,58 @@ inline TapeCompResult processTransistorComp (float x, TapeCompState& st,
 
     st.scLP = detector;
     st.hfEnv += (detector - st.hfEnv) * detail::onePoleCoeff (releaseHz * 0.7f + 0.5f, sr);
+
+    r.sample = x * st.gain;
+    r.amount = 1.0f - st.gain;
+    return r;
+}
+
+inline ClipperPeakResult processClipperPeak (float x, ClipperPeakState& st,
+                                             float react, float drive, float program,
+                                             float sr) noexcept
+{
+    ClipperPeakResult r;
+    r.sample = x;
+
+    if (react <= 0.0001f)
+        return r;
+
+    const float absX = std::abs (x);
+
+    const float peakAtk = detail::onePoleCoeff (1800.0f + react * 5200.0f, sr);
+    const float peakRel = detail::onePoleCoeff (48.0f + react * 120.0f + drive * 60.0f, sr);
+    if (absX > st.peakEnv)
+        st.peakEnv += (absX - st.peakEnv) * peakAtk;
+    else
+        st.peakEnv += (absX - st.peakEnv) * peakRel;
+
+    const float bodyAtk = detail::onePoleCoeff (22.0f + program * 60.0f + react * 18.0f, sr);
+    const float bodyRel = detail::onePoleCoeff (3.0f + react * 5.0f + program * 4.0f, sr);
+    if (absX > st.bodyEnv)
+        st.bodyEnv += (absX - st.bodyEnv) * bodyAtk;
+    else
+        st.bodyEnv += (absX - st.bodyEnv) * bodyRel;
+
+    const float bodyRef = st.bodyEnv * (0.96f + program * 0.08f);
+    const float transient = std::max (0.0f, st.peakEnv - bodyRef);
+
+    const float threshold = juce::jmap (react, 0.22f, 0.04f)
+                          * juce::jmap (drive, 1.05f, 0.82f);
+    const float window = juce::jmap (react, 0.09f, 0.025f);
+    const float shave = detail::smoothStep01 ((transient - threshold)
+                                            / std::max (window, 1.0e-4f));
+
+    const float strength = (0.12f + react * 0.78f) * (0.85f + program * 0.45f);
+    const float targetGain = juce::jlimit (
+        0.55f, 1.0f,
+        1.0f / (1.0f + shave * strength * (1.0f + transient * 4.5f)));
+
+    const float gainAtk = detail::onePoleCoeff (1400.0f + react * 3600.0f, sr);
+    const float gainRel = detail::onePoleCoeff (14.0f + program * 18.0f + react * 26.0f, sr);
+    if (targetGain < st.gain)
+        st.gain += (targetGain - st.gain) * gainAtk;
+    else
+        st.gain += (targetGain - st.gain) * gainRel;
 
     r.sample = x * st.gain;
     r.amount = 1.0f - st.gain;
@@ -2310,6 +2386,7 @@ inline void processBlock (State& state,
                 state.mbReact[sp][ch].reset();
                 state.sagEnvelope[sp][ch] = 0.0f;
                 state.tapeComp[sp][ch].reset();
+                state.clipperPeak[sp][ch].reset();
                 state.triodeReact[sp][ch].reset();
                 state.emphasis[sp][ch].reset();
                 state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
@@ -2456,6 +2533,7 @@ inline void processBlock (State& state,
                     state.sagEnvelope[sp][ch] = 0.0f;
                     state.emphasis[sp][ch].reset();
                     state.tapeComp[sp][ch].reset();
+                    state.clipperPeak[sp][ch].reset();
                     state.triodeReact[sp][ch].reset();
                     state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
                     state.triodeAdaa[sp][ch].reset();
@@ -2514,6 +2592,7 @@ inline void processBlock (State& state,
                     state.mbReact[sp][ch].reset();
                     state.sagEnvelope[sp][ch] = 0.0f;
                     state.tapeComp[sp][ch].reset();
+                    state.clipperPeak[sp][ch].reset();
                     state.emphasis[sp][ch].reset();
                     state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
                     state.wsAdaa[sp][ch].reset();
@@ -2575,8 +2654,11 @@ inline void processBlock (State& state,
                     state.tapeFlux[sp][ch] = 0.0f;
                 }
 
-                if (model == Model::Transistor || model == Model::Clipper || model == Model::Diode)
+                if (model == Model::Transistor || model == Model::Diode)
                     state.tapeComp[sp][ch].reset();
+
+                if (model == Model::Clipper)
+                    state.clipperPeak[sp][ch].reset();
 
                 if (model == Model::Tube)
                     state.triodeReact[sp][ch].reset();
@@ -2651,6 +2733,7 @@ inline void processBlock (State& state,
                 auto& stageMbReact = state.mbReact[sp][ch];
                 auto& stageSagEnvelope = state.sagEnvelope[sp][ch];
                 auto& stageTapeComp = state.tapeComp[sp][ch];
+                auto& stageClipperPeak = state.clipperPeak[sp][ch];
                 auto& stageTriodeReact = state.triodeReact[sp][ch];
                 auto& stageEmphasis = state.emphasis[sp][ch];
                 auto& stageDcX = state.dcX[sp][ch];
@@ -2723,12 +2806,12 @@ inline void processBlock (State& state,
                         case Model::Clipper:
                         {
                             const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
-                            const TapeCompResult comp = processTapeComp (
-                                x, stageTapeComp, react, effDrive, program, sampleRate);
-                            x = comp.sample;
+                            const ClipperPeakResult peak = processClipperPeak (
+                                x, stageClipperPeak, react, effDrive, program, sampleRate);
+                            x = peak.sample;
                             sagPre = 1.0f;
                             sagPost = 1.0f;
-                            stageSagEnvelope = comp.amount;
+                            stageSagEnvelope = peak.amount;
                             break;
                         }
                         default: break;
@@ -2741,12 +2824,18 @@ inline void processBlock (State& state,
                     stageTapeComp.hfEnv *= 0.5f;
                     stageSagEnvelope = 0.0f;
                 }
-                else if (model == Model::Clipper
-                      || model == Model::Diode)
+                else if (model == Model::Diode)
                 {
                     stageTapeComp.gain = 1.0f;
                     stageTapeComp.env *= 0.5f;
                     stageTapeComp.hfEnv *= 0.5f;
+                    stageSagEnvelope = 0.0f;
+                }
+                else if (model == Model::Clipper)
+                {
+                    stageClipperPeak.peakEnv *= 0.5f;
+                    stageClipperPeak.bodyEnv *= 0.5f;
+                    stageClipperPeak.gain += (1.0f - stageClipperPeak.gain) * 0.25f;
                     stageSagEnvelope = 0.0f;
                 }
                 else if (model == Model::Transistor)

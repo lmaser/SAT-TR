@@ -2722,7 +2722,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 				girthLabels[l] = "KNEE";
 				modLabels[l]   = "VOICE";
 				biasLabels[l]  = "SYM";
-				reactLabels[l] = "COMP";
+				reactLabels[l] = "PEAK";
 				break;
 			default:                         reactLabels[l] = "RCT";   break; // Clean/unknown
 		}
