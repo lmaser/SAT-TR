@@ -449,7 +449,7 @@ juce::String SATTRAudioProcessorEditor::BarSlider::getTextFromValue (double v)
 			return juce::String (v * 100.0, 1) + "%";
 
 		case Type::Delay:
-			return juce::String (v, 2) + " ms";
+			return juce::String (v, 3) + " ms";
 
 		case Type::Pan:
 		{
@@ -2808,9 +2808,9 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 					break;
 				}
 				case 8: // Delay ms (decimal)
-					ct.full    = juce::String (val, 2) + " ms " + fmt.label;
-					ct.short_  = juce::String (val, 2) + " ms";
-					ct.intOnly = juce::String (val, 2);
+					ct.full    = juce::String (val, 3) + " ms " + fmt.label;
+					ct.short_  = juce::String (val, 3) + " ms";
+					ct.intOnly = juce::String (val, 3);
 					break;
 			}
 		}

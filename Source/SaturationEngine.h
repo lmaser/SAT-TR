@@ -1929,7 +1929,7 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
         preHP = preEdge = postLP = 0.0f;
     }
 
-    if (react > 0.001f && !rawMode)
+    if (react > 0.001f)
     {
         const float compAmt = detail::clampF (react, 0.0f, 1.0f);
         const DynamicsCompResult comp = processTransistorComp (x, compState, compAmt, d, type, sr);
@@ -2188,6 +2188,7 @@ inline float processTape (float x, float drive, float bias, float mod,
     const int sp = state.currentSeriesPass;
     (void) sr;
     (void) advanceOsc;
+    juce::ignoreUnused (rawMode);
 
     // Flutter/head-bump remain out for now, but keep tapeFlux alive so Rabbit
     // can use a mild memory compression stage instead of sounding like a plain
@@ -2282,7 +2283,7 @@ inline float processTape (float x, float drive, float bias, float mod,
         raw *= 1.0f - overBias * (0.02f + d * 0.03f);
     }
 
-    if (!rawMode && rabbitMod > 0.0001f)
+    if (rabbitMod > 0.0001f)
     {
         // Rabbit's drive curve is better described by a fitted odd-polynomial
         // family than by the manual post-core boosts we were using before.
@@ -2608,7 +2609,7 @@ inline void processBlock (State& state,
     state.currentSeriesCount = juce::jlimit (1, kMaxSeries, seriesCount);
     const bool rawStripFilters = rawMode && (model == Model::Tape || model == Model::Tube
                                           || model == Model::Transistor
-                                          || model == Model::Clipper || model == Model::Diode);
+                                          || model == Model::Diode);
 
     if (rawMode)
     {
@@ -2622,19 +2623,20 @@ inline void processBlock (State& state,
                 state.emphasis[sp][ch].reset();
                 state.dcX[sp][ch] = 0.0f;
                 state.dcY[sp][ch] = 0.0f;
-                state.sagEnvelope[sp][ch] = 0.0f;
+                if (!(rawMode && model == Model::Tape))
+                    state.sagEnvelope[sp][ch] = 0.0f;
 
                 if (model == Model::Tape)
                 {
-                    state.dynamicsComp[sp][ch].reset();
-                    state.tapeFlux[sp][ch] = 0.0f;
+                    if (!rawMode)
+                    {
+                        state.dynamicsComp[sp][ch].reset();
+                        state.tapeFlux[sp][ch] = 0.0f;
+                    }
                 }
 
-                if (model == Model::Transistor || model == Model::Diode)
+                if (model == Model::Diode)
                     state.dynamicsComp[sp][ch].reset();
-
-                if (model == Model::Clipper)
-                    state.clipperPeak[sp][ch].reset();
 
                 if (model == Model::Tube)
                     state.triodeReact[sp][ch].reset();
@@ -2737,7 +2739,7 @@ inline void processBlock (State& state,
                 bool useMbSag = false;
 
                 if (react > 0.001f && model != Model::Tube && model != Model::Transistor
-                    && !(rawStripFilters && (model == Model::Tape || model == Model::Transistor
+                    && !(rawStripFilters && (model == Model::Transistor
                                           || model == Model::Clipper || model == Model::Diode)))
                 {
                     const int window = std::min (

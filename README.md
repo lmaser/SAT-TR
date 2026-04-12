@@ -96,7 +96,7 @@ Number of cascaded saturation passes for the active loader. Each pass runs the m
 
 #### RAW
 
-Bypasses the model's internal colour-shaping path where supported, exposing a rawer stage response. Useful when you want external filtering or want to hear more of the bare nonlinear core.
+Bypasses the model's internal pre/post colour-shaping path where supported, exposing a rawer stage response. Dedicated model dynamics may remain active when they are part of the mode's behaviour rather than just wrapper voicing. Useful when you want external filtering or want to hear more of the bare nonlinear core.
 
 ### Per-Loader
 
@@ -135,7 +135,7 @@ Per-loader polarity invert.
 
 #### DELAY (0-5 ms)
 
-Per-loader alignment delay. In the current UI this is shown as a readout and is primarily driven by `ALIGN`.
+Per-loader alignment delay. Manual prompt entry supports up to `5.000 ms` with `0.001 ms` precision, while `ALIGN` can still write fine compensation automatically.
 
 ### Expander / Gate
 
