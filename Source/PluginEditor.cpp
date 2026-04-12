@@ -3030,6 +3030,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	const bool isTilt  = (stype == BarSlider::Type::Tilt);
 	const bool isSeries = (stype == BarSlider::Type::Series);
 	const bool isVar   = (stype == BarSlider::Type::Var);
+	const bool isDelay = (stype == BarSlider::Type::Delay);
 	const bool isPan   = (stype == BarSlider::Type::Pan);
 	const bool isFred  = (stype == BarSlider::Type::Fred);
 	const bool isPos   = (stype == BarSlider::Type::Pos);
@@ -3107,6 +3108,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	else if (isTilt)        { suffix = " dB TILT"; suffixShort = " dB"; }
 	else if (isSeries)      { suffix = "x SERIES";     suffixShort = "x"; }
 	else if (isVar)         { suffix = " % VAR";       suffixShort = " %"; }
+	else if (isDelay)       { suffix = " ms";          suffixShort = " ms"; }
 	else if (isPan)         { suffix = " % PAN";       suffixShort = " %"; }
 	else if (isFred)        { suffix = " % ANGLE";    suffixShort = " %"; }
 	else if (isPos)         { suffix = " % DIST";     suffixShort = " %"; }
@@ -3135,6 +3137,8 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		currentDisplay = juce::String (static_cast<int> (std::round (s.getValue())));
 	else if (isVar)
 		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 1);
+	else if (isDelay)
+		currentDisplay = juce::String (juce::jlimit (0.0, (double) SATTRAudioProcessor::kDelayMax, s.getValue()), 3);
 	else if (isPan)
 		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 0);
 	else if (isSatBias)
@@ -3180,6 +3184,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		else if (isTilt)         worstCaseText = "-6.00";
 		else if (isSeries)       worstCaseText = "6";
 		else if (isVar)          worstCaseText = "100.0";
+		else if (isDelay)        worstCaseText = "5.000";
 		else if (isPan)          worstCaseText = "100";
 		else if (isSatBias)      worstCaseText = "-100.0";
 		else if (isSatPct)       worstCaseText = "100.0";
@@ -3288,6 +3293,12 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		{
 			minVal = 0.0;    maxVal = 100.0;
 			maxDecs = 1;     maxLen = 5;     // "100.0"
+		}
+		else if (isDelay)
+		{
+			minVal = SATTRAudioProcessor::kDelayMin;
+			maxVal = SATTRAudioProcessor::kDelayMax;
+			maxDecs = 3;     maxLen = 5;     // "5.000"
 		}
 		else if (isPan)
 		{
