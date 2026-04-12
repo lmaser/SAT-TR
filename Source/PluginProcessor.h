@@ -572,7 +572,7 @@ public:
 		float expEnv[2] = { 0.0f, 0.0f };
 
 		// Delay line for phase alignment (max ~0.5s)
-		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> delayLine { 96000 };
+		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> delayLine { 96000 };
 		juce::SmoothedValue<float> smoothedDelay { 0.0f };
 		
 		// Delete copy operations (contains atomic)

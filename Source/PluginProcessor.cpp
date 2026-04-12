@@ -2279,8 +2279,9 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	}
 	
 	// 5b. DELAY (auto-align compensation)
-	if (delayMs > 0.1f)
-		applyDelay (buffer, delayMs, loaderIndex);
+	// Always run the delay stage so the read head can glide cleanly to/from zero
+	// without a hard bypass click or stale-buffer re-entry.
+	applyDelay (buffer, delayMs, loaderIndex);
 	
 	// 6. ANGLE (off-axis mic simulation)
 	// Simulates a second mic at an angle on a guitar cab.
@@ -2339,33 +2340,36 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 // ----------------------------------------------------------------
 void SATTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float delayMs, int loaderIndex)
 {
-	if (delayMs < 0.1f)
-		return;
-	
 	const int numSamples  = buffer.getNumSamples();
 	const int numChannels = buffer.getNumChannels();
 	
-	const float targetDelaySamples = delayMs * 0.001f * static_cast<float> (currentSampleRate);
-	
-	if (targetDelaySamples <= 0.0f)
-		return;
+	const float targetDelaySamples = juce::jmax (0.0f, delayMs * 0.001f * static_cast<float> (currentSampleRate));
 	
 	auto& delayLine = loaderIndex == 0 ? stateA.delayLine : (loaderIndex == 1 ? stateB.delayLine : stateC.delayLine);
 	auto& smoother  = loaderIndex == 0 ? stateA.smoothedDelay : (loaderIndex == 1 ? stateB.smoothedDelay : stateC.smoothedDelay);
 	
 	smoother.setTargetValue (targetDelaySamples);
+
+	// Keep the buffer continuously fed and fade the first 0..2 samples into dry.
+	// This preserves the intentional "rewind" glide while avoiding a hard switch
+	// at very small delays, where interpolation quality and stale-buffer jumps are
+	// most likely to click.
+	constexpr float kMinInterpDelaySamples = 2.0f;
 	
 	for (int i = 0; i < numSamples; ++i)
 	{
 		const float currentDelay = smoother.getNextValue();
-		delayLine.setDelay (currentDelay);
+		const float interpDelay = juce::jmax (currentDelay, kMinInterpDelaySamples);
+		const float wet = juce::jlimit (0.0f, 1.0f, currentDelay / kMinInterpDelaySamples);
+		delayLine.setDelay (interpDelay);
 		
 		for (int ch = 0; ch < numChannels; ++ch)
 		{
 			auto* channelData = buffer.getWritePointer (ch);
 			const float input = channelData[i];
 			delayLine.pushSample (ch, input);
-			channelData[i] = delayLine.popSample (ch);
+			const float delayed = delayLine.popSample (ch);
+			channelData[i] = input + (delayed - input) * wet;
 		}
 	}
 }
