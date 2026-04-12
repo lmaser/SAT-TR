@@ -1272,9 +1272,9 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			if (activeB) processOne (stateB, buffer, 1, modeInB, modeOutB, mixB);
 			// Parallel path C
 			processOne (stateC, tempBufferC, 2, modeInC, modeOutC, mixC);
-			// Sum both paths and compensate - M/S bus-aware
-			// Series path bus = sumBusB (last in chain), parallel path bus = sumBusC
-			const int seriesBus = sumBusB;
+			// Sum both paths and compensate - M/S bus-aware.
+			// Follow the actual last active stage on the series side.
+			const int seriesBus = activeB ? sumBusB : sumBusA;
 			const int parallelBus = sumBusC;
 			if ((seriesBus != 0 || parallelBus != 0) && buffer.getNumChannels() >= 2)
 			{
@@ -1319,10 +1319,10 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			// Series path: B->C stays in buffer (skip auto-gain on B when C follows)
 			if (activeB) processOne (stateB, buffer, 1, modeInB, modeOutB, mixB, activeC);
 			if (activeC) processOne (stateC, buffer, 2, modeInC, modeOutC, mixC);
-			// Sum both paths and compensate - M/S bus-aware
-			// Parallel path bus = sumBusA, series path bus = sumBusC (last in chain)
+			// Sum both paths and compensate - M/S bus-aware.
+			// Follow the actual last active stage on the series side.
 			const int parallelBus = sumBusA;
-			const int seriesBus = sumBusC;
+			const int seriesBus = activeC ? sumBusC : sumBusB;
 			if ((parallelBus != 0 || seriesBus != 0) && buffer.getNumChannels() >= 2)
 			{
 				auto* bL = buffer.getWritePointer (0);
@@ -1847,7 +1847,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 
 	// Filter / Tilt position
 	const int fltPos = loadRelaxedInt (pick (pFilterPosA, pFilterPosB, pFilterPosC));
-	// 0=pre/post off  1=pre on  2=post on  3=pre+post on
+	// 0=F▼T▼  1=F▲T▲  2=F▲T▼  3=F▼T▲
 
 	// Saturation parameters
 	const int   satType  = loadRelaxedInt (pick (pSatTypeA,  pSatTypeB,  pSatTypeC));
@@ -2396,7 +2396,7 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	const int irLen = 512;
 	const float sr = static_cast<float> (currentSampleRate);
 
-	auto makeAlignmentProbe = [&] (int satType, float satMod) -> juce::AudioBuffer<float>
+	auto makeAlignmentProbe = [&] (int satType, float satMod, bool satRaw) -> juce::AudioBuffer<float>
 	{
 		juce::AudioBuffer<float> probe (1, irLen);
 		probe.clear();
@@ -2405,7 +2405,8 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 		SatEngine::EmphasisState empSt;
 		empSt.reset();
 
-		const auto model = static_cast<SatEngine::Model> (satType);
+		const auto model = static_cast<SatEngine::Model> (
+			juce::jlimit (0, (int) SatEngine::Model::NumModels - 1, satType));
 
 		SatEngine::EmphCoeffs ec;
 		switch (model)
@@ -2416,15 +2417,13 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 				ec.postLP = SatEngine::detail::onePoleCoeff (9500.0f, sr);
 				ec.postHP = SatEngine::detail::onePoleCoeff (30.0f,   sr);
 				break;
-			case SatEngine::Model::Transistor:
-				ec.preHP  = SatEngine::detail::onePoleCoeff (30.0f,   sr);
-				ec.preSh  = SatEngine::detail::onePoleCoeff (2600.0f, sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (9000.0f, sr);
-				ec.postHP = SatEngine::detail::onePoleCoeff (35.0f,   sr);
-				break;
 			case SatEngine::Model::Diode:
 				ec.preHP  = SatEngine::detail::onePoleCoeff (720.0f,  sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (723.0f,  sr);
+				ec.preSh  = SatEngine::detail::onePoleCoeff (1800.0f, sr);
+				ec.postLP = SatEngine::detail::onePoleCoeff (3200.0f, sr);
+				ec.preHPAlt  = SatEngine::detail::onePoleCoeff (420.0f,  sr);
+				ec.preShAlt  = SatEngine::detail::onePoleCoeff (2600.0f, sr);
+				ec.postLPAlt = SatEngine::detail::onePoleCoeff (5600.0f, sr);
 				break;
 			case SatEngine::Model::Clipper:
 				ec.preHP  = SatEngine::detail::onePoleCoeff (720.0f,  sr);
@@ -2432,8 +2431,9 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 				ec.postLP = SatEngine::detail::onePoleCoeff (2200.0f, sr);
 				break;
 			case SatEngine::Model::Tape:
-				ec.preHP  = SatEngine::detail::onePoleCoeff (24.0f,    sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (16500.0f, sr);
+				ec.preHP  = SatEngine::detail::onePoleCoeff (24.0f,   sr);
+				ec.preSh  = SatEngine::detail::onePoleCoeff (2400.0f, sr);
+				ec.postLP = SatEngine::detail::onePoleCoeff (14500.0f, sr);
 				break;
 			default:
 				break;
@@ -2441,11 +2441,17 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 
 		float* data = probe.getWritePointer (0);
 		const float irDrive = 1.0f;
+		const bool usesEmphasis = ! satRaw
+			&& model != SatEngine::Model::Clean
+			&& model != SatEngine::Model::Transistor;
 		for (int n = 0; n < irLen; ++n)
 		{
 			float x = data[n];
-			x = SatEngine::preEmphasize (x, empSt, model, irDrive, satMod, ec);
-			x = SatEngine::deEmphasize  (x, empSt, model, irDrive, satMod, ec);
+			if (usesEmphasis)
+			{
+				x = SatEngine::preEmphasize (x, empSt, model, irDrive, satMod, ec);
+				x = SatEngine::deEmphasize  (x, empSt, model, irDrive, satMod, ec);
+			}
 			data[n] = x;
 		}
 		return probe;
@@ -2482,7 +2488,8 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 
 	const int typeA = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeA)->load());
 	const float modA = parameters.getRawParameterValue (kParamSatModA)->load();
-	auto probeA = makeAlignmentProbe (typeA, modA);
+	const bool rawA = parameters.getRawParameterValue (kParamSatRawA)->load() > 0.5f;
+	auto probeA = makeAlignmentProbe (typeA, modA, rawA);
 	const float* dataA = probeA.getReadPointer (0);
 	const float centroidA = calcCentroid (probeA);
 
@@ -2509,7 +2516,8 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	{
 		const int typeB = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeB)->load());
 		const float modB = parameters.getRawParameterValue (kParamSatModB)->load();
-		auto probeB = makeAlignmentProbe (typeB, modB);
+		const bool rawB = parameters.getRawParameterValue (kParamSatRawB)->load() > 0.5f;
+		auto probeB = makeAlignmentProbe (typeB, modB, rawB);
 		centroidB = calcCentroid (probeB);
 		corrSignB = xcorrSign (dataA, probeB);
 	}
@@ -2518,7 +2526,8 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	{
 		const int typeC = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeC)->load());
 		const float modC = parameters.getRawParameterValue (kParamSatModC)->load();
-		auto probeC = makeAlignmentProbe (typeC, modC);
+		const bool rawC = parameters.getRawParameterValue (kParamSatRawC)->load() > 0.5f;
+		auto probeC = makeAlignmentProbe (typeC, modC, rawC);
 		centroidC = calcCentroid (probeC);
 		corrSignC = xcorrSign (dataA, probeC);
 	}
