@@ -270,7 +270,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kExpAtkMin, kExpAtkMax, 0.01f, 0.3f), kExpAtkDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpRelA, "Exp Rel A",
-		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.1f, 0.3f), kExpRelDefault));
+		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.01f, 0.3f), kExpRelDefault));
 
 	// ----------------------------------------------------------------
 	//  Loader B Parameters
@@ -395,7 +395,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kExpAtkMin, kExpAtkMax, 0.01f, 0.3f), kExpAtkDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpRelB, "Exp Rel B",
-		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.1f, 0.3f), kExpRelDefault));
+		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.01f, 0.3f), kExpRelDefault));
 
 	// ----------------------------------------------------------------
 	//  Loader C Parameters
@@ -520,7 +520,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kExpAtkMin, kExpAtkMax, 0.01f, 0.3f), kExpAtkDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpRelC, "Exp Rel C",
-		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.1f, 0.3f), kExpRelDefault));
+		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.01f, 0.3f), kExpRelDefault));
 
 	// ----------------------------------------------------------------
 	//  Global Parameters
