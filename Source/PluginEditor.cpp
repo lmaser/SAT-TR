@@ -3032,6 +3032,71 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	const bool isFred  = (stype == BarSlider::Type::Fred);
 	const bool isPos   = (stype == BarSlider::Type::Pos);
 	const bool isMix   = (stype == BarSlider::Type::Mix || stype == BarSlider::Type::GlobalMix);
+	const bool isSatDrive = (stype == BarSlider::Type::SatDrive);
+	const bool isSatGirth = (stype == BarSlider::Type::SatGirth);
+	const bool isSatMod   = (stype == BarSlider::Type::SatMod);
+	const bool isSatBias  = (stype == BarSlider::Type::SatBias);
+	const bool isSatSag   = (stype == BarSlider::Type::SatSag);
+	const bool isSatPct   = (isSatDrive || isSatGirth || isSatMod || isSatSag);
+	const bool isSatBiPct = isSatBias;
+
+	auto getSatPromptLabel = [this, &s, stype]() -> juce::String
+	{
+		int loaderIndex = -1;
+		for (int i = 0; i < 3 && loaderIndex < 0; ++i)
+		{
+			auto refs = getLoaderRefs (i);
+			if ((stype == BarSlider::Type::SatDrive && &refs.satDrive == &s)
+			 || (stype == BarSlider::Type::SatGirth && &refs.satGirth == &s)
+			 || (stype == BarSlider::Type::SatMod   && &refs.satMod   == &s)
+			 || (stype == BarSlider::Type::SatBias  && &refs.satBias  == &s)
+			 || (stype == BarSlider::Type::SatSag   && &refs.satSag   == &s))
+				loaderIndex = i;
+		}
+
+		if (loaderIndex < 0)
+		{
+			switch (stype)
+			{
+				case BarSlider::Type::SatDrive: return "DRIVE";
+				case BarSlider::Type::SatGirth: return "GIRTH";
+				case BarSlider::Type::SatMod:   return "MOD";
+				case BarSlider::Type::SatBias:  return "BIAS";
+				case BarSlider::Type::SatSag:   return "REACT";
+				default:                        return {};
+			}
+		}
+
+		auto lr = getLoaderRefs (loaderIndex);
+		const int satModel = getSelectedSatTypeModelIndex (lr.satType);
+		juce::String driveLabel = "DRIVE";
+		juce::String girthLabel = "GIRTH";
+		juce::String modLabel   = "MOD";
+		juce::String biasLabel  = "BIAS";
+		juce::String reactLabel = "REACT";
+
+		switch (satModel)
+		{
+			case 1: girthLabel = "BODY"; modLabel = "FORM"; reactLabel = "COMP"; break;
+			case 2: girthLabel = "BODY"; modLabel = "TYPE"; reactLabel = "SAG";  break;
+			case 3: driveLabel = "GAIN"; girthLabel = "BODY"; modLabel = "TYPE"; reactLabel = "COMP"; break;
+			case 4: girthLabel = "COND"; modLabel = "TOPO"; biasLabel = "SYM"; reactLabel = "COMP"; break;
+			case 5: driveLabel = "THR"; girthLabel = "KNEE"; modLabel = "VOICE"; biasLabel = "SYM"; reactLabel = "PEAK"; break;
+			default: break;
+		}
+
+		switch (stype)
+		{
+			case BarSlider::Type::SatDrive: return driveLabel;
+			case BarSlider::Type::SatGirth: return girthLabel;
+			case BarSlider::Type::SatMod:   return modLabel;
+			case BarSlider::Type::SatBias:  return biasLabel;
+			case BarSlider::Type::SatSag:   return reactLabel;
+			default:                        return {};
+		}
+	};
+
+	const juce::String satLabel = getSatPromptLabel();
 
 	if (isHpLp)             { suffix = " Hz";          suffixShort = " Hz"; }
 	else if (isIn)          { suffix = " dB INPUT";    suffixShort = " dB"; }
@@ -3043,6 +3108,11 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	else if (isFred)        { suffix = " % ANGLE";    suffixShort = " %"; }
 	else if (isPos)         { suffix = " % DIST";     suffixShort = " %"; }
 	else if (isMix)         { suffix = " % MIX";       suffixShort = " %"; }
+	else if (isSatPct || isSatBiPct)
+	{
+		suffix = " % " + satLabel;
+		suffixShort = " %";
+	}
 
 	const juce::String suffixText      = suffix.trimStart();
 	const juce::String suffixTextShort = suffixShort.trimStart();
@@ -3064,6 +3134,10 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 1);
 	else if (isPan)
 		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 0);
+	else if (isSatBias)
+		currentDisplay = juce::String (juce::jlimit (-100.0, 100.0, s.getValue() * 100.0), 1);
+	else if (isSatPct)
+		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 1);
 	else if (isFred || isPos || isMix)
 		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 1);
 	else
@@ -3103,6 +3177,8 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		else if (isSeries)       worstCaseText = "6";
 		else if (isVar)          worstCaseText = "100.0";
 		else if (isPan)          worstCaseText = "100";
+		else if (isSatBias)      worstCaseText = "-100.0";
+		else if (isSatPct)       worstCaseText = "100.0";
 		else if (isFred||isPos)  worstCaseText = "100.0";
 		else if (isMix)          worstCaseText = "100.0";
 		else                     worstCaseText = "999.99";
@@ -3209,6 +3285,16 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 			maxDecs = 0;     maxLen = 3;     // "100"
 		}
 		else if (isFred || isPos || isMix)
+		{
+			minVal = 0.0;    maxVal = 100.0;
+			maxDecs = 1;     maxLen = 5;     // "100.0"
+		}
+		else if (isSatBias)
+		{
+			minVal = -100.0; maxVal = 100.0;
+			maxDecs = 1;     maxLen = 6;     // "-100.0"
+		}
+		else if (isSatPct)
 		{
 			minVal = 0.0;    maxVal = 100.0;
 			maxDecs = 1;     maxLen = 5;     // "100.0"
@@ -3325,6 +3411,9 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 			const bool needsPercentConvert = (st == BarSlider::Type::Pan ||
 			                                  st == BarSlider::Type::Fred  || st == BarSlider::Type::Pos  ||
 			                                  st == BarSlider::Type::Mix  ||
+			                                  st == BarSlider::Type::SatDrive || st == BarSlider::Type::SatGirth ||
+			                                  st == BarSlider::Type::SatMod   || st == BarSlider::Type::SatBias  ||
+			                                  st == BarSlider::Type::SatSag   ||
 			                                  st == BarSlider::Type::GlobalMix);
 
 			if (needsPercentConvert)
