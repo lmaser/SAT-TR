@@ -1141,12 +1141,11 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	// Process one loader with mode in/out and per-loader mix
 	auto processOne = [&] (LoaderState& state, juce::AudioBuffer<float>& buf,
-	                        int loaderIndex, int modeIn, int modeOut, float loaderMix,
-	                        bool skipAutoGain = false)
+	                        int loaderIndex, int modeIn, int modeOut, float loaderMix)
 	{
 		saveDry (buf);
 		applyMidSideMode (buf, modeIn, numSamples);
-		processLoader (state, buf, loaderIndex, skipAutoGain);
+		processLoader (state, buf, loaderIndex);
 		applyMidSideMode (buf, modeOut, numSamples);
 		if (loaderIndex == diagLoaderIndex)
 		{
@@ -1267,8 +1266,8 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			// Copy input for parallel path C
 			for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 				tempBufferC.copyFrom (ch, 0, buffer, ch, 0, numSamples);
-			// Series path: A->B stays in buffer (skip auto-gain on A when B follows)
-			if (activeA) processOne (stateA, buffer, 0, modeInA, modeOutA, mixA, activeB);
+			// Series path: A->B stays in buffer
+			if (activeA) processOne (stateA, buffer, 0, modeInA, modeOutA, mixA);
 			if (activeB) processOne (stateB, buffer, 1, modeInB, modeOutB, mixB);
 			// Parallel path C
 			processOne (stateC, tempBufferC, 2, modeInC, modeOutC, mixC);
@@ -1316,8 +1315,8 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				tempBufferA.copyFrom (ch, 0, buffer, ch, 0, numSamples);
 			// Parallel path A
 			processOne (stateA, tempBufferA, 0, modeInA, modeOutA, mixA);
-			// Series path: B->C stays in buffer (skip auto-gain on B when C follows)
-			if (activeB) processOne (stateB, buffer, 1, modeInB, modeOutB, mixB, activeC);
+			// Series path: B->C stays in buffer
+			if (activeB) processOne (stateB, buffer, 1, modeInB, modeOutB, mixB);
 			if (activeC) processOne (stateC, buffer, 2, modeInC, modeOutC, mixC);
 			// Sum both paths and compensate - M/S bus-aware.
 			// Follow the actual last active stage on the series side.
@@ -1355,12 +1354,10 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	}
 	else // route == 0: A->B->C (full series)
 	{
-		// Skip auto-gain on non-final loaders so the hot saturated signal
-		// feeds into the next stage, preserving harmonic stacking.
-		const int lastActive = activeC ? 2 : (activeB ? 1 : 0);
-		if (activeA) processOne (stateA, buffer, 0, modeInA, modeOutA, mixA, lastActive != 0);
-		if (activeB) processOne (stateB, buffer, 1, modeInB, modeOutB, mixB, lastActive != 1);
-		if (activeC) processOne (stateC, buffer, 2, modeInC, modeOutC, mixC, false);
+		// Full series naturally feeds one stage into the next.
+		if (activeA) processOne (stateA, buffer, 0, modeInA, modeOutA, mixA);
+		if (activeB) processOne (stateB, buffer, 1, modeInB, modeOutB, mixB);
+		if (activeC) processOne (stateC, buffer, 2, modeInC, modeOutC, mixC);
 	}
 
 	// -- MATCH: Tilt EQ targeting a spectral profile --
@@ -1705,9 +1702,6 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		snap.tapeClipPeak   = _diagCollector.tapeClipPeak;
 		snap.tapeDcPeak     = _diagCollector.tapeDcPeak;
 		snap.tapeLimPeak    = _diagCollector.tapeLimPeak;
-		// pkPreAG: compute from pkOut / autoGain (feedPreAG not called from audio thread)
-		// This gives the peak output BEFORE auto-gain compensation was applied.
-		snap.peakPreAG     = 0.0f;  // will be filled after autoGain is captured
 		snap.peakFinal     = peakFinal;
 		snap.maxDelta      = _diagCollector.maxDelta;
 		snap.clickCount    = _diagCollector.clickCount;
@@ -1746,7 +1740,6 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 		const auto& ss = activeState->satState;
 		snap.drive = ss.sDrive;
-		snap.autoGainVal     = ss.blockCoeffs.autoGain;
 		const int dbgPass = juce::jlimit (0, SatEngine::kMaxSeries - 1,
 		                                  snap.seriesCount - 1);
 		snap.transPrePeak    = ss.transistorDbgPre[dbgPass][0];
@@ -1758,9 +1751,6 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		snap.transInputPad   = ss.transistorDbgInputPad[dbgPass][0];
 		snap.transSatK       = ss.transistorDbgSatK[dbgPass][0];
 		snap.transRailThresh = ss.transistorDbgRailThresh[dbgPass][0];
-		// Now compute pkPreAG = pkOut / autoGain (the peak before gain compensation)
-		if (snap.autoGainVal > 0.001f)
-			snap.peakPreAG = snap.peakOut / snap.autoGainVal;
 		float maxSagEnv = 0.0f;
 		for (int sp = 0; sp < SatEngine::kMaxSeries; ++sp)
 			maxSagEnv = std::max (maxSagEnv, ss.sagEnvelope[sp][0]);
@@ -1802,10 +1792,9 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 }
 
 // ----------------------------------------------------------------
-void SATTRAudioProcessor::processLoader (LoaderState& state, 
-                                          juce::AudioBuffer<float>& buffer,
-                                          int loaderIndex,
-                                          bool skipAutoGain)
+void SATTRAudioProcessor::processLoader (LoaderState& state,
+                                         juce::AudioBuffer<float>& buffer,
+                                         int loaderIndex)
 {
 #if SAT_DSP_DIAG
 	SatDiag::Collector* diagCollectorPtr = &_diagCollector;
@@ -2211,7 +2200,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			const float osSr = (float) currentSampleRate * (float) os.getOversamplingFactor();
 
 			SatEngine::processBlock (state.satState, osL, osR, osNumSamples,
-			                         model, satDrive, satGirth, satMod, satBias, satSag, varAmt, osSr, seriesCount, false, skipAutoGain, satRaw, diagCollectorPtr);
+			                         model, satDrive, satGirth, satMod, satBias, satSag, varAmt, osSr, seriesCount, false, satRaw, diagCollectorPtr);
 
 			os.processSamplesDown (block);
 		}
@@ -2222,7 +2211,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 
 			SatEngine::processBlock (state.satState, dataL, dataR, numSamples,
 			                         model, satDrive, satGirth, satMod, satBias, satSag, varAmt,
-			                         (float) currentSampleRate, seriesCount, true, skipAutoGain, satRaw, diagCollectorPtr);
+			                         (float) currentSampleRate, seriesCount, true, satRaw, diagCollectorPtr);
 		}
 
 #if SAT_DSP_DIAG

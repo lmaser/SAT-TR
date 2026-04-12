@@ -847,8 +847,7 @@ private:
 	// loaderIndex: 0=A, 1=B, 2=C
 	void processLoader (LoaderState& state,
 	                    juce::AudioBuffer<float>& buffer,
-	                    int loaderIndex,
-	                    bool skipAutoGain = false);
+	                    int loaderIndex);
 
 	// Delay for auto-align
 	void applyDelay (juce::AudioBuffer<float>& buffer, float delayMs, int loaderIndex);

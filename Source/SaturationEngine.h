@@ -14,7 +14,6 @@
 //    VARIATION (analog drift via Hermite S&H)
 //    MOD (input-domain power warp + model-specific secondary)
 //    Internal emphasis / de-emphasis EQ per model
-//    Auto-gain compensation
 //    Safety LPF for x1 (no oversampling) mode
 // ----------------------------------------------------------------
 
@@ -803,12 +802,6 @@ struct State
 
     // Model-switch detection (reset filters/feedback on change to prevent transients)
     Model lastModel = Model::Clean;
-
-    // Per-block precomputed constant filter coefficients
-    // Avoids recomputing onePoleCoeff per-sample for fixed frequencies
-    struct BlockCoeffs {
-        float autoGain     = 1;  // precomputed auto-gain compensation
-    } blockCoeffs;
 
     // Parameter smoothing (one-pole IIR)
     float sDrive = 0.0f;
@@ -1652,12 +1645,6 @@ inline float applyDriveCurve (float driveParam, Model model) noexcept
     return std::pow (driveParam, exp);
 }
 
-inline float getAutoGain (Model model, float drive) noexcept
-{
-    juce::ignoreUnused (model, drive);
-    return 1.0f;
-}
-
 struct SafetyLPFCoeffs { float b0=0, b1=0, b2=0, a1=0, a2=0; };
 
 inline float processSafetyLPF (SafetyLPF& st, float x, const SafetyLPFCoeffs& c) noexcept
@@ -2360,7 +2347,6 @@ inline void processBlock (State& state,
                           float sampleRate,
                           int   seriesCount = 1,
                           bool  isSafetyLpfOn = false,
-                          bool  skipAutoGain = false,
                           bool  rawMode = false,
                           SatDiag::Collector* diagCollector = nullptr) noexcept
 {
@@ -2618,11 +2604,6 @@ inline void processBlock (State& state,
         lastShape = shapeSig;
         wasActive = active;
     }
-
-    // Auto-gain: precompute with target drive (std::tanh per-block, not per-sample)
-    const float preAutoGain = skipAutoGain ? 1.0f : getAutoGain (model, driveCurved);
-
-    state.blockCoeffs.autoGain     = preAutoGain;
 
     state.currentSeriesCount = juce::jlimit (1, kMaxSeries, seriesCount);
     const bool rawStripFilters = rawMode && (model == Model::Tape || model == Model::Tube
@@ -2962,21 +2943,18 @@ inline void processBlock (State& state,
                 if (diagCollector != nullptr && isLast && ch == 0)
                     diagCollector->feedDc (x);
 
-                // -- AUTO-GAIN COMPENSATION (per series pass, unless skipped) --
+                // -- Final level trim (per series pass) --
                 if (isLast)
                 {
                     if (model == Model::Tape)
                         x *= getTapeLevelTrim (drive, mod, girth, react);
                     else if (model == Model::Tube)
                         x *= getTriodeLevelTrim (drive, mod, state.currentSeriesCount);
-                    if (!skipAutoGain)
-                        x *= state.blockCoeffs.autoGain;
                 }
 
-                // -- Final safety soft-limiter (AFTER auto-gain) --
+                // -- Final safety soft-limiter --
                 // Transparent below +/-1.5, smooth compression above, max +/-2.5
-                // Prevents auto-gain from amplifying clamped signal past safe levels
-                // and eliminates hard-clip discontinuities that cause audible clicks.
+                // Eliminates hard-clip discontinuities that cause audible clicks.
                 if (isLast)
                 {
                     const float absX = std::abs (x);

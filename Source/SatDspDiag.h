@@ -6,7 +6,8 @@
 // (zero-alloc, no mutex). A timer thread periodically drains the ring buffer
 // and writes a human-readable report to Desktop/SAT-TR_DspDiag.txt.
 //
-// Enable:  #define SAT_DSP_DIAG 1   (set to 0 for zero overhead in release)
+// Default: enabled in Debug, disabled in Release.
+// Override manually with SAT_DSP_DIAG if needed.
 // ============================================================================
 
 #include <JuceHeader.h>
@@ -15,7 +16,11 @@
 #include <cstdio>
 
 #ifndef SAT_DSP_DIAG
- #define SAT_DSP_DIAG 1
+ #if JUCE_DEBUG
+  #define SAT_DSP_DIAG 1
+ #else
+  #define SAT_DSP_DIAG 0
+ #endif
 #endif
 
 namespace SatDiag
@@ -46,11 +51,9 @@ struct BlockSnap
 
     // Signal levels (peak absolute per block, L channel)
     float    peakIn         = 0.0f;  // input to saturation engine
-    float    peakOut        = 0.0f;  // output of saturation engine (post auto-gain + soft-limiter)
-    float    peakPreAG      = 0.0f;  // pre-auto-gain peak (raw waveshaper output)
+    float    peakOut        = 0.0f;  // output of saturation engine (post soft-limiter)
     float    peakFinal      = 0.0f;  // final output (post all processing)
     float    satDeltaPeak   = 0.0f;  // peak |processed loader - loader input|
-    float    autoGainVal    = 1.0f;  // precomputed auto-gain multiplier
     float    tapeCorePeak   = 0.0f;  // direct output of the model core on last series pass
     float    lastPassInPeak = 0.0f;  // signal entering the last series pass
     float    triodeBlockPeak = 0.0f; // peak triode blocking memory on the last series pass
@@ -139,7 +142,6 @@ struct Collector
 {
     float  peakIn       = 0.0f;
     float  peakOut      = 0.0f;
-    float  peakPreAG    = 0.0f;   // pre-auto-gain peak (raw waveshaper + filters)
     float  tapeCorePeak = 0.0f;
     float  lastPassInPeak = 0.0f;
     float  triodeBlockPeak = 0.0f;
@@ -163,7 +165,7 @@ struct Collector
 
     void reset() noexcept
     {
-        peakIn = peakOut = peakPreAG = prevSample = maxDelta = lastDx = lastK = 0.0f;
+        peakIn = peakOut = prevSample = maxDelta = lastDx = lastK = 0.0f;
         tapeCorePeak = lastPassInPeak = triodeBlockPeak = tapeClipPeak = tapeDcPeak = tapeLimPeak = 0.0f;
         clickCount = nanCount = infCount = denormals = 0;
         adaaFB = adaaBlend = adaaFull = 0;
@@ -194,13 +196,6 @@ struct Collector
         if (std::isnan (x)) ++nanCount;
         else if (std::isinf (x)) ++infCount;
         else if (a > 0.0f && a < 1.175e-38f) ++denormals;
-    }
-
-    // Track pre-auto-gain peak (raw waveshaper + filters output before gain compensation)
-    void feedPreAG (float x) noexcept
-    {
-        const float a = std::abs (x);
-        if (a > peakPreAG) peakPreAG = a;
     }
 
     void feedTapeCore (float x) noexcept
@@ -308,7 +303,7 @@ private:
                 << "================================================================\n"
                 << "Columns:\n"
                 << "  time_ms  cpu%  model  sr  blk  os  ser | drive girth mod bias react\n"
-                << "  pkIn  pkOut  pkPreAG  pkFin  autoGain | maxDlt clicks | nan inf dnrm\n"
+                << "  pkIn  pkOut  pkFin | maxDlt clicks | nan inf dnrm\n"
                 << "  adaaFB adaaBlend adaaFull lastDx lastK\n"
        << "  maxFilt sagEnv\n"
                 << "================================================================\n\n";
@@ -343,7 +338,7 @@ private:
         std::snprintf (buf, sizeof (buf),
             "[%lld] rev=%d cpu=%.1f%%  m=%d ld=%d rt=%d en=%d sr=%.0f blk=%d os=%d ser=%d"
             " | drv=%.3f gir=%.3f mod=%.3f bias=%.3f react=%.3f"
-            " | pkI=%.4f pkO=%.4f pkPre=%.4f pkF=%.4f dSat=%.4f ag=%.4f"
+            " | pkI=%.4f pkO=%.4f pkF=%.4f dSat=%.4f"
             " | tIn=%.4f tBlk=%.4f tCore=%.4f tClip=%.4f tDc=%.4f tLim=%.4f"
             " | trPre=%.4f trCin=%.4f trCout=%.4f trRin=%.4f trRout=%.4f trPost=%.4f"
             " | trPad=%.3f trK=%.3f trTh=%.3f"
@@ -355,7 +350,7 @@ private:
             (long long) s.timestampMs, s.implRev, s.cpuPercent,
             s.model, s.diagLoader, s.route, s.enableMask, s.sampleRate, s.numSamples, s.osOrder, s.seriesCount,
             s.drive, s.girth, s.mod, s.bias, s.react,
-            s.peakIn, s.peakOut, s.peakPreAG, s.peakFinal, s.satDeltaPeak, s.autoGainVal,
+            s.peakIn, s.peakOut, s.peakFinal, s.satDeltaPeak,
             s.lastPassInPeak, s.triodeBlockPeak, s.tapeCorePeak, s.tapeClipPeak, s.tapeDcPeak, s.tapeLimPeak,
             s.transPrePeak, s.transCoreInPeak, s.transCoreOutPeak, s.transRailInPeak, s.transRailOutPeak, s.transPostPeak,
             s.transInputPad, s.transSatK, s.transRailThresh,
@@ -389,6 +384,24 @@ inline DiagWriter& getDiagWriter() { static DiagWriter w; return w; }
 #define SAT_DIAG_DRAIN()            SatDiag::getDiagWriter().drain(SatDiag::getDiagRing())
 
 #else  // SAT_DSP_DIAG == 0
+
+struct Collector
+{
+    void reset() noexcept {}
+    void feedIn (float) noexcept {}
+    void feedOut (float) noexcept {}
+    void feedTapeCore (float) noexcept {}
+    void feedCore (float) noexcept {}
+    void feedLastPassIn (float) noexcept {}
+    void feedTriodeBlock (float) noexcept {}
+    void feedTapeClip (float) noexcept {}
+    void feedClip (float) noexcept {}
+    void feedTapeDc (float) noexcept {}
+    void feedDc (float) noexcept {}
+    void feedTapeLim (float) noexcept {}
+    void feedLim (float) noexcept {}
+    void feedAdaa (float, float, int) noexcept {}
+};
 
 #define SAT_DIAG_COLLECTOR          ((void)0)
 #define SAT_DIAG_RESET()            ((void)0)
