@@ -170,6 +170,13 @@ Loader topology:
 - **A|B|C**: full parallel
 - **A>B|C**: A into B, with C in parallel
 - **A|B>C**: A in parallel with B into C
+- **(A|B)>C**: A and B in parallel, then their combined result feeds C
+- **A>(B|C)**: A first, then its output splits to B and C in parallel
+
+Notes:
+- In **A|B>C**, only the **B** branch feeds **C**. `A` is summed later, after the `B->C` chain.
+- In **(A|B)>C**, `A` and `B` are summed first, and that combined signal is what enters `C`.
+- In **A>(B|C)**, `A` is a shared pre-stage. Both `B` and `C` receive the output of `A`.
 
 #### MIX (0-100%)
 
@@ -222,9 +229,25 @@ Stereo channel swap scope: `NONE`, `WET`, `GLOBAL`.
 
 Per-loader Mid/Side routing:
 
-- **MODE IN**: `L+R`, `MID`, `SIDE`
-- **MODE OUT**: `L+R`, `MID`, `SIDE`
-- **SUM BUS**: `ST`, `->M`, `->S`
+- **MODE IN**
+  - `L+R`: standard stereo input
+  - `MID`: extracts the Mid component for processing
+  - `SIDE`: extracts the Side component for processing
+- **MODE OUT**
+  - `L+R`: standard stereo output
+  - `MID`: outputs a mono Mid signal on both channels
+  - `SIDE`: outputs a stereo Side signal as `+S / -S`
+- **SUM BUS**
+  - `ST`: contributes directly to the stereo path
+  - `->M`: contributes to the Mid bus
+  - `->S`: contributes to the Side bus
+
+Practical note:
+- `MODE IN` decides what component a loader processes.
+- `MODE OUT` decides how that processed result is represented when it leaves the loader.
+- `SUM BUS` decides how that loader output is injected at a parallel summing point.
+- `SUM BUS` matters in routes with an actual split/summing stage: `A|B|C`, `A>B|C`, `A|B>C`, `(A|B)>C`, and `A>(B|C)`.
+- In full series `A>B>C`, there is no parallel sum stage, so `SUM BUS` has no practical effect.
 
 ## Technical Details
 
