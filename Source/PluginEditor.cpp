@@ -4862,7 +4862,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	};
 
 	setupField ("thresh", "THRESH", "dB", threshSuffix, threshUnit);
-	setupField ("ratio",  "RATIO 1:",  "", ratioSuffix,  ratioUnit);
+	setupField ("ratio",  "RATIO 1",  ":", ratioSuffix,  ratioUnit);
 	setupField ("knee",   "KNEE",   "dB", kneeSuffix,   kneeUnit);
 	setupField ("atk",    "ATK",    "ms", atkSuffix,    atkUnit);
 	setupField ("rel",    "REL",    "ms", relSuffix,    relUnit);
@@ -4961,21 +4961,30 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		if (sawDot)
 			out += "." + fraction;
 
-		incompleteOut = (out.isEmpty() || out == "-");
-
-		juce::String parseText = out;
-		if (parseText.endsWithChar ('.'))
-			parseText = parseText.dropLastCharacters (1);
-
-		if (! incompleteOut && parseText.isNotEmpty() && parseText != "-")
-		{
-			const float raw = parseText.getFloatValue();
-			const float clamped = juce::jlimit (spec.minValue, spec.maxValue, raw);
-			if (std::abs (clamped - raw) > 1.0e-6f)
-				return juce::String (clamped, spec.formatDecimals);
-		}
+		incompleteOut = (out.isEmpty() || out == "-" || out.endsWithChar ('.'));
 
 		return out;
+	};
+
+	auto parseEnvPromptValue = [sanitiseEnvPromptText] (juce::TextEditor* te,
+	                                                    const EnvPromptNumericSpec& spec,
+	                                                    float fallback) -> float
+	{
+		if (te == nullptr)
+			return fallback;
+
+		bool incomplete = false;
+		auto sanitised = sanitiseEnvPromptText (te->getText(), spec, incomplete);
+		if (sanitised.isEmpty() || sanitised == "-" || incomplete)
+			return fallback;
+
+		if (sanitised.endsWithChar ('.'))
+			sanitised = sanitised.dropLastCharacters (1);
+
+		if (sanitised.isEmpty() || sanitised == "-")
+			return fallback;
+
+		return juce::jlimit (spec.minValue, spec.maxValue, (float) sanitised.getDoubleValue());
 	};
 
 	auto* threshApvts = audioProcessor.getValueTreeState().getParameter (threshParamId);
@@ -5135,16 +5144,44 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 			const int labelW = stringWidth (suffix->getFont(), suffix->getText()) + 2;
 			const int unitW  = (unitLabel != nullptr) ? stringWidth (font, unitLabel->getText()) + 2 : 0;
-			const int groupW = labelW + labelGap + editorW + (unitLabel != nullptr ? unitGapPx + unitW : 0);
-			const int blockLeft = contentLeft + juce::jmax (0, (innerW - groupW) / 2);
+			const bool isRatioRow = (te == ratioTe && unitLabel == ratioUnit);
 
-			suffix->setBounds (blockLeft, rowY, labelW, rowH);
-			const int teX = blockLeft + labelW + labelGap;
-			te->setBounds (teX, rowY, editorW, rowH);
-
-			if (unitLabel)
+			if (isRatioRow)
 			{
-				unitLabel->setBounds (teX + editorW + unitGapPx, rowY, unitW, rowH);
+				const int ratioSeparatorSpan = juce::jmax (unitW + 2 * juce::jmax (spaceW, 8), labelGap + unitW);
+				const int groupW = labelW + ratioSeparatorSpan + editorW;
+				const int blockLeft = contentLeft + juce::jmax (0, (innerW - groupW) / 2);
+				const int suffixRight = blockLeft + labelW;
+				const int teX = blockLeft + labelW + ratioSeparatorSpan;
+				const int ratioTextW = stringWidth (font, te->getText());
+				const int visibleTextLeft = teX + juce::jmax (0, (editorW - ratioTextW) / 2);
+				const int colonCenterX = suffixRight + (visibleTextLeft - suffixRight) / 2;
+				const int colonX = colonCenterX - unitW / 2;
+
+				suffix->setBounds (blockLeft, rowY, labelW, rowH);
+
+				if (unitLabel != nullptr)
+				{
+					unitLabel->setJustificationType (juce::Justification::centred);
+					unitLabel->setBounds (colonX, rowY, unitW, rowH);
+				}
+
+				te->setBounds (teX, rowY, editorW, rowH);
+			}
+			else
+			{
+				const int groupW = labelW + labelGap + editorW + (unitLabel != nullptr ? unitGapPx + unitW : 0);
+				const int blockLeft = contentLeft + juce::jmax (0, (innerW - groupW) / 2);
+
+				suffix->setBounds (blockLeft, rowY, labelW, rowH);
+				const int teX = blockLeft + labelW + labelGap;
+				te->setBounds (teX, rowY, editorW, rowH);
+
+				if (unitLabel)
+				{
+					unitLabel->setJustificationType (juce::Justification::centredLeft);
+					unitLabel->setBounds (teX + editorW + unitGapPx, rowY, unitW, rowH);
+				}
 			}
 
 			bar->setBounds (barX, rowY + rowH + barGap, barW, barH);
@@ -5224,7 +5261,11 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			parseText = parseText.dropLastCharacters (1);
 
 		if (! incomplete && parseText.isNotEmpty() && parseText != "-")
-			pushValue ((float) parseText.getDoubleValue(), bar);
+		{
+			const float raw = (float) parseText.getDoubleValue();
+			if (raw >= spec.minValue && raw <= spec.maxValue)
+				pushValue (raw, bar);
+		}
 
 		*syncing = false;
 		layoutBody();
@@ -5317,6 +5358,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	aw->enterModalState (true,
 		juce::ModalCallbackFunction::create (
 			[safeThis, aw, orderState, threshBar, ratioBar, kneeBar, atkBar, relBar,
+			 parseEnvPromptValue, threshSpec, ratioSpec, kneeSpec, atkSpec, relSpec,
 			 orderLegend, orderLabel,
 			 threshSuffix, ratioSuffix, kneeSuffix, atkSuffix, relSuffix,
 			 threshUnit, ratioUnit, kneeUnit, atkUnit, relUnit,
@@ -5359,16 +5401,24 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			}
 			else
 			{
-				// OK: update tooltip
-				const float newThresh = juce::jlimit (SATTRAudioProcessor::kExpThreshMin,
-				                                      SATTRAudioProcessor::kExpThreshMax,
-				                                      SATTRAudioProcessor::kExpThreshMin
-				                                      + threshBar->value * (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin));
-				const float newRatio = expRatioNormToDisplay (ratioBar->value);
-				const float newKnee = juce::jlimit (SATTRAudioProcessor::kExpKneeMin,
-				                                    SATTRAudioProcessor::kExpKneeMax,
-				                                    SATTRAudioProcessor::kExpKneeMin
-				                                    + kneeBar->value * (SATTRAudioProcessor::kExpKneeMax - SATTRAudioProcessor::kExpKneeMin));
+				auto& vts = safeThis->audioProcessor.getValueTreeState();
+				const float newThresh = parseEnvPromptValue (aw->getTextEditor ("thresh"), threshSpec, savedThresh);
+				const float newRatio  = parseEnvPromptValue (aw->getTextEditor ("ratio"),  ratioSpec,  savedRatio);
+				const float newKnee   = parseEnvPromptValue (aw->getTextEditor ("knee"),   kneeSpec,   savedKnee);
+				const float newAtk    = parseEnvPromptValue (aw->getTextEditor ("atk"),    atkSpec,    savedAtk);
+				const float newRel    = parseEnvPromptValue (aw->getTextEditor ("rel"),    relSpec,    savedRel);
+
+				if (auto* p = vts.getParameter (threshParamId))
+					p->setValueNotifyingHost (p->convertTo0to1 (newThresh));
+				if (auto* p = vts.getParameter (ratioParamId))
+					p->setValueNotifyingHost (p->convertTo0to1 (newRatio));
+				if (auto* p = vts.getParameter (kneeParamId))
+					p->setValueNotifyingHost (p->convertTo0to1 (newKnee));
+				if (auto* p = vts.getParameter (atkParamId))
+					p->setValueNotifyingHost (p->convertTo0to1 (newAtk));
+				if (auto* p = vts.getParameter (relParamId))
+					p->setValueNotifyingHost (p->convertTo0to1 (newRel));
+
 				auto tip = juce::String (*orderState ? "POST" : "PRE")
 				         + " | " + juce::String (newThresh, 1) + " dB"
 				         + " | 1:" + formatExpRatioDisplay (newRatio);
