@@ -160,7 +160,7 @@ public:
 	// ----------------------------------------------------------------
 	static constexpr const char* kParamInput        = "input";
 	static constexpr const char* kParamOutput       = "output";
-	static constexpr const char* kParamRoute        = "route";     // 0=A->B->C, 1=A|B|C, 2=A->B|C, 3=A|B->C
+	static constexpr const char* kParamRoute        = "route";     // 0=A->B->C, 1=A|B|C, 2=A->B|C, 3=A|B->C, 4=(A|B)->C, 5=A->(B|C)
 	static constexpr const char* kParamMix          = "mix";       // Global dry/wet mix
 	static constexpr const char* kParamMixMode      = "mix_mode";  // 0=INSERT, 1=SEND
 	static constexpr const char* kParamDryLevel     = "dry_level"; // SEND mode dry level
@@ -365,7 +365,7 @@ public:
 	static constexpr int   kFilterPosDefault        = 0;          // 0=F-post T-post (both POST)
 
 	static constexpr int   kRouteMin                = 0;
-	static constexpr int   kRouteMax                = 3;          // 0=A->B->C, 1=A|B|C, 2=A->B|C, 3=A|B->C
+	static constexpr int   kRouteMax                = 5;          // 0=A->B->C, 1=A|B|C, 2=A->B|C, 3=A|B->C, 4=(A|B)->C, 5=A->(B|C)
 	static constexpr int   kRouteDefault            = 1;          // Parallel by default
 	static constexpr int   kMatchDefault            = 0;
 	static constexpr int   kTrimDefault             = 0;          // None (no tilt)
@@ -876,7 +876,8 @@ private:
 
 
 	// Shared M/S encoding helper (used by processBlock + offline export)
-	static void applyMidSideMode (juce::AudioBuffer<float>& buf, int modeVal, int numSamples);
+	static void applyMidSideInputMode (juce::AudioBuffer<float>& buf, int modeVal, int numSamples);
+	static void applyMidSideOutputMode (juce::AudioBuffer<float>& buf, int modeVal, int numSamples);
 
 	// Generic Hermite + Drift chaos engine (per-sample advance)
 	inline void advanceChaosEngine (

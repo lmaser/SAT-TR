@@ -539,7 +539,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamOutput, "Output", kOutputMin, kOutputMax, kOutputDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
-		kParamRoute, "Route", juce::StringArray { "A>B>C", "A|B|C", "A>B|C", "A|B>C" }, kRouteDefault));
+		kParamRoute, "Route", juce::StringArray { "A>B>C", "A|B|C", "A>B|C", "A|B>C", "(A|B)>C", "A>(B|C)" }, kRouteDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamMix, "Mix", kGlobalMixMin, kGlobalMixMax, kGlobalMixDefault));
 
@@ -973,7 +973,7 @@ static inline void injectMSBus (float l, float r, int bus,
 	else               { sideBus += (l - r) * 0.5f; }
 }
 
-void SATTRAudioProcessor::applyMidSideMode (juce::AudioBuffer<float>& buf, int modeVal, int nSamples)
+void SATTRAudioProcessor::applyMidSideInputMode (juce::AudioBuffer<float>& buf, int modeVal, int nSamples)
 {
 	if ((modeVal == 1 || modeVal == 2) && buf.getNumChannels() >= 2)
 	{
@@ -1172,9 +1172,9 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	                        int loaderIndex, int modeIn, int modeOut, float loaderMix)
 	{
 		saveDry (buf);
-		applyMidSideMode (buf, modeIn, numSamples);
+		applyMidSideInputMode (buf, modeIn, numSamples);
 		processLoader (state, buf, loaderIndex);
-		applyMidSideMode (buf, modeOut, numSamples);
+		applyMidSideOutputMode (buf, modeOut, numSamples);
 		if (loaderIndex == diagLoaderIndex)
 		{
 			const int chCount = juce::jmin (buf.getNumChannels(), loaderDryBuffer.getNumChannels());
@@ -1214,10 +1214,12 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	};
 
 	// -- ROUTING --
-	// Route 0: A->B->C (full series)
-	// Route 1: A|B|C  (all parallel)
-	// Route 2: A->B|C  (series A->B, C parallel)
-	// Route 3: A|B->C  (A parallel, series B->C)
+	// Route 0: A->B->C   (full series)
+	// Route 1: A|B|C     (all parallel)
+	// Route 2: A->B|C    (series A->B, C parallel)
+	// Route 3: A|B->C    (A parallel, series B->C)
+	// Route 4: (A|B)->C  (A and B parallel, then C in series)
+	// Route 5: A->(B|C)  (A in series, then B and C in parallel)
 
 	if (route == 1) // A|B|C - all parallel
 	{
@@ -1392,6 +1394,122 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			if (activeA) processOne (stateA, buffer, 0, modeInA, modeOutA, mixA);
 			if (activeB) processOne (stateB, buffer, 1, modeInB, modeOutB, mixB);
 			if (activeC) processOne (stateC, buffer, 2, modeInC, modeOutC, mixC);
+		}
+	}
+	else if (route == 4) // (A|B)->C - A and B parallel, then C in series
+	{
+		const int numParallel = (activeA ? 1 : 0) + (activeB ? 1 : 0);
+
+		if (numParallel >= 2)
+		{
+			for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+			{
+				tempBufferA.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+				tempBufferB.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+			}
+
+			processOne (stateA, tempBufferA, 0, modeInA, modeOutA, mixA);
+			processOne (stateB, tempBufferB, 1, modeInB, modeOutB, mixB);
+
+			const bool anyMSBus = (sumBusA != 0) || (sumBusB != 0);
+			if (anyMSBus && buffer.getNumChannels() >= 2)
+			{
+				auto* outL = buffer.getWritePointer (0);
+				auto* outR = buffer.getWritePointer (1);
+				const auto* aL = tempBufferA.getReadPointer (0);
+				const auto* aR = tempBufferA.getReadPointer (1);
+				const auto* bL = tempBufferB.getReadPointer (0);
+				const auto* bR = tempBufferB.getReadPointer (1);
+
+				for (int i = 0; i < numSamples; ++i)
+				{
+					float stL = 0.0f, stR = 0.0f, midBus = 0.0f, sideBus = 0.0f;
+					injectMSBus (aL[i], aR[i], sumBusA, stL, stR, midBus, sideBus);
+					injectMSBus (bL[i], bR[i], sumBusB, stL, stR, midBus, sideBus);
+					outL[i] = stL + midBus + sideBus;
+					outR[i] = stR + midBus - sideBus;
+				}
+			}
+			else
+			{
+				buffer.clear();
+				for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+				{
+					juce::FloatVectorOperations::add (buffer.getWritePointer (ch), tempBufferA.getReadPointer (ch), numSamples);
+					juce::FloatVectorOperations::add (buffer.getWritePointer (ch), tempBufferB.getReadPointer (ch), numSamples);
+				}
+			}
+
+			buffer.applyGain (1.0f / std::sqrt (static_cast<float> (numParallel)));
+		}
+		else if (activeA)
+		{
+			processOne (stateA, buffer, 0, modeInA, modeOutA, mixA);
+		}
+		else if (activeB)
+		{
+			processOne (stateB, buffer, 1, modeInB, modeOutB, mixB);
+		}
+
+		if (activeC)
+			processOne (stateC, buffer, 2, modeInC, modeOutC, mixC);
+	}
+	else if (route == 5) // A->(B|C) - A in series, then B and C in parallel
+	{
+		if (activeA)
+			processOne (stateA, buffer, 0, modeInA, modeOutA, mixA);
+
+		const int numParallel = (activeB ? 1 : 0) + (activeC ? 1 : 0);
+
+		if (numParallel >= 2)
+		{
+			for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+			{
+				tempBufferB.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+				tempBufferC.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+			}
+
+			processOne (stateB, tempBufferB, 1, modeInB, modeOutB, mixB);
+			processOne (stateC, tempBufferC, 2, modeInC, modeOutC, mixC);
+
+			const bool anyMSBus = (sumBusB != 0) || (sumBusC != 0);
+			if (anyMSBus && buffer.getNumChannels() >= 2)
+			{
+				auto* outL = buffer.getWritePointer (0);
+				auto* outR = buffer.getWritePointer (1);
+				const auto* bL = tempBufferB.getReadPointer (0);
+				const auto* bR = tempBufferB.getReadPointer (1);
+				const auto* cL = tempBufferC.getReadPointer (0);
+				const auto* cR = tempBufferC.getReadPointer (1);
+
+				for (int i = 0; i < numSamples; ++i)
+				{
+					float stL = 0.0f, stR = 0.0f, midBus = 0.0f, sideBus = 0.0f;
+					injectMSBus (bL[i], bR[i], sumBusB, stL, stR, midBus, sideBus);
+					injectMSBus (cL[i], cR[i], sumBusC, stL, stR, midBus, sideBus);
+					outL[i] = stL + midBus + sideBus;
+					outR[i] = stR + midBus - sideBus;
+				}
+			}
+			else
+			{
+				buffer.clear();
+				for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+				{
+					juce::FloatVectorOperations::add (buffer.getWritePointer (ch), tempBufferB.getReadPointer (ch), numSamples);
+					juce::FloatVectorOperations::add (buffer.getWritePointer (ch), tempBufferC.getReadPointer (ch), numSamples);
+				}
+			}
+
+			buffer.applyGain (1.0f / std::sqrt (static_cast<float> (numParallel)));
+		}
+		else if (activeB)
+		{
+			processOne (stateB, buffer, 1, modeInB, modeOutB, mixB);
+		}
+		else if (activeC)
+		{
+			processOne (stateC, buffer, 2, modeInC, modeOutC, mixC);
 		}
 	}
 	else // route == 0: A->B->C (full series)
@@ -2450,6 +2568,29 @@ void SATTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float de
 			delayLine.pushSample (ch, input);
 			const float delayed = delayLine.popSample (ch);
 			channelData[i] = input + (delayed - input) * wet;
+		}
+	}
+}
+
+void SATTRAudioProcessor::applyMidSideOutputMode (juce::AudioBuffer<float>& buf, int modeVal, int nSamples)
+{
+	if ((modeVal == 1 || modeVal == 2) && buf.getNumChannels() >= 2)
+	{
+		auto* L = buf.getWritePointer (0);
+		auto* R = buf.getWritePointer (1);
+		for (int i = 0; i < nSamples; ++i)
+		{
+			const float mono = (L[i] + R[i]) * 0.5f;
+			if (modeVal == 1) // MID output: dual mono mid
+			{
+				L[i] = mono;
+				R[i] = mono;
+			}
+			else // SIDE output: stereo-encoded side
+			{
+				L[i] = mono;
+				R[i] = -mono;
+			}
 		}
 	}
 }
