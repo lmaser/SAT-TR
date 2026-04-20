@@ -310,8 +310,8 @@ public:
 	static constexpr float kChaosDriftAmp            = 0.3f;
 
 	// Expander / Noise Gate
-	static constexpr float kExpRatioMin              = 1.0f;   // 1:1 (no expansion)
-	static constexpr float kExpRatioMax              = 10.0f;  // 1:10
+	static constexpr float kExpRatioMin              = 0.1f;   // visible 1:0.1 .. 1:10, centred at 1
+	static constexpr float kExpRatioMax              = 10.0f;
 	static constexpr float kExpRatioDefault          = 1.0f;
 	static constexpr float kExpThreshMin             = -60.0f; // dB
 	static constexpr float kExpThreshMax             = 0.0f;   // dB
@@ -319,7 +319,7 @@ public:
 	static constexpr float kExpKneeMin               = 0.0f;   // dB, 0 = hard knee
 	static constexpr float kExpKneeMax               = 12.0f;  // dB
 	static constexpr float kExpKneeDefault           = 0.0f;
-	static constexpr float kExpAtkMin                = 0.01f;  // ms
+	static constexpr float kExpAtkMin                = 0.0f;   // ms
 	static constexpr float kExpAtkMax                = 100.0f; // ms
 	static constexpr float kExpAtkDefault            = 0.1f;   // ms
 	static constexpr float kExpRelMin                = 5.0f;   // ms

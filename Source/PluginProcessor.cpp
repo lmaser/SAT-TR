@@ -2101,15 +2101,14 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	// -- Expander / Noise Gate lambda --
 	auto applyExpander = [&]()
 	{
-		if (!expanderEnabled || expRatio <= 1.01f)
-			return;
-
 		const float sr = (float) currentSampleRate;
 		const float attCoeff = std::exp (-1.0f / (sr * juce::jmax (0.00001f, expAtkMs * 0.001f)));
 		const float relCoeff = std::exp (-1.0f / (sr * juce::jmax (0.001f,   expRelMs * 0.001f)));
-		const float ratio = juce::jlimit (1.0f, 10.0f, expRatio);
+		const float ratio = juce::jlimit (kExpRatioMin, kExpRatioMax, expRatio);
+		if (!expanderEnabled || std::abs (ratio - 1.0f) <= 0.01f)
+			return;
 		const float kneeDb = juce::jlimit (kExpKneeMin, kExpKneeMax, expKneeDb);
-		const float slope = ratio - 1.0f;  // downward expansion slope in dB below threshold
+		const float slope = ratio - 1.0f;  // >0 = downward expansion, <0 = upward compression below threshold
 
 		const int chCount = juce::jmin (numChannels, 2);
 		float* channelData[2] = { nullptr, nullptr };
@@ -2135,12 +2134,12 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			if (env > 1.0e-12f)
 			{
 				const float envDb = 20.0f * std::log10 (env);
-				float reductionDb = 0.0f;
+				float gainDeltaDb = 0.0f;
 
 				if (kneeDb <= 1.0e-6f)
 				{
 					if (envDb < expThreshDb)
-						reductionDb = slope * (expThreshDb - envDb);
+						gainDeltaDb = slope * (expThreshDb - envDb);
 				}
 				else
 				{
@@ -2149,17 +2148,17 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 
 					if (deltaBelowThreshDb >= halfKneeDb)
 					{
-						reductionDb = slope * deltaBelowThreshDb;
+						gainDeltaDb = slope * deltaBelowThreshDb;
 					}
 					else if (deltaBelowThreshDb > -halfKneeDb)
 					{
 						const float kneePos = deltaBelowThreshDb + halfKneeDb; // 0..kneeDb
-						reductionDb = slope * (kneePos * kneePos) / (2.0f * kneeDb);
+						gainDeltaDb = slope * (kneePos * kneePos) / (2.0f * kneeDb);
 					}
 				}
 
-				reductionDb = juce::jlimit (0.0f, 120.0f, reductionDb);
-				gr = fastDecibelsToGain (-reductionDb);
+				gainDeltaDb = juce::jlimit (-120.0f, 120.0f, gainDeltaDb);
+				gr = fastDecibelsToGain (-gainDeltaDb);
 			}
 
 			for (int ch = 0; ch < chCount; ++ch)

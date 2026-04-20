@@ -65,6 +65,40 @@ namespace
 		}
 	}
 
+	float expRatioInternalToDisplay (float internalRatio) noexcept
+	{
+		return juce::jlimit (SATTRAudioProcessor::kExpRatioMin,
+		                     SATTRAudioProcessor::kExpRatioMax,
+		                     internalRatio);
+	}
+
+	float expRatioDisplayToInternal (float displayRatio) noexcept
+	{
+		return juce::jlimit (SATTRAudioProcessor::kExpRatioMin,
+		                     SATTRAudioProcessor::kExpRatioMax,
+		                     displayRatio);
+	}
+
+	float expRatioDisplayToNorm (float displayRatio) noexcept
+	{
+		const float clamped = expRatioInternalToDisplay (displayRatio);
+		const float minLog = std::log10 (SATTRAudioProcessor::kExpRatioMin);
+		const float maxLog = std::log10 (SATTRAudioProcessor::kExpRatioMax);
+		return juce::jlimit (0.0f, 1.0f, (std::log10 (clamped) - minLog) / (maxLog - minLog));
+	}
+
+	float expRatioNormToDisplay (float norm) noexcept
+	{
+		const float minLog = std::log10 (SATTRAudioProcessor::kExpRatioMin);
+		const float maxLog = std::log10 (SATTRAudioProcessor::kExpRatioMax);
+		return std::pow (10.0f, minLog + juce::jlimit (0.0f, 1.0f, norm) * (maxLog - minLog));
+	}
+
+	juce::String formatExpRatioDisplay (float internalRatio, int decimals = 1)
+	{
+		return juce::String (expRatioInternalToDisplay (internalRatio), decimals);
+	}
+
 	struct PopupSwatchButton final : public juce::TextButton
 	{
 		std::function<void()> onLeftClick;
@@ -1313,7 +1347,7 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 		r.expDisp.setText ("", juce::dontSendNotification);
 		r.expDisp.setInterceptsMouseClicks (true, false);
 		r.expDisp.addMouseListener (this, false);
-		r.expDisp.setTooltip (juce::String (savedOrder ? "POST" : "PRE") + " | 1:" + juce::String (juce::roundToInt (savedRatio))
+		r.expDisp.setTooltip (juce::String (savedOrder ? "POST" : "PRE") + " | 1:" + formatExpRatioDisplay (savedRatio)
 		                      + " | " + juce::String (juce::roundToInt (savedThresh)) + " dB");
 		r.expDisp.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
 		r.expDisp.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
@@ -4771,7 +4805,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	// -- TextEditors (added to aw so getTextEditor works, but re-parented to body) --
 	aw->addTextEditor ("thresh", juce::String (currentThresh, 1), juce::String());
-	aw->addTextEditor ("ratio",  juce::String (currentRatio, 1), juce::String());
+	aw->addTextEditor ("ratio",  formatExpRatioDisplay (currentRatio), juce::String());
 	aw->addTextEditor ("knee",   juce::String (currentKnee, 1), juce::String());
 	aw->addTextEditor ("atk",    juce::String (currentAtk, 2), juce::String());
 	aw->addTextEditor ("rel",    juce::String (currentRel, 2), juce::String());
@@ -4828,7 +4862,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	};
 
 	setupField ("thresh", "THRESH", "dB", threshSuffix, threshUnit);
-	setupField ("ratio",  "RATIO",  ":1", ratioSuffix,  ratioUnit);
+	setupField ("ratio",  "RATIO 1:",  "", ratioSuffix,  ratioUnit);
 	setupField ("knee",   "KNEE",   "dB", kneeSuffix,   kneeUnit);
 	setupField ("atk",    "ATK",    "ms", atkSuffix,    atkUnit);
 	setupField ("rel",    "REL",    "ms", relSuffix,    relUnit);
@@ -4836,8 +4870,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	// -- Bars --
 	const float threshNorm = (currentThresh - SATTRAudioProcessor::kExpThreshMin)
 	                       / (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin);
-	const float ratioNorm  = (currentRatio - SATTRAudioProcessor::kExpRatioMin)
-	                       / (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin);
+	const float ratioNorm  = expRatioDisplayToNorm (currentRatio);
 	const float kneeNorm   = (currentKnee - SATTRAudioProcessor::kExpKneeMin)
 	                       / (SATTRAudioProcessor::kExpKneeMax - SATTRAudioProcessor::kExpKneeMin);
 
@@ -4847,7 +4880,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	const float relNorm = relNormRange.convertTo0to1 (currentRel);
 
 	auto* threshBar = new PromptBar (scheme, threshNorm, 1.0f);
-	auto* ratioBar  = new PromptBar (scheme, ratioNorm,  0.0f);
+	auto* ratioBar  = new PromptBar (scheme, ratioNorm, expRatioDisplayToNorm (SATTRAudioProcessor::kExpRatioDefault));
 	auto* kneeBar   = new PromptBar (scheme, kneeNorm,   0.0f);
 	auto* atkBar    = new PromptBar (scheme, atkNorm, atkNormRange.convertTo0to1 (SATTRAudioProcessor::kExpAtkDefault));
 	auto* relBar    = new PromptBar (scheme, relNorm, relNormRange.convertTo0to1 (SATTRAudioProcessor::kExpRelDefault));
@@ -4977,10 +5010,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	{
 		if (*syncing) return;
 		*syncing = true;
-		const float ratio = SATTRAudioProcessor::kExpRatioMin
-		                  + v01 * (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin);
+		const float ratio = expRatioNormToDisplay (v01);
 		if (auto* te = aw->getTextEditor ("ratio"))
-		{ te->setText (juce::String (ratio, 1), juce::sendNotification); te->selectAll(); }
+		{ te->setText (formatExpRatioDisplay (ratio), juce::sendNotification); te->selectAll(); }
 		if (ratioApvts) ratioApvts->setValueNotifyingHost (ratioApvts->convertTo0to1 (ratio));
 		*syncing = false;
 	};
@@ -5073,7 +5105,8 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		const int barW = innerW;
 		const int threshEditorW = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpThreshMin, 1)),
 		                                                             stringWidth (font, juce::String (SATTRAudioProcessor::kExpThreshMax, 1))) + 16);
-		const int ratioEditorW  = juce::jlimit (24, 160, stringWidth (font, juce::String (SATTRAudioProcessor::kExpRatioMax, 1)) + 16);
+		const int ratioEditorW  = juce::jlimit (36, 180, juce::jmax (stringWidth (font, formatExpRatioDisplay (SATTRAudioProcessor::kExpRatioMin)),
+		                                                             stringWidth (font, formatExpRatioDisplay (SATTRAudioProcessor::kExpRatioMax))) + 24);
 		const int kneeEditorW   = juce::jlimit (24, 160, stringWidth (font, juce::String (SATTRAudioProcessor::kExpKneeMax, 1)) + 16);
 		const int atkEditorW    = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpAtkMin, 2)),
 		                                                             stringWidth (font, juce::String (SATTRAudioProcessor::kExpAtkMax, 2))) + 16);
@@ -5135,8 +5168,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	auto textToBarRatio = [syncing, ratioApvts] (float raw, PromptBar* bar)
 	{
 		if (*syncing || !bar) return;
-		bar->value = (raw - SATTRAudioProcessor::kExpRatioMin) / (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin);
-		if (ratioApvts) ratioApvts->setValueNotifyingHost (ratioApvts->convertTo0to1 (raw));
+		const float internalRatio = expRatioDisplayToInternal (raw);
+		bar->value = expRatioDisplayToNorm (internalRatio);
+		if (ratioApvts) ratioApvts->setValueNotifyingHost (ratioApvts->convertTo0to1 (internalRatio));
 		bar->repaint();
 	};
 
@@ -5330,17 +5364,14 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 				                                      SATTRAudioProcessor::kExpThreshMax,
 				                                      SATTRAudioProcessor::kExpThreshMin
 				                                      + threshBar->value * (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin));
-				const float newRatio = juce::jlimit (SATTRAudioProcessor::kExpRatioMin,
-				                                     SATTRAudioProcessor::kExpRatioMax,
-				                                     SATTRAudioProcessor::kExpRatioMin
-				                                     + ratioBar->value * (SATTRAudioProcessor::kExpRatioMax - SATTRAudioProcessor::kExpRatioMin));
+				const float newRatio = expRatioNormToDisplay (ratioBar->value);
 				const float newKnee = juce::jlimit (SATTRAudioProcessor::kExpKneeMin,
 				                                    SATTRAudioProcessor::kExpKneeMax,
 				                                    SATTRAudioProcessor::kExpKneeMin
 				                                    + kneeBar->value * (SATTRAudioProcessor::kExpKneeMax - SATTRAudioProcessor::kExpKneeMin));
 				auto tip = juce::String (*orderState ? "POST" : "PRE")
 				         + " | " + juce::String (newThresh, 1) + " dB"
-				         + " | 1:" + juce::String (newRatio, 1);
+				         + " | 1:" + formatExpRatioDisplay (newRatio);
 				if (newKnee > 0.05f)
 					tip += " | K " + juce::String (newKnee, 1) + " dB";
 				auto& disp = loaderIndex == 0 ? safeThis->expDisplayA
