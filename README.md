@@ -142,10 +142,10 @@ Per-loader alignment delay. Manual prompt entry supports up to `5.000 ms` with `
 Per-loader expander accessible from the `EXP` button. Parameters:
 
 - **ORDER**: `PRE` (before saturation) or `POST` (after saturation)
-- **THRESH** (`-60.0` to `0.0 dB`): gate threshold
-- **RATIO** (`1:1` to `1:10`): expansion ratio
+- **THRESH** (`-60.0` to `0.0 dB`): expander threshold
+- **RATIO** (`0.1` to `10.0`, centred at `1.0`): response ratio for material below threshold. `1.0` is neutral, values above `1.0` apply downward expansion, and values below `1.0` invert the action and lift low-level material below threshold
 - **KNEE** (`0.0` to `12.0 dB`): softens the transition around threshold; `0.0 dB` keeps the original hard-knee behavior
-- **ATK** (`0.01` to `100.00 ms`): envelope attack time
+- **ATK** (`0.00` to `100.00 ms`): envelope attack time
 - **REL** (`5.00` to `2000.00 ms`): envelope release time
 
 ### Chaos
