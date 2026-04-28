@@ -225,6 +225,10 @@ public:
 	static constexpr float kSqrt2        = 1.41421356f;   // sqrt(2) - MID impulse compensation
 	static constexpr float kTwoPi        = 6.2831853f;     // 2*pi
 	static constexpr float kDistDecay    = 2.0794f;        // DIST exponential rolloff rate
+	static constexpr float kGainFloorDb  = -144.0f;
+	static constexpr float kGainMaxDb    =   24.0f;
+	static constexpr float kGainDefaultDb =   0.0f;
+	static constexpr float kGainSkew     = 4.4965561056f; // 0 dB at the fader midpoint
 
 	// Limiter ranges
 	static constexpr float kLimThresholdMin     = -36.0f;
@@ -277,13 +281,13 @@ public:
 	// ----------------------------------------------------------------
 	//  Parameter Ranges & Defaults - Per-Loader Controls
 	// ----------------------------------------------------------------
-	static constexpr float kInMin                   = -100.0f;
-	static constexpr float kInMax                   = 0.0f;
-	static constexpr float kInDefault               = 0.0f;
+	static constexpr float kInMin                   = kGainFloorDb;
+	static constexpr float kInMax                   = kGainMaxDb;
+	static constexpr float kInDefault               = kGainDefaultDb;
 
-	static constexpr float kOutMin                  = -100.0f;
-	static constexpr float kOutMax                  = 24.0f;
-	static constexpr float kOutDefault              = 0.0f;
+	static constexpr float kOutMin                  = kGainFloorDb;
+	static constexpr float kOutMax                  = kGainMaxDb;
+	static constexpr float kOutDefault              = kGainDefaultDb;
 
 	static constexpr float kTiltMin                 = -6.0f;
 	static constexpr float kTiltMax                 = 6.0f;
@@ -349,13 +353,13 @@ public:
 	// ----------------------------------------------------------------
 	//  Parameter Ranges & Defaults - Global
 	// ----------------------------------------------------------------
-	static constexpr float kInputMin                = -100.0f;
-	static constexpr float kInputMax                = 0.0f;
-	static constexpr float kInputDefault            = 0.0f;
+	static constexpr float kInputMin                = kGainFloorDb;
+	static constexpr float kInputMax                = kGainMaxDb;
+	static constexpr float kInputDefault            = kGainDefaultDb;
 
-	static constexpr float kOutputMin               = -100.0f;
-	static constexpr float kOutputMax               = 24.0f;
-	static constexpr float kOutputDefault           = 0.0f;
+	static constexpr float kOutputMin               = kGainFloorDb;
+	static constexpr float kOutputMax               = kGainMaxDb;
+	static constexpr float kOutputDefault           = kGainDefaultDb;
 
 	static constexpr int   kModeMin                 = 0;
 	static constexpr int   kModeMax                 = 2;          // L+R, MID, SIDE

@@ -37,6 +37,18 @@ static constexpr std::array<const char*, 10> kUiMirrorParamIds {
 // ----------------------------------------------------------------
 namespace
 {
+	bool isGainFaderFloor (float dB) noexcept
+	{
+		return dB <= SATTRAudioProcessor::kGainFloorDb + 0.001f;
+	}
+
+	juce::String formatGainFaderDb (float dB)
+	{
+		if (isGainFaderFloor (dB))
+			return "-INF dB";
+		return juce::String (dB, 1) + " dB";
+	}
+
 	constexpr int satTypeModelToVisibleComboId (int modelIndex) noexcept
 	{
 		switch (modelIndex)
@@ -465,11 +477,12 @@ juce::String SATTRAudioProcessorEditor::BarSlider::getTextFromValue (double v)
 			return juce::String (v, 1) + " Hz";
 
 		case Type::Input:
-			if (v <= -80.0) return "-INF";
-			return juce::String (v, 1) + " dB";
+			return formatGainFaderDb ((float) v);
 
 		case Type::Output:
 		case Type::GlobalOutput:
+			return formatGainFaderDb ((float) v);
+
 		case Type::LimThreshold:
 			return juce::String (v, 1) + " dB";
 
@@ -1461,7 +1474,8 @@ void SATTRAudioProcessorEditor::createLoaderAttachments (juce::AudioProcessorVal
 	// UI-only skew: changes slider feel without altering VST3 parameter normalization
 	ui.hp.setSkewFactor (0.35);
 	ui.lp.setSkewFactor (0.35);
-	ui.out.setSkewFactor (3.23);
+	ui.in.setSkewFactor (SATTRAudioProcessor::kGainSkew);
+	ui.out.setSkewFactor (SATTRAudioProcessor::kGainSkew);
 }
 
 int SATTRAudioProcessorEditor::getSelectedSatTypeModelIndex (const juce::ComboBox& combo) const noexcept
@@ -1564,6 +1578,7 @@ SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 	globalOutputSlider.setOwner (this);
 	globalOutputSlider.setType (BarSlider::Type::GlobalOutput);
 	setupBar (globalOutputSlider);
+	globalOutputSlider.setSkewFactor (SATTRAudioProcessor::kGainSkew);
 	globalOutputSlider.addListener (this);
 
 	// Limiter threshold bar slider (footer)
@@ -1833,7 +1848,7 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 			g.drawText ("OUTPUT", outArea, juce::Justification::centred);
 
 			const float gOutDb = (float) globalOutputSlider.getValue();
-			juce::String outTxt = (gOutDb <= -80.0f) ? "-INF" : juce::String (gOutDb, 1) + " dB";
+			juce::String outTxt = formatGainFaderDb (gOutDb);
 			const auto valArea = juce::Rectangle<int> (outBounds.getRight() + 4, outBounds.getY(), 66, outBounds.getHeight());
 			g.drawText (outTxt, valArea, juce::Justification::centredLeft);
 		}
@@ -2705,11 +2720,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 		return juce::String (hz / 1000.0, 2) + " kHz";
 	};
 
-	auto formatDb = [] (float db) -> juce::String {
-		if (db <= -80.0f)
-			return "-INF";
-		return juce::String (db, 1) + " dB";
-	};
+	auto formatDb = [] (float db) -> juce::String { return formatGainFaderDb (db); };
 
 	auto formatPan = [] (float pan01) -> juce::String {
 		const int pct = juce::roundToInt ((pan01 - 0.5f) * 200.0f);
@@ -3219,8 +3230,8 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		// Worst-case widths for layout stability
 		juce::String worstCaseText;
 		if (isHpLp)              worstCaseText = "20000.000";
-		else if (isIn)           worstCaseText = "-100.0";
-		else if (isOut)          worstCaseText = "-100.0";
+		else if (isIn)           worstCaseText = "-144.0";
+		else if (isOut)          worstCaseText = "-144.0";
 		else if (isLimThresh)    worstCaseText = "-36.0";
 		else if (isTilt)         worstCaseText = "-6.00";
 		else if (isSeries)       worstCaseText = "6";
@@ -3306,13 +3317,15 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		}
 		else if (isIn)
 		{
-			minVal = -100.0; maxVal = 0.0;
-			maxDecs = 1;     maxLen = 6;     // "-100.0"
+			minVal = SATTRAudioProcessor::kGainFloorDb;
+			maxVal = SATTRAudioProcessor::kGainMaxDb;
+			maxDecs = 1;     maxLen = 6;     // "-144.0"
 		}
 		else if (isOut)
 		{
-			minVal = -100.0; maxVal = 24.0;
-			maxDecs = 1;     maxLen = 6;     // "-100.0"
+			minVal = SATTRAudioProcessor::kGainFloorDb;
+			maxVal = SATTRAudioProcessor::kGainMaxDb;
+			maxDecs = 1;     maxLen = 6;     // "-144.0"
 		}
 		else if (isLimThresh)
 		{
@@ -3465,11 +3478,17 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 			while (t.startsWithChar ('+'))
 				t = t.substring (1).trimStart();
 			const juce::String numericToken = t.initialSectionContainingOnly ("0123456789.,-");
-			double v = numericToken.getDoubleValue();
 
 			// Percent-based sliders: user typed 0x100/200, slider stores 0x1/2
 			auto* barPtr = dynamic_cast<BarSlider*> (sliderPtr);
 			const auto st = barPtr ? barPtr->getType() : BarSlider::Type::Unknown;
+			const bool isGainFader = (st == BarSlider::Type::Input ||
+			                          st == BarSlider::Type::Output ||
+			                          st == BarSlider::Type::GlobalOutput);
+			double v = (isGainFader && t.containsIgnoreCase ("inf"))
+				? (double) SATTRAudioProcessor::kGainFloorDb
+				: numericToken.getDoubleValue();
+
 			const bool needsPercentConvert = (st == BarSlider::Type::Pan ||
 			                                  st == BarSlider::Type::Fred  || st == BarSlider::Type::Pos  ||
 			                                  st == BarSlider::Type::Mix  ||

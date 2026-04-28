@@ -15,6 +15,19 @@ namespace
 		return (dB <= -100.0f) ? 0.0f : std::exp2 (dB * 0.16609640474f);
 	}
 
+	inline float gainFaderDecibelsToGain (float dB) noexcept
+	{
+		return (dB <= SATTRAudioProcessor::kGainFloorDb) ? 0.0f : std::exp2 (dB * 0.16609640474f);
+	}
+
+	inline juce::NormalisableRange<float> makeGainFaderRange() noexcept
+	{
+		return juce::NormalisableRange<float> (SATTRAudioProcessor::kGainFloorDb,
+		                                       SATTRAudioProcessor::kGainMaxDb,
+		                                       0.0f,
+		                                       SATTRAudioProcessor::kGainSkew);
+	}
+
 	// Relaxed atomic load helpers - safe for audio thread (single-writer GUI, single-reader audio).
 	// Avoids unnecessary memory fences from default seq_cst ordering.
 	inline float loadRelaxed (std::atomic<float>* p, float def = 0.0f) noexcept
@@ -174,10 +187,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		(float) kFilterSlopeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamInA, "In A",
-		juce::NormalisableRange<float> (kInMin, kInMax, 0.0f, 2.5f),
+		makeGainFaderRange(),
 		kInDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamOutA, "Out A", kOutMin, kOutMax, kOutDefault));
+		kParamOutA, "Out A", makeGainFaderRange(), kOutDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamTiltA, "Tilt A",
 		juce::NormalisableRange<float> (kTiltMin, kTiltMax, 0.01f),
@@ -302,10 +315,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		(float) kFilterSlopeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamInB, "In B",
-		juce::NormalisableRange<float> (kInMin, kInMax, 0.0f, 2.5f),
+		makeGainFaderRange(),
 		kInDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamOutB, "Out B", kOutMin, kOutMax, kOutDefault));
+		kParamOutB, "Out B", makeGainFaderRange(), kOutDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamTiltB, "Tilt B",
 		juce::NormalisableRange<float> (kTiltMin, kTiltMax, 0.01f),
@@ -430,10 +443,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		(float) kFilterSlopeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamInC, "In C",
-		juce::NormalisableRange<float> (kInMin, kInMax, 0.0f, 2.5f),
+		makeGainFaderRange(),
 		kInDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamOutC, "Out C", kOutMin, kOutMax, kOutDefault));
+		kParamOutC, "Out C", makeGainFaderRange(), kOutDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamTiltC, "Tilt C",
 		juce::NormalisableRange<float> (kTiltMin, kTiltMax, 0.01f),
@@ -535,9 +548,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	//  Global Parameters
 	// ----------------------------------------------------------------
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamInput, "Input", kInputMin, kInputMax, kInputDefault));
+		kParamInput, "Input", makeGainFaderRange(), kInputDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamOutput, "Output", kOutputMin, kOutputMax, kOutputDefault));
+		kParamOutput, "Output", makeGainFaderRange(), kOutputDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamRoute, "Route", juce::StringArray { "A>B>C", "A|B|C", "A>B|C", "A|B>C", "(A|B)>C", "A>(B|C)" }, kRouteDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -808,8 +821,8 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pExpAtkC    = parameters.getRawParameterValue (kParamExpAtkC);
 	pExpRelC    = parameters.getRawParameterValue (kParamExpRelC);
 
-	lastInputGain_ = fastDecibelsToGain (loadRelaxed (pInput, 0.0f));
-	lastOutputGain_ = fastDecibelsToGain (loadRelaxed (pOutput, 0.0f));
+	lastInputGain_ = gainFaderDecibelsToGain (loadRelaxed (pInput, 0.0f));
+	lastOutputGain_ = gainFaderDecibelsToGain (loadRelaxed (pOutput, 0.0f));
 	if (loadRelaxedInt (pMixMode, kMixModeDefault) == 0)
 	{
 		const float globalMix = loadRelaxed (pMix, kGlobalMixDefault);
@@ -856,8 +869,8 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
 	auto initLoaderSmoothing = [] (LoaderState& state, float inDb, float outDb, float mixVal, float posVal) noexcept
 	{
-		state.lastInGain = fastDecibelsToGain (inDb);
-		state.lastOutGain = fastDecibelsToGain (outDb);
+		state.lastInGain = gainFaderDecibelsToGain (inDb);
+		state.lastOutGain = gainFaderDecibelsToGain (outDb);
 		state.lastMix = mixVal;
 		state.lastPosGain = 1.0f - juce::jlimit (0.0f, 1.0f, posVal) * 0.5f;
 	};
@@ -1095,7 +1108,7 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	}
 
 	// Apply input gain
-	const float inputGain = fastDecibelsToGain (loadRelaxed (pInput));
+	const float inputGain = gainFaderDecibelsToGain (loadRelaxed (pInput));
 	for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 		buffer.applyGainRamp (ch, 0, numSamples, lastInputGain_, inputGain);
 	lastInputGain_ = inputGain;
@@ -1742,7 +1755,7 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	stateC.satState.flushDenormals();
 
 	// Apply output gain
-	const float outputGain = fastDecibelsToGain (loadRelaxed (pOutput));
+	const float outputGain = gainFaderDecibelsToGain (loadRelaxed (pOutput));
 	for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 		buffer.applyGainRamp (ch, 0, numSamples, lastOutputGain_, outputGain);
 	lastOutputGain_ = outputGain;
@@ -2034,7 +2047,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	
 	// 1. INPUT GAIN (IN)
 	{
-		const float inGain = fastDecibelsToGain (inDb);
+		const float inGain = gainFaderDecibelsToGain (inDb);
 		for (int ch = 0; ch < numChannels; ++ch)
 			buffer.applyGainRamp (ch, 0, numSamples, state.lastInGain, inGain);
 		state.lastInGain = inGain;
@@ -2521,7 +2534,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 
 	// 7. OUTPUT GAIN (OUT) - final per-loader output trim
 	{
-		const float outGain = fastDecibelsToGain (outDb);
+		const float outGain = gainFaderDecibelsToGain (outDb);
 		for (int ch = 0; ch < numChannels; ++ch)
 			buffer.applyGainRamp (ch, 0, numSamples, state.lastOutGain, outGain);
 		state.lastOutGain = outGain;
