@@ -100,11 +100,12 @@ Bypasses the model's internal pre/post colour-shaping path where supported, expo
 
 ### Per-Loader
 
-#### IN (-100 to 0 dB)
+#### IN (-INF to +24 dB)
 
 Per-loader input gain.
+The fader floor is -144 dB, displayed as -INF; 0 dB is centered on the control.
 
-#### OUT (-100 to +24 dB)
+#### OUT (-INF to +24 dB)
 
 Per-loader output gain.
 
@@ -202,9 +203,10 @@ Wet peak normalization target:
 - **-12 dB**
 - **-18 dB**
 
-#### OUTPUT (-100 to +24 dB)
+#### OUTPUT (-INF to +24 dB)
 
 Global output gain.
+The fader floor is -144 dB, displayed as -INF; 0 dB is centered on the control.
 
 #### ALIGN
 
