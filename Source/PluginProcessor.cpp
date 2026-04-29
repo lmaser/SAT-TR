@@ -1654,9 +1654,15 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	}
 
 	// -- User limiter (WET: on processed signal, before global dry/wet mix) --
-	if (limMode == 1 && buffer.getNumChannels() >= 2)
-		applyLimiter (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples,
-		              limThreshLinStart, limThreshLin);
+	if (limMode == 1)
+	{
+		if (buffer.getNumChannels() >= 2)
+			applyLimiter (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples,
+			              limThreshLinStart, limThreshLin);
+		else if (buffer.getNumChannels() == 1)
+			applyLimiterMono (buffer.getWritePointer (0), numSamples,
+			                  limThreshLinStart, limThreshLin);
+	}
 
 	// -- Invert Polarity / Stereo (WET mode: after Limiter WET, before mix) --
 	{
@@ -1778,9 +1784,15 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	}
 
 	// -- User limiter (GLOBAL: after output gain, before safety clip) --
-	if (limMode == 2 && buffer.getNumChannels() >= 2)
-		applyLimiter (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples,
-		              limThreshLinStart, limThreshLin);
+	if (limMode == 2)
+	{
+		if (buffer.getNumChannels() >= 2)
+			applyLimiter (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples,
+			              limThreshLinStart, limThreshLin);
+		else if (buffer.getNumChannels() == 1)
+			applyLimiterMono (buffer.getWritePointer (0), numSamples,
+			                  limThreshLinStart, limThreshLin);
+	}
 
 	// -- Invert Polarity / Stereo (GLOBAL mode: after Limiter GLOBAL, before safety clip) --
 	{
@@ -2072,29 +2084,37 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 		}
 
 		const float smoothCoeff = cachedTiltSmoothCoeff_;
+		float b0 = state.tiltB0, b1 = state.tiltB1, a1 = state.tiltA1;
+		const float tb0 = state.tiltTargetB0, tb1 = state.tiltTargetB1, ta1 = state.tiltTargetA1;
 
-		for (int ch = 0; ch < numChannels; ++ch)
+		auto* leftData = buffer.getWritePointer (0);
+		auto* rightData = numChannels > 1 ? buffer.getWritePointer (1) : nullptr;
+		float leftState = state.tiltState[0];
+		float rightState = state.tiltState[1];
+
+		for (int i = 0; i < numSamples; ++i)
 		{
-			auto* data = buffer.getWritePointer (ch);
-			float s = state.tiltState[ch];
-			float b0 = state.tiltB0, b1 = state.tiltB1, a1 = state.tiltA1;
-			const float tb0 = state.tiltTargetB0, tb1 = state.tiltTargetB1, ta1 = state.tiltTargetA1;
+			b0 += (tb0 - b0) * smoothCoeff;
+			b1 += (tb1 - b1) * smoothCoeff;
+			a1 += (ta1 - a1) * smoothCoeff;
 
-			for (int i = 0; i < numSamples; ++i)
+			const float leftX = leftData[i];
+			const float leftY = b0 * leftX + leftState;
+			leftState = b1 * leftX - a1 * leftY;
+			leftData[i] = leftY;
+
+			if (rightData != nullptr)
 			{
-				b0 += (tb0 - b0) * smoothCoeff;
-				b1 += (tb1 - b1) * smoothCoeff;
-				a1 += (ta1 - a1) * smoothCoeff;
-
-				const float x = data[i];
-				const float y = b0 * x + s;
-				s = b1 * x - a1 * y;
-				data[i] = y;
+				const float rightX = rightData[i];
+				const float rightY = b0 * rightX + rightState;
+				rightState = b1 * rightX - a1 * rightY;
+				rightData[i] = rightY;
 			}
-
-			state.tiltState[ch] = s;
-			state.tiltB0 = b0; state.tiltB1 = b1; state.tiltA1 = a1;
 		}
+
+		state.tiltState[0] = leftState;
+		state.tiltState[1] = rightState;
+		state.tiltB0 = b0; state.tiltB1 = b1; state.tiltA1 = a1;
 	}
 	else if (std::abs (state.lastTiltDb) > 0.05f)
 	{
@@ -2109,67 +2129,49 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	const bool chaosFilterActive = chaosFilterEnabledForProc && chaosAmtFilter > 0.01f;
 	auto applyFilters = [&]()
 	{
-
-		// CHAOS FILTER Hermite+Drift: advance per-block, modulate HP/LP target frequencies (+/-2 oct)
-		float hpTarget = hpFreq;
-		float lpTarget = lpFreq;
-		if (chaosFilterActive)
-		{
-			const float amountNorm = chaosAmtFilter * 0.01f;
-			const float chaosFilterMaxOct = amountNorm * 2.0f;  // +/-2 octaves at 100%
-			const float shPeriodSamples = (float) currentSampleRate / chaosSpdFilter;
-			const float sr = (float) currentSampleRate;
-
-			// Advance Hermite+Drift F engine per-sample (mono S&H)
-			for (int i = 0; i < numSamples; ++i)
-			{
-				advanceChaosEngine (state.chaosFPrev, state.chaosFCurr, state.chaosFNext,
-				                    state.chaosFPhase, state.chaosFDriftPhase, state.chaosFDriftFreqHz,
-				                    state.chaosFOut[0], state.chaosFRng, shPeriodSamples, amountNorm, sr);
-			}
-
-			const float octaveShift = state.chaosFOut[0] * chaosFilterMaxOct;
-			const float freqMult = std::exp2 (octaveShift);
-			// When HP/LP knobs are off, chaos sweeps the full 20x20k range (ECHO-TR match)
-			const float hpBase = hpOn ? hpFreq : kFilterFreqMin;
-			const float lpBase = lpOn ? lpFreq : kFilterFreqMax;
-			hpTarget = juce::jlimit (kFilterFreqMin, kFilterFreqMax, hpBase * freqMult);
-			lpTarget = juce::jlimit (kFilterFreqMin, kFilterFreqMax, lpBase * freqMult);
-		}
-
 		constexpr float kSmoothCoeff = 0.9955f; // ~5ms @ 44.1kHz
 		const float oneMinusCoeff = 1.0f - kSmoothCoeff;
+		const float maxFreq = static_cast<float> (currentSampleRate) * 0.49f;
+		const bool processHp = hpOn || chaosFilterActive;
+		const bool processLp = lpOn || chaosFilterActive;
 
-		// EMA smooth toward target frequencies (chaos-modulated or raw)
-		state.smoothedHpFreq += (hpTarget - state.smoothedHpFreq) * oneMinusCoeff;
-		state.smoothedLpFreq += (lpTarget - state.smoothedLpFreq) * oneMinusCoeff;
-
-		// Recalculate coefficients every 32 samples (not every block)
-		if (--state.filterCoeffCountdown <= 0)
+		if (! processHp && ! processLp)
 		{
-			state.filterCoeffCountdown = LoaderState::kFilterCoeffUpdateInterval;
+			const float smoothPower = std::pow (kSmoothCoeff, (float) numSamples);
+			state.smoothedHpFreq = hpFreq + (state.smoothedHpFreq - hpFreq) * smoothPower;
+			state.smoothedLpFreq = lpFreq + (state.smoothedLpFreq - lpFreq) * smoothPower;
+			state.filterCoeffCountdown = 0;
+			return;
+		}
 
-			const float maxFreq = static_cast<float> (currentSampleRate) * 0.49f;
+		const float amountNorm = chaosFilterActive ? chaosAmtFilter * 0.01f : 0.0f;
+		const float chaosFilterMaxOct = amountNorm * 2.0f;  // +/-2 octaves at 100%
+		const float shPeriodSamples = chaosFilterActive ? (float) currentSampleRate / chaosSpdFilter : 1.0f;
+		const float sr = (float) currentSampleRate;
+		const float hpBase = hpOn ? hpFreq : kFilterFreqMin;
+		const float lpBase = lpOn ? lpFreq : kFilterFreqMax;
 
+		auto updateFilterCoefficients = [&]()
+		{
 			// HP: recalc if smoothed frequency or slope changed
 			const float clampedHp = juce::jlimit (20.0f, maxFreq, state.smoothedHpFreq);
 			if (std::abs (clampedHp - state.lastHpFreq) > 0.01f || hpSlope != state.lastHpSlope)
 			{
 				if (hpSlope == 0) // 6 dB/oct - first-order
 				{
-					*state.hpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass (
+					*state.hpFilter.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (
 						currentSampleRate, clampedHp);
 				}
 				else if (hpSlope == 1) // 12 dB/oct - Butterworth biquad
 				{
-					*state.hpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighPass (
+					*state.hpFilter.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (
 						currentSampleRate, clampedHp, kSqrt2Over2);
 				}
 				else // 24 dB/oct - cascaded biquad pair
 				{
-					*state.hpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighPass (
+					*state.hpFilter.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (
 						currentSampleRate, clampedHp, kBW4_Q1);
-					*state.hpFilter2.state = *juce::dsp::IIR::Coefficients<float>::makeHighPass (
+					*state.hpFilter2.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (
 						currentSampleRate, clampedHp, kBW4_Q2);
 				}
 				state.lastHpFreq = clampedHp;
@@ -2182,47 +2184,94 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			{
 				if (lpSlope == 0) // 6 dB/oct - first-order
 				{
-					*state.lpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowPass (
+					*state.lpFilter.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass (
 						currentSampleRate, clampedLp);
 				}
 				else if (lpSlope == 1) // 12 dB/oct - Butterworth biquad
 				{
-					*state.lpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass (
+					*state.lpFilter.state = juce::dsp::IIR::ArrayCoefficients<float>::makeLowPass (
 						currentSampleRate, clampedLp, kSqrt2Over2);
 				}
 				else // 24 dB/oct - cascaded biquad pair
 				{
-					*state.lpFilter.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass (
+					*state.lpFilter.state = juce::dsp::IIR::ArrayCoefficients<float>::makeLowPass (
 						currentSampleRate, clampedLp, kBW4_Q1);
-					*state.lpFilter2.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass (
+					*state.lpFilter2.state = juce::dsp::IIR::ArrayCoefficients<float>::makeLowPass (
 						currentSampleRate, clampedLp, kBW4_Q2);
 				}
 				state.lastLpFreq = clampedLp;
 				state.lastLpSlope = lpSlope;
 			}
+		};
+
+		juce::dsp::AudioBlock<float> block (buffer);
+		int segmentStart = 0;
+
+		auto processSegment = [&] (int segmentEnd)
+		{
+			const int segmentLength = segmentEnd - segmentStart;
+			if (segmentLength <= 0)
+				return;
+
+			auto subBlock = block.getSubBlock ((size_t) segmentStart, (size_t) segmentLength);
+			juce::dsp::ProcessContextReplacing<float> context (subBlock);
+
+			// Apply HP filter (1 or 2 stages depending on slope).
+			// Also apply when chaos filter is active, even if HP knob is off (full-range sweep).
+			if (processHp && state.smoothedHpFreq >= 21.0f)
+			{
+				state.hpFilter.process (context);
+				if (hpSlope == 2) // 24 dB/oct: second stage
+					state.hpFilter2.process (context);
+			}
+
+			// Apply LP filter (1 or 2 stages depending on slope).
+			// Also apply when chaos filter is active, even if LP knob is off (full-range sweep).
+			if (processLp && state.smoothedLpFreq <= 19900.0f)
+			{
+				state.lpFilter.process (context);
+				if (lpSlope == 2) // 24 dB/oct: second stage
+					state.lpFilter2.process (context);
+			}
+
+			segmentStart = segmentEnd;
+		};
+
+		auto advanceFilterTargets = [&]()
+		{
+			float hpTarget = hpFreq;
+			float lpTarget = lpFreq;
+
+			if (chaosFilterActive)
+			{
+				advanceChaosEngine (state.chaosFPrev, state.chaosFCurr, state.chaosFNext,
+				                    state.chaosFPhase, state.chaosFDriftPhase, state.chaosFDriftFreqHz,
+				                    state.chaosFOut[0], state.chaosFRng, shPeriodSamples, amountNorm, sr);
+
+				const float octaveShift = state.chaosFOut[0] * chaosFilterMaxOct;
+				const float freqMult = std::exp2 (octaveShift);
+				hpTarget = juce::jlimit (kFilterFreqMin, kFilterFreqMax, hpBase * freqMult);
+				lpTarget = juce::jlimit (kFilterFreqMin, kFilterFreqMax, lpBase * freqMult);
+			}
+
+			state.smoothedHpFreq += (hpTarget - state.smoothedHpFreq) * oneMinusCoeff;
+			state.smoothedLpFreq += (lpTarget - state.smoothedLpFreq) * oneMinusCoeff;
+		};
+
+		for (int i = 0; i < numSamples; ++i)
+		{
+			advanceFilterTargets();
+
+			// Countdown is sample-based: samples before this boundary use the previous coefficients.
+			if (--state.filterCoeffCountdown <= 0)
+			{
+				processSegment (i);
+				state.filterCoeffCountdown = LoaderState::kFilterCoeffUpdateInterval;
+				updateFilterCoefficients();
+			}
 		}
 
-		// Apply HP filter (1 or 2 stages depending on slope)
-		// Also apply when chaos filter is active, even if HP knob is off (full-range sweep)
-		if ((hpOn || chaosFilterActive) && state.smoothedHpFreq >= 21.0f)
-		{
-			juce::dsp::AudioBlock<float> block (buffer);
-			juce::dsp::ProcessContextReplacing<float> context (block);
-			state.hpFilter.process (context);
-			if (hpSlope == 2) // 24 dB/oct: second stage
-				state.hpFilter2.process (context);
-		}
-
-		// Apply LP filter (1 or 2 stages depending on slope)
-		// Also apply when chaos filter is active, even if LP knob is off (full-range sweep)
-		if ((lpOn || chaosFilterActive) && state.smoothedLpFreq <= 19900.0f)
-		{
-			juce::dsp::AudioBlock<float> block (buffer);
-			juce::dsp::ProcessContextReplacing<float> context (block);
-			state.lpFilter.process (context);
-			if (lpSlope == 2) // 24 dB/oct: second stage
-				state.lpFilter2.process (context);
-		}
+		processSegment (numSamples);
 	}; // applyFilters
 
 	// -- PRE-saturation: apply tilt/filter if requested --

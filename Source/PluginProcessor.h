@@ -507,7 +507,7 @@ public:
 		
 		
 		
-		// EMA-smoothed filter frequencies (per-sample smoothing, coeff update every 32 samples)
+		// EMA-smoothed filter frequencies (per-sample smoothing, coeff update every 8 samples)
 		float smoothedHpFreq = 80.0f;
 		float smoothedLpFreq = 12000.0f;
 		float smoothedPosFreq = -1.0f;
@@ -832,6 +832,52 @@ private:
 
 			leftData[i]  *= gr;
 			rightData[i] *= gr;
+			thresholdGain += thresholdStep;
+		}
+	}
+
+	inline void applyLimiterMono (float* data, int numSamples,
+	                              float thresholdGainStart, float thresholdGainEnd) noexcept
+	{
+		if (numSamples <= 0)
+			return;
+
+		const float invSamples = 1.0f / static_cast<float> (numSamples);
+		float thresholdGain = thresholdGainStart;
+		const float thresholdStep = (thresholdGainEnd - thresholdGainStart) * invSamples;
+
+		for (int i = 0; i < numSamples; ++i)
+		{
+			const float peak = std::abs (data[i]);
+
+			// Keep both internal detector lanes coherent with dual-mono use.
+			for (int ch = 0; ch < 2; ++ch)
+			{
+				if (peak > limEnv1_[ch])
+					limEnv1_[ch] = limAtt1_ * limEnv1_[ch] + (1.0f - limAtt1_) * peak;
+				else
+					limEnv1_[ch] = limRel1_ * limEnv1_[ch] + (1.0f - limRel1_) * peak;
+				if (limEnv1_[ch] < kLimFloor) limEnv1_[ch] = kLimFloor;
+			}
+
+			for (int ch = 0; ch < 2; ++ch)
+			{
+				if (peak > limEnv2_[ch])
+					limEnv2_[ch] = peak;
+				else
+					limEnv2_[ch] = limRel2_ * limEnv2_[ch] + (1.0f - limRel2_) * peak;
+				if (limEnv2_[ch] < kLimFloor) limEnv2_[ch] = kLimFloor;
+			}
+
+			float gr = 1.0f;
+			const float maxEnv1 = juce::jmax (limEnv1_[0], limEnv1_[1]);
+			const float maxEnv2 = juce::jmax (limEnv2_[0], limEnv2_[1]);
+			if (maxEnv1 > thresholdGain)
+				gr = juce::jmin (gr, thresholdGain / maxEnv1);
+			if (maxEnv2 > thresholdGain)
+				gr = juce::jmin (gr, thresholdGain / maxEnv2);
+
+			data[i] *= gr;
 			thresholdGain += thresholdStep;
 		}
 	}
