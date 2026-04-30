@@ -1403,7 +1403,11 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
     {
         const int writeSlot = st.bloomSlot;
         const float slotValue = st.bloomSlotSum / (float) st.bloomSlotSamples;
-        const bool windowChanged = targetBloomWindowSlots != st.bloomWindowSlots;
+        const int oldBloomWindowSlots = st.bloomWindowSlots;
+
+        int dropSlot = writeSlot - oldBloomWindowSlots;
+        if (dropSlot < 0)
+            dropSlot += kTriodeBloomSlotCount;
 
         st.bloomBuf[writeSlot] = slotValue;
         ++st.bloomSlot;
@@ -1413,27 +1417,30 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
         st.bloomSlotSum = 0.0f;
         st.bloomSlotSamples = 0;
 
-        if (windowChanged)
+        st.bloomSum += slotValue - st.bloomBuf[dropSlot];
+
+        if (targetBloomWindowSlots > oldBloomWindowSlots)
         {
-            st.bloomWindowSlots = targetBloomWindowSlots;
-            float bloomSum = 0.0f;
-            int scan = st.bloomSlot;
-            for (int i = 0; i < st.bloomWindowSlots; ++i)
+            for (int distance = oldBloomWindowSlots; distance < targetBloomWindowSlots; ++distance)
             {
-                --scan;
-                if (scan < 0)
-                    scan = kTriodeBloomSlotCount - 1;
-                bloomSum += st.bloomBuf[scan];
+                int addSlot = writeSlot - distance;
+                if (addSlot < 0)
+                    addSlot += kTriodeBloomSlotCount;
+                st.bloomSum += st.bloomBuf[addSlot];
             }
-            st.bloomSum = bloomSum;
         }
-        else
+        else if (targetBloomWindowSlots < oldBloomWindowSlots)
         {
-            int dropSlot = writeSlot - st.bloomWindowSlots;
-            if (dropSlot < 0)
-                dropSlot += kTriodeBloomSlotCount;
-            st.bloomSum += slotValue - st.bloomBuf[dropSlot];
+            for (int distance = targetBloomWindowSlots; distance < oldBloomWindowSlots; ++distance)
+            {
+                int removeSlot = writeSlot - distance;
+                if (removeSlot < 0)
+                    removeSlot += kTriodeBloomSlotCount;
+                st.bloomSum -= st.bloomBuf[removeSlot];
+            }
         }
+
+        st.bloomWindowSlots = targetBloomWindowSlots;
     }
 
     const int activeBloomWindowSlots = juce::jlimit (1, kTriodeBloomSlotCount - 2,

@@ -2619,6 +2619,7 @@ void SATTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float de
 	
 	auto& delayLine = loaderIndex == 0 ? stateA.delayLine : (loaderIndex == 1 ? stateB.delayLine : stateC.delayLine);
 	auto& smoother  = loaderIndex == 0 ? stateA.smoothedDelay : (loaderIndex == 1 ? stateB.smoothedDelay : stateC.smoothedDelay);
+	auto* const* writeChannels = buffer.getArrayOfWritePointers();
 	
 	smoother.setTargetValue (targetDelaySamples);
 
@@ -2627,6 +2628,43 @@ void SATTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float de
 	// at very small delays, where interpolation quality and stale-buffer jumps are
 	// most likely to click.
 	constexpr float kMinInterpDelaySamples = 2.0f;
+
+	if (! smoother.isSmoothing())
+	{
+		const float currentDelay = smoother.getCurrentValue();
+		const float interpDelay = juce::jmax (currentDelay, kMinInterpDelaySamples);
+		const float wet = juce::jlimit (0.0f, 1.0f, currentDelay / kMinInterpDelaySamples);
+		delayLine.setDelay (interpDelay);
+
+		if (wet <= 0.0f)
+		{
+			for (int i = 0; i < numSamples; ++i)
+			{
+				for (int ch = 0; ch < numChannels; ++ch)
+				{
+					auto* channelData = writeChannels[ch];
+					delayLine.pushSample (ch, channelData[i]);
+					delayLine.popSample (ch);
+				}
+			}
+
+			return;
+		}
+
+		for (int i = 0; i < numSamples; ++i)
+		{
+			for (int ch = 0; ch < numChannels; ++ch)
+			{
+				auto* channelData = writeChannels[ch];
+				const float input = channelData[i];
+				delayLine.pushSample (ch, input);
+				const float delayed = delayLine.popSample (ch);
+				channelData[i] = input + (delayed - input) * wet;
+			}
+		}
+
+		return;
+	}
 	
 	for (int i = 0; i < numSamples; ++i)
 	{
@@ -2637,7 +2675,7 @@ void SATTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float de
 		
 		for (int ch = 0; ch < numChannels; ++ch)
 		{
-			auto* channelData = buffer.getWritePointer (ch);
+			auto* channelData = writeChannels[ch];
 			const float input = channelData[i];
 			delayLine.pushSample (ch, input);
 			const float delayed = delayLine.popSample (ch);
