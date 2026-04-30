@@ -546,6 +546,7 @@ struct TriodeReactState
     int   gcount = 0;
     int   bloomSlot = 0;
     int   bloomSlotSamples = 0;
+    int   bloomWindowSlots = 0;
     bool  bloomActive = false;
     float prevIn = 0.0f;
     float prevOut = 0.0f;
@@ -567,6 +568,7 @@ struct TriodeReactState
         gcount = 0;
         bloomSlot = 0;
         bloomSlotSamples = 0;
+        bloomWindowSlots = 0;
         bloomActive = false;
         prevIn = prevOut = prevHyst = 0.0f;
         lastSag = 0.0f;
@@ -1302,7 +1304,8 @@ inline float getTriodeSagSenseInput (float x) noexcept
 inline TriodeReactResult processTriodeReact (float sample, float sense,
                                              TriodeReactState& st,
                                              float react,
-                                             float sr) noexcept
+                                             float sr,
+                                             int samplesPerBloomSlot) noexcept
 {
     TriodeReactResult r;
     r.sample = sample;
@@ -1367,6 +1370,10 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
     st.strikeEnv += (hotTarget - st.strikeEnv) * strikeCoeff;
     st.strikeEnv = juce::jlimit (0.0f, 1.0f, st.strikeEnv);
 
+    const float bloomWindowMs = 25.0f + (reactDepth * reactDepth) * 475.0f;
+    const int targetBloomWindowSlots = juce::jlimit (1, kTriodeBloomSlotCount - 2,
+                                                     (int) std::round (bloomWindowMs));
+
     // Airwindows-style bloom memory: a real time window, stored in 1 ms slots
     // so the musical recovery length stays consistent at any host SR or
     // oversampling factor. React 100% now reaches a long ~500 ms bloom tail.
@@ -1377,25 +1384,28 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
         st.bloomSlotSum = 0.0f;
         st.bloomSlot = 0;
         st.bloomSlotSamples = 0;
+        st.bloomWindowSlots = targetBloomWindowSlots;
         st.bloomEnv = 0.0f;
         st.bloomActive = true;
     }
 
-    const float bloomWindowMs = 25.0f + (reactDepth * reactDepth) * 475.0f;
-    const int bloomWindowSlots = juce::jlimit (1, kTriodeBloomSlotCount - 2,
-                                               (int) std::round (bloomWindowMs));
-    const int samplesPerBloomSlot = juce::jmax (1, (int) std::round (sr * 0.001f));
     if (st.bloomSlot < 0 || st.bloomSlot >= kTriodeBloomSlotCount)
         st.bloomSlot = 0;
     if (st.bloomSlotSamples < 0 || st.bloomSlotSamples > samplesPerBloomSlot)
         st.bloomSlotSamples = 0;
+    if (st.bloomWindowSlots < 1 || st.bloomWindowSlots > kTriodeBloomSlotCount - 2)
+        st.bloomWindowSlots = targetBloomWindowSlots;
 
     st.bloomSlotSum += hotTarget;
     ++st.bloomSlotSamples;
 
     if (st.bloomSlotSamples >= samplesPerBloomSlot)
     {
-        st.bloomBuf[st.bloomSlot] = st.bloomSlotSum / (float) st.bloomSlotSamples;
+        const int writeSlot = st.bloomSlot;
+        const float slotValue = st.bloomSlotSum / (float) st.bloomSlotSamples;
+        const bool windowChanged = targetBloomWindowSlots != st.bloomWindowSlots;
+
+        st.bloomBuf[writeSlot] = slotValue;
         ++st.bloomSlot;
         if (st.bloomSlot >= kTriodeBloomSlotCount)
             st.bloomSlot = 0;
@@ -1403,20 +1413,33 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
         st.bloomSlotSum = 0.0f;
         st.bloomSlotSamples = 0;
 
-        float bloomSum = 0.0f;
-        int scan = st.bloomSlot;
-        for (int i = 0; i < bloomWindowSlots; ++i)
+        if (windowChanged)
         {
-            --scan;
-            if (scan < 0)
-                scan = kTriodeBloomSlotCount - 1;
-            bloomSum += st.bloomBuf[scan];
+            st.bloomWindowSlots = targetBloomWindowSlots;
+            float bloomSum = 0.0f;
+            int scan = st.bloomSlot;
+            for (int i = 0; i < st.bloomWindowSlots; ++i)
+            {
+                --scan;
+                if (scan < 0)
+                    scan = kTriodeBloomSlotCount - 1;
+                bloomSum += st.bloomBuf[scan];
+            }
+            st.bloomSum = bloomSum;
         }
-        st.bloomSum = bloomSum;
+        else
+        {
+            int dropSlot = writeSlot - st.bloomWindowSlots;
+            if (dropSlot < 0)
+                dropSlot += kTriodeBloomSlotCount;
+            st.bloomSum += slotValue - st.bloomBuf[dropSlot];
+        }
     }
 
+    const int activeBloomWindowSlots = juce::jlimit (1, kTriodeBloomSlotCount - 2,
+                                                     st.bloomWindowSlots);
     const float bloomTarget = juce::jlimit (0.0f, 1.0f,
-                                            st.bloomSum / (float) bloomWindowSlots);
+                                            st.bloomSum / (float) activeBloomWindowSlots);
     const float bloomRiseHz = 8.0f + reactDepth * 6.0f;
     const float bloomFallHz = 1.6f - reactDepth * 1.0f;
     const float bloomCoeff = detail::onePoleCoeff (
@@ -1782,6 +1805,7 @@ inline float processSafetyLPF (SafetyLPF& st, float x, const SafetyLPFCoeffs& c)
 inline float processTriode (float x, float drive, float girth, float bias, float mod,
                             float react, bool rawMode,
                             State& state, int ch, float sr,
+                            int triodeBloomSamplesPerSlot,
                             adaa::StableTanhADAA& adaaState) noexcept
 {
     const int sp = state.currentSeriesPass;
@@ -1822,7 +1846,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     {
         const float sagSense = getTriodeSagSenseInput (xStage);
         const TriodeReactResult triodeComp = processTriodeReact (
-            xStage, sagSense, triodeSag, react, sr);
+            xStage, sagSense, triodeSag, react, sr, triodeBloomSamplesPerSlot);
         xStage = triodeComp.sample;
         state.sagEnvelope[sp][ch] = triodeComp.amount;
     }
@@ -1838,6 +1862,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
         triodeSag.bloomSum *= 0.5f;
         triodeSag.bloomSlotSum = 0.0f;
         triodeSag.bloomSlotSamples = 0;
+        triodeSag.bloomWindowSlots = 0;
         triodeSag.bloomActive = false;
         state.sagEnvelope[sp][ch] = 0.0f;
     }
@@ -2599,6 +2624,7 @@ inline void processBlock (State& state,
     // Precomputed REACT envelope coefficients (hoisted from per-sample)
     const float reactAttCoeff  = 1.0f - std::exp (-kTwoPi * 1000.0f / sampleRate);
     const float reactRelCoeff  = 1.0f - std::exp (-kTwoPi * 2.0f / sampleRate);
+    const int triodeBloomSamplesPerSlot = juce::jmax (1, (int) std::round (sampleRate * 0.001f));
 
     // Multiband REACT crossover coefficients (~200Hz sub/mid, ~4kHz mid/air)
     const float mbSubCoeff = detail::onePoleCoeff (200.0f, sampleRate);
@@ -2981,6 +3007,7 @@ inline void processBlock (State& state,
                     stageTriodeReact.bloomSum *= 0.5f;
                     stageTriodeReact.bloomSlotSum = 0.0f;
                     stageTriodeReact.bloomSlotSamples = 0;
+                    stageTriodeReact.bloomWindowSlots = 0;
                     stageTriodeReact.bloomActive = false;
                     stageSagEnvelope = 0.0f;
                 }
@@ -3015,6 +3042,7 @@ inline void processBlock (State& state,
                     case Model::Tube:
                         x = processTriode (x, effDrive, girth, effBias, effMod, react, rawMode,
                                            state, ch, sampleRate,
+                                           triodeBloomSamplesPerSlot,
                                            state.triodeAdaa[sp][ch]);
                         break;
                     case Model::Transistor:

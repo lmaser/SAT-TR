@@ -1054,14 +1054,23 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const bool activeA = enableA;
 	const bool activeB = enableB;
 	const bool activeC = enableC;
+#if SAT_DSP_DIAG
 	const int diagLoaderIndex = activeC ? 2 : (activeB ? 1 : 0);
 	float diagSatDeltaPeak = 0.0f;
+#endif
 
 	const int route = loadRelaxedInt (pRoute);
 	const float globalMix = loadRelaxed (pMix);
 	const int   mixMode   = loadRelaxedInt (pMixMode);
 	const float dryLevel  = (mixMode == 1) ? loadRelaxed (pDryLevel) : 0.0f;
 	const float wetLevel  = (mixMode == 1) ? loadRelaxed (pWetLevel) : 0.0f;
+	const float globalWetEnd = (mixMode == 0) ? globalMix : wetLevel;
+	const float globalDryEnd = (mixMode == 0) ? (1.0f - globalMix) : dryLevel;
+	constexpr float kMixBypassEps = 1.0e-4f;
+	const bool needsGlobalDry = std::abs (globalDryEnd) > kMixBypassEps
+	                         || std::abs (lastGlobalDryMix_) > kMixBypassEps;
+	const bool needsGlobalWetGain = std::abs (globalWetEnd - 1.0f) > kMixBypassEps
+	                             || std::abs (lastGlobalWetMix_ - globalWetEnd) > kMixBypassEps;
 
 	// -- Limiter --
 	const int limMode = loadRelaxedInt (pLimMode);
@@ -1165,15 +1174,14 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	// Capture dry signal AFTER input gain, but BEFORE any loader processing
 	// Used for global MIX: dry is unaffected by loader processing, filters, mode, etc.
-	const bool needsDry = true;
-	if (needsDry)
+	if (needsGlobalDry)
 	{
 		for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 			globalDryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
 	}
 
 	// -- Helper lambdas --
-	// Save dry copy before processing a loader (for per-loader mix)
+	// Save dry copy before processing a loader only when mix or diagnostics need it.
 	auto saveDry = [&] (const juce::AudioBuffer<float>& src)
 	{
 		for (int ch = 0; ch < src.getNumChannels(); ++ch)
@@ -1184,10 +1192,26 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	auto processOne = [&] (LoaderState& state, juce::AudioBuffer<float>& buf,
 	                        int loaderIndex, int modeIn, int modeOut, float loaderMix)
 	{
-		saveDry (buf);
+		const float wetStart = state.lastMix;
+		const float wetEnd   = loaderMix;
+		const float dryStart = 1.0f - wetStart;
+		const float dryEnd   = 1.0f - wetEnd;
+		const bool needsLoaderMix = std::abs (wetStart - wetEnd) > kMixBypassEps
+		                         || std::abs (wetEnd - 1.0f) > kMixBypassEps;
+#if SAT_DSP_DIAG
+		const bool needsLoaderDryForDiag = (loaderIndex == diagLoaderIndex);
+#else
+		constexpr bool needsLoaderDryForDiag = false;
+#endif
+		const bool needsLoaderDry = needsLoaderMix || needsLoaderDryForDiag;
+
+		if (needsLoaderDry)
+			saveDry (buf);
+
 		applyMidSideInputMode (buf, modeIn, numSamples);
 		processLoader (state, buf, loaderIndex);
 		applyMidSideOutputMode (buf, modeOut, numSamples);
+#if SAT_DSP_DIAG
 		if (loaderIndex == diagLoaderIndex)
 		{
 			const int chCount = juce::jmin (buf.getNumChannels(), loaderDryBuffer.getNumChannels());
@@ -1203,12 +1227,9 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				}
 			}
 		}
+#endif
 
-		const float wetStart = state.lastMix;
-		const float wetEnd   = loaderMix;
-		const float dryStart = 1.0f - wetStart;
-		const float dryEnd   = 1.0f - wetEnd;
-		if (std::abs (wetStart - wetEnd) > 1.0e-4f || std::abs (wetEnd - 1.0f) > 1.0e-4f)
+		if (needsLoaderMix)
 		{
 			for (int ch = 0; ch < buf.getNumChannels(); ++ch)
 			{
@@ -1723,28 +1744,19 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	// Global MIX: blend unprocessed dry with fully processed wet
 	// dry = input after gain, wet = after all loader processing (mode + effects)
-	if (needsDry)
+	if (needsGlobalDry || needsGlobalWetGain)
 	{
-		float wetEnd, dryEnd;
-		if (mixMode == 0)  // INSERT: classic crossfade
-		{
-			wetEnd = globalMix;
-			dryEnd = 1.0f - globalMix;
-		}
-		else  // SEND: independent dry + wet levels
-		{
-			dryEnd = dryLevel;
-			wetEnd = wetLevel;
-		}
 		for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 		{
-			buffer.applyGainRamp (ch, 0, numSamples, lastGlobalWetMix_, wetEnd);
-			buffer.addFromWithRamp (ch, 0, globalDryBuffer.getReadPointer (ch), numSamples,
-			                        lastGlobalDryMix_, dryEnd);
+			if (needsGlobalWetGain)
+				buffer.applyGainRamp (ch, 0, numSamples, lastGlobalWetMix_, globalWetEnd);
+			if (needsGlobalDry)
+				buffer.addFromWithRamp (ch, 0, globalDryBuffer.getReadPointer (ch), numSamples,
+				                        lastGlobalDryMix_, globalDryEnd);
 		}
-		lastGlobalWetMix_ = wetEnd;
-		lastGlobalDryMix_ = dryEnd;
 	}
+	lastGlobalWetMix_ = globalWetEnd;
+	lastGlobalDryMix_ = globalDryEnd;
 
 	// -- Flush denormals in global filter states (per-block, near-zero cost) --
 	{
