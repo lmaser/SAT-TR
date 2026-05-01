@@ -260,6 +260,7 @@ Practical note:
 - **ADAA**: used on the main nonlinear stages where needed; exact placement varies by model.
 - **Series Processing**: up to 4 internal passes per loader.
 - **REACT / Dynamics**: model-specific dynamics blocks rather than one universal behavior (`SAG`, `COMP`, `PEAK` depend on algorithm).
+- **Tube SAG**: reactive supply/sag behavior with short strike tracking plus longer bloom memory for time-dependent recovery.
 - **Variation**: deterministic spread plus slow drift.
 - **Oversampling**: global `x1` to `x16`, with latency reported to the host.
 - **Filters**: per-loader HP/LP plus tilt filtering with pre/post routing options.
@@ -267,9 +268,25 @@ Practical note:
 - **NORM**: wet peak normalization stage with fixed targets.
 - **Limiter**: dual-stage user limiter with `WET` or `GLOBAL` placement, plus final safety protection.
 
+### Performance
+
+- Zero-allocation audio thread in the normal processing path.
+- Global and per-loader dry buffers are skipped when the corresponding mix path is fully wet and stable, while preserving dry fade-out ramps during transitions.
+- Stable per-loader delay blocks avoid redundant per-sample delay setup and keep delay lines continuously fed for click-free re-entry.
+- Tube bloom memory uses a 1 ms ring-buffer window with incremental sum updates instead of rescanning the full bloom window during steady processing.
+
 ### Build
 
-- **Framework**: JUCE 7
+- **Framework**: JUCE Framework
 - **Format**: VST3
 - **Compiler**: Visual Studio 2022 (MSVC)
 - **Platform**: Windows x64
+
+## Changelog
+
+### v1.4
+
+- Refined model-specific dynamics, including Tube SAG bloom/recovery and COMP behavior in compression-based models.
+- Added/maintained consistent -INF to +24 dB gain fader behavior with 0 dB centered.
+- Optimized global/per-loader dry-wet mix paths and stable delay processing without changing the intended audio behavior.
+- Optimized Tube bloom memory updates for lower CPU during SAG-heavy use.
