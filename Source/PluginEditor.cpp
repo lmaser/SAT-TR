@@ -596,6 +596,24 @@ void SATTRAudioProcessorEditor::FilterBarComponent::setFreqFromMouseX (float mou
 		param->setValueNotifyingHost (param->convertTo0to1 (freq));
 }
 
+void SATTRAudioProcessorEditor::FilterBarComponent::updateTooltipForTarget (DragTarget target)
+{
+	if (target == HP)
+	{
+		const int hz = juce::roundToInt (hpFreq_);
+		setTooltip ("HP: " + juce::String (hz) + " Hz");
+	}
+	else if (target == LP)
+	{
+		const int hz = juce::roundToInt (lpFreq_);
+		setTooltip ("LP: " + juce::String (hz) + " Hz");
+	}
+	else
+	{
+		setTooltip ({});
+	}
+}
+
 void SATTRAudioProcessorEditor::FilterBarComponent::updateFromProcessor()
 {
 	if (owner == nullptr) return;
@@ -691,6 +709,7 @@ void SATTRAudioProcessorEditor::FilterBarComponent::mouseDown (const juce::Mouse
 	{
 		setFreqFromMouseX (e.position.x, currentDrag_);
 		updateFromProcessor();
+		updateTooltipForTarget (currentDrag_);
 	}
 }
 
@@ -700,6 +719,7 @@ void SATTRAudioProcessorEditor::FilterBarComponent::mouseDrag (const juce::Mouse
 	{
 		setFreqFromMouseX (e.position.x, currentDrag_);
 		updateFromProcessor();
+		updateTooltipForTarget (currentDrag_);
 	}
 }
 
@@ -710,21 +730,7 @@ void SATTRAudioProcessorEditor::FilterBarComponent::mouseUp (const juce::MouseEv
 
 void SATTRAudioProcessorEditor::FilterBarComponent::mouseMove (const juce::MouseEvent& e)
 {
-	const auto target = hitTestMarker (e.position);
-	if (target == HP)
-	{
-		const int hz = juce::roundToInt (hpFreq_);
-		setTooltip ("HP: " + juce::String (hz) + " Hz");
-	}
-	else if (target == LP)
-	{
-		const int hz = juce::roundToInt (lpFreq_);
-		setTooltip ("LP: " + juce::String (hz) + " Hz");
-	}
-	else
-	{
-		setTooltip ({});
-	}
+	updateTooltipForTarget (hitTestMarker (e.position));
 }
 
 void SATTRAudioProcessorEditor::FilterBarComponent::mouseDoubleClick (const juce::MouseEvent& e)
@@ -792,6 +798,23 @@ void SATTRAudioProcessorEditor::DualMixBarComponent::setLevelFromMouseX (float m
 	auto& proc = owner->audioProcessor;
 	if (auto* param = proc.getValueTreeState().getParameter (paramId))
 		param->setValueNotifyingHost (level);
+}
+
+void SATTRAudioProcessorEditor::DualMixBarComponent::updateTooltipForTarget (DragTarget target)
+{
+	if (target == None)
+	{
+		setTooltip ({});
+		return;
+	}
+
+	const float level = (target == DRY) ? dryLevel_ : wetLevel_;
+	const float dB = (level <= 0.0001f) ? -100.0f : 20.0f * std::log10 (level);
+	const juce::String label = (target == DRY) ? "DRY" : "WET";
+	if (dB <= -100.0f)
+		setTooltip (label + ": -INF dB");
+	else
+		setTooltip (label + ": " + juce::String (dB, 1) + " dB");
 }
 
 void SATTRAudioProcessorEditor::DualMixBarComponent::updateFromProcessor()
@@ -871,6 +894,7 @@ void SATTRAudioProcessorEditor::DualMixBarComponent::mouseDown (const juce::Mous
 		lastTouched_ = currentDrag_;
 		setLevelFromMouseX (e.position.x, currentDrag_);
 		updateFromProcessor();
+		updateTooltipForTarget (currentDrag_);
 		if (owner != nullptr)
 		{
 			owner->legendDirty = true;
@@ -885,6 +909,7 @@ void SATTRAudioProcessorEditor::DualMixBarComponent::mouseDrag (const juce::Mous
 	{
 		setLevelFromMouseX (e.position.x, currentDrag_);
 		updateFromProcessor();
+		updateTooltipForTarget (currentDrag_);
 		if (owner != nullptr)
 		{
 			owner->legendDirty = true;
@@ -900,14 +925,7 @@ void SATTRAudioProcessorEditor::DualMixBarComponent::mouseUp (const juce::MouseE
 
 void SATTRAudioProcessorEditor::DualMixBarComponent::mouseMove (const juce::MouseEvent& e)
 {
-	const auto target = hitTestMarker (e.position);
-	const float level = (target == DRY) ? dryLevel_ : wetLevel_;
-	const float dB = (level <= 0.0001f) ? -100.0f : 20.0f * std::log10 (level);
-	const juce::String label = (target == DRY) ? "DRY" : "WET";
-	if (dB <= -100.0f)
-		setTooltip (label + ": -INF dB");
-	else
-		setTooltip (label + ": " + juce::String (dB, 1) + " dB");
+	updateTooltipForTarget (hitTestMarker (e.position));
 }
 
 // ----------------------------------------------------------------
@@ -4535,7 +4553,10 @@ void SATTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 
 			constexpr int kEditorTextPadPx = 12;
 			constexpr int kMinEditorWidthPx = 24;
-			const int editorW = juce::jlimit (kMinEditorWidthPx, 80,
+			const int maxEditorWidthPx = (unitLabel != nullptr && unitLabel->getText() == "Hz")
+				? juce::jmax (80, stringWidth (font, "100.00") + kEditorTextPadPx * 2)
+				: 80;
+			const int editorW = juce::jlimit (kMinEditorWidthPx, maxEditorWidthPx,
 			                                  textW + kEditorTextPadPx * 2);
 
 			const int visualW = labelW + spaceW + textW + unitW;

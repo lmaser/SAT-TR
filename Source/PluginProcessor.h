@@ -534,12 +534,20 @@ public:
 		float fredDelayBuffer[2][kFredDelayBufSize] = {};
 		int fredDelayIndex = 0;
 
-		// CHAOS micro-delay line (reused by Hermite+Drift engine)
+		// CHAOS micro-delay line (reused by smooth S&H + Drift engine)
 		static constexpr int kChaosDelayMaxSamples = 1024;
 		float chaosDelayBuffer[2][kChaosDelayMaxSamples] = {};
 		int chaosDelayWritePos = 0;
+		float chaosDelaySmoothedSamples[2] = {};
+		bool chaosDelaySmoothReady[2] = {};
+		float chaosDriveAmtSmoothed = 0.0f;
+		float chaosDriveSpdSmoothed = 0.0f;
+		bool chaosDriveParamSmoothReady = false;
+		float chaosFilterAmtSmoothed = 0.0f;
+		float chaosFilterSpdSmoothed = 0.0f;
+		bool chaosFilterParamSmoothReady = false;
 
-		// CHS D Hermite+Drift: delay (per-channel for stereo)
+		// CHS D smooth S&H + Drift: delay (per-channel for stereo)
 		float chaosDPrev[2]         = {};
 		float chaosDCurr[2]         = {};
 		float chaosDNext[2]         = {};
@@ -549,7 +557,7 @@ public:
 		float chaosDOut[2]          = {};
 		juce::Random chaosDRng[2];
 
-		// CHS D Hermite+Drift: gain (per-channel, decorrelated)
+		// CHS D smooth S&H + Drift: gain (per-channel, decorrelated)
 		float chaosGPrev[2]         = {};
 		float chaosGCurr[2]         = {};
 		float chaosGNext[2]         = {};
@@ -559,7 +567,7 @@ public:
 		float chaosGOut[2]          = {};
 		juce::Random chaosGRng[2];
 
-		// CHS F Hermite+Drift: filter (mono S&H + quadrature drift)
+		// CHS F smooth S&H + Drift: filter (mono S&H + quadrature drift)
 		float chaosFPrev            = 0.0f;
 		float chaosFCurr            = 0.0f;
 		float chaosFNext            = 0.0f;
@@ -763,6 +771,7 @@ private:
 	// [loaderIdx][factorIdx] where factorIdx: 0=x2, 1=x4, 2=x8, 3=x16
 	std::unique_ptr<juce::dsp::Oversampling<float>> oversamplers_[3][4];
 	int currentOsOrder_ = 0;  // current oversampling order (0=off)
+	int oversamplingBlockCapacity_ = 0;
 
 	// Tilt EQ filter state (1st-order shelf, per-channel)
 	float tiltState_[2] = { 0.0f, 0.0f };
@@ -929,32 +938,28 @@ private:
 	static void applyMidSideInputMode (juce::AudioBuffer<float>& buf, int modeVal, int numSamples);
 	static void applyMidSideOutputMode (juce::AudioBuffer<float>& buf, int modeVal, int numSamples);
 
-	// Generic Hermite + Drift chaos engine (per-sample advance)
+	// Generic smooth S&H + Drift chaos engine (per-sample advance)
 	inline void advanceChaosEngine (
 		float& prev, float& curr, float& next, float& phase,
 		float& driftPhase, float& driftFreqHz, float& output,
 		juce::Random& rng, float period, float amtNorm, float sr) noexcept
 	{
-		phase += 1.0f;
-		if (phase >= period)
+		const float safePeriod = juce::jmax (1.0f, period);
+		phase += 1.0f / safePeriod;
+		if (phase >= 1.0f)
 		{
-			phase -= period;
+			phase -= std::floor (phase);
 			prev = curr;
 			curr = next;
 			next = rng.nextFloat() * 2.0f - 1.0f;
-			const float driftBase = sr / juce::jmax (1.0f, period) * 0.37f;
+			const float driftBase = sr / safePeriod * 0.37f;
 			driftFreqHz = driftBase * (0.88f + rng.nextFloat() * 0.24f);
 		}
-		const float t  = phase / period;
+		const float t = juce::jlimit (0.0f, 1.0f, phase);
 		const float t2 = t * t;
 		const float t3 = t2 * t;
-		const float h00 =  2.0f * t3 - 3.0f * t2 + 1.0f;
-		const float h10 =         t3 - 2.0f * t2 + t;
-		const float h01 = -2.0f * t3 + 3.0f * t2;
-		const float h11 =         t3 -        t2;
-		const float tangCurr = (next - prev) * 0.5f;
-		const float tangNext = -curr * 0.5f;
-		const float shValue  = h00 * curr + h10 * tangCurr + h01 * next + h11 * tangNext;
+		const float u = t3 * (t * (t * 6.0f - 15.0f) + 10.0f);
+		const float shValue = curr + (next - curr) * u;
 
 		driftPhase += driftFreqHz / sr;
 		if (driftPhase > 1e6f) driftPhase -= 1e6f;

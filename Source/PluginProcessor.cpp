@@ -674,6 +674,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	// Use generous size to handle hosts that send variable/larger blocks
 	// (e.g. FL Studio). Runtime guard in processBlock handles anything larger.
 	const int bufAlloc = juce::jmax (samplesPerBlock, 8192);
+	oversamplingBlockCapacity_ = bufAlloc;
 	tempBufferA.setSize (2, bufAlloc);
 	tempBufferB.setSize (2, bufAlloc);
 	tempBufferC.setSize (2, bufAlloc);
@@ -888,8 +889,12 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 		state->fredDelayIndex = 0;
 		std::memset (state->chaosDelayBuffer, 0, sizeof (state->chaosDelayBuffer));
 		state->chaosDelayWritePos = 0;
+		state->chaosDriveParamSmoothReady = false;
+		state->chaosFilterParamSmoothReady = false;
 		for (int c = 0; c < 2; ++c)
 		{
+			state->chaosDelaySmoothedSamples[c] = 0.0f;
+			state->chaosDelaySmoothReady[c] = false;
 			state->chaosDPrev[c] = state->chaosDCurr[c] = state->chaosDNext[c] = 0.0f;
 			state->chaosDPhase[c] = state->chaosDDriftPhase[c] = state->chaosDDriftFreqHz[c] = 0.0f;
 			state->chaosDOut[c] = 0.0f;
@@ -907,11 +912,19 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	// Initialize EMA-smoothed filter frequencies to current parameter values
 	std::atomic<float>* hpPtrs[] = { pHpFreqA, pHpFreqB, pHpFreqC };
 	std::atomic<float>* lpPtrs[] = { pLpFreqA, pLpFreqB, pLpFreqC };
+	std::atomic<float>* chaosDriveAmtPtrs[] = { pChaosAmtA, pChaosAmtB, pChaosAmtC };
+	std::atomic<float>* chaosDriveSpdPtrs[] = { pChaosSpdA, pChaosSpdB, pChaosSpdC };
+	std::atomic<float>* chaosFilterAmtPtrs[] = { pChaosAmtFilterA, pChaosAmtFilterB, pChaosAmtFilterC };
+	std::atomic<float>* chaosFilterSpdPtrs[] = { pChaosSpdFilterA, pChaosSpdFilterB, pChaosSpdFilterC };
 	LoaderState* states[] = { &stateA, &stateB, &stateC };
 	for (int i = 0; i < 3; ++i)
 	{
 		states[i]->smoothedHpFreq = hpPtrs[i]->load();
 		states[i]->smoothedLpFreq = lpPtrs[i]->load();
+		states[i]->chaosDriveAmtSmoothed = chaosDriveAmtPtrs[i]->load();
+		states[i]->chaosDriveSpdSmoothed = juce::jlimit (kChaosSpdMin, kChaosSpdMax, chaosDriveSpdPtrs[i]->load());
+		states[i]->chaosFilterAmtSmoothed = chaosFilterAmtPtrs[i]->load();
+		states[i]->chaosFilterSpdSmoothed = juce::jlimit (kChaosSpdMin, kChaosSpdMax, chaosFilterSpdPtrs[i]->load());
 		states[i]->satState.reset();
 	}
 
@@ -923,7 +936,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 			oversamplers_[ldr][order - 1] = std::make_unique<juce::dsp::Oversampling<float>> (
 				2, (size_t) order,
 				juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
-			oversamplers_[ldr][order - 1]->initProcessing ((size_t) samplesPerBlock);
+			oversamplers_[ldr][order - 1]->initProcessing ((size_t) bufAlloc);
 		}
 	}
 	currentOsOrder_ = 0;
@@ -1674,18 +1687,7 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		}
 	}
 
-	// -- User limiter (WET: on processed signal, before global dry/wet mix) --
-	if (limMode == 1)
-	{
-		if (buffer.getNumChannels() >= 2)
-			applyLimiter (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples,
-			              limThreshLinStart, limThreshLin);
-		else if (buffer.getNumChannels() == 1)
-			applyLimiterMono (buffer.getWritePointer (0), numSamples,
-			                  limThreshLinStart, limThreshLin);
-	}
-
-	// -- Invert Polarity / Stereo (WET mode: after Limiter WET, before mix) --
+	// -- Invert Polarity / Stereo (WET path: before wet DC/limiter and mix) --
 	{
 		const int nc = buffer.getNumChannels();
 		if (invPol == 1)
@@ -1740,6 +1742,17 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			dcBlockX_[0] = dcBlockX_[1] = 0.0f;
 			dcBlockY_[0] = dcBlockY_[1] = 0.0f;
 		}
+	}
+
+	// -- User limiter (WET: after wet-only post processing, before global dry/wet mix) --
+	if (limMode == 1)
+	{
+		if (buffer.getNumChannels() >= 2)
+			applyLimiter (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples,
+			              limThreshLinStart, limThreshLin);
+		else if (buffer.getNumChannels() == 1)
+			applyLimiterMono (buffer.getWritePointer (0), numSamples,
+			                  limThreshLinStart, limThreshLin);
 	}
 
 	// Global MIX: blend unprocessed dry with fully processed wet
@@ -2035,6 +2048,8 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	const float chaosSpd = loadRelaxed (pick (pChaosSpdA, pChaosSpdB, pChaosSpdC));
 	const float chaosAmtFilter = loadRelaxed (pick (pChaosAmtFilterA, pChaosAmtFilterB, pChaosAmtFilterC));
 	const float chaosSpdFilter = loadRelaxed (pick (pChaosSpdFilterA, pChaosSpdFilterB, pChaosSpdFilterC));
+	const float chaosParamSr = juce::jmax (1.0f, static_cast<float> (currentSampleRate));
+	const float chaosParamSmoothCoeff = 1.0f - std::exp (-1.0f / (chaosParamSr * 0.010f));
 
 	// Filter / Tilt position
 	const int fltPos = loadRelaxedInt (pick (pFilterPosA, pFilterPosB, pFilterPosC));
@@ -2138,7 +2153,14 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	}; // applyTilt
 
 	// -- HP + LP Filters lambda (6/12/24 dB/oct) --
-	const bool chaosFilterActive = chaosFilterEnabledForProc && chaosAmtFilter > 0.01f;
+	const bool chaosFilterActive = chaosFilterEnabledForProc
+		&& (chaosAmtFilter > 0.01f || (state.chaosFilterParamSmoothReady && state.chaosFilterAmtSmoothed > 0.01f));
+	if (! chaosFilterActive)
+	{
+		state.chaosFilterAmtSmoothed = juce::jlimit (kChaosAmtMin, kChaosAmtMax, chaosAmtFilter);
+		state.chaosFilterSpdSmoothed = juce::jlimit (kChaosSpdMin, kChaosSpdMax, chaosSpdFilter);
+		state.chaosFilterParamSmoothReady = false;
+	}
 	auto applyFilters = [&]()
 	{
 		constexpr float kSmoothCoeff = 0.9955f; // ~5ms @ 44.1kHz
@@ -2156,9 +2178,6 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			return;
 		}
 
-		const float amountNorm = chaosFilterActive ? chaosAmtFilter * 0.01f : 0.0f;
-		const float chaosFilterMaxOct = amountNorm * 2.0f;  // +/-2 octaves at 100%
-		const float shPeriodSamples = chaosFilterActive ? (float) currentSampleRate / chaosSpdFilter : 1.0f;
 		const float sr = (float) currentSampleRate;
 		const float hpBase = hpOn ? hpFreq : kFilterFreqMin;
 		const float lpBase = lpOn ? lpFreq : kFilterFreqMax;
@@ -2256,6 +2275,24 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 
 			if (chaosFilterActive)
 			{
+				const float targetAmt = juce::jlimit (kChaosAmtMin, kChaosAmtMax, chaosAmtFilter);
+				const float targetSpd = juce::jlimit (kChaosSpdMin, kChaosSpdMax, chaosSpdFilter);
+				if (! state.chaosFilterParamSmoothReady)
+				{
+					state.chaosFilterParamSmoothReady = true;
+					if (state.chaosFilterSpdSmoothed <= 0.0f)
+						state.chaosFilterSpdSmoothed = targetSpd;
+				}
+
+				state.chaosFilterAmtSmoothed += (targetAmt - state.chaosFilterAmtSmoothed) * chaosParamSmoothCoeff;
+				const float filterSpdLog = std::log (juce::jmax (kChaosSpdMin, state.chaosFilterSpdSmoothed));
+				const float filterTargetSpdLog = std::log (targetSpd);
+				state.chaosFilterSpdSmoothed = std::exp (filterSpdLog + (filterTargetSpdLog - filterSpdLog) * chaosParamSmoothCoeff);
+
+				const float amountNorm = state.chaosFilterAmtSmoothed * 0.01f;
+				const float chaosFilterMaxOct = amountNorm * 2.0f;  // +/-2 octaves at 100%
+				const float shPeriodSamples = sr / juce::jmax (kChaosSpdMin, state.chaosFilterSpdSmoothed);
+
 				advanceChaosEngine (state.chaosFPrev, state.chaosFCurr, state.chaosFNext,
 				                    state.chaosFPhase, state.chaosFDriftPhase, state.chaosFDriftFreqHz,
 				                    state.chaosFOut[0], state.chaosFRng, shPeriodSamples, amountNorm, sr);
@@ -2362,14 +2399,13 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	if (expanderEnabled && !expPost) applyExpander();
 
 	// 2.5. CHAOS D (micro-delay + gain modulation - BEFORE saturation)
-	if (chaosDriveEnabled && chaosAmt > 0.01f)
+	const bool chaosDriveActive = chaosDriveEnabled
+		&& (chaosAmt > 0.01f || (state.chaosDriveParamSmoothReady && state.chaosDriveAmtSmoothed > 0.01f));
+	if (chaosDriveActive)
 	{
 		const float maxDelaySec = 0.005f; // -5ms max
-		const float amountNorm = chaosAmt * 0.01f; // 0..1
-		const float maxDelaySamples = amountNorm * maxDelaySec * (float) currentSampleRate;
-		const float shPeriodSamples = (float) currentSampleRate / chaosSpd;
-		const float chaosGainMaxDb = amountNorm * 1.0f; // -1dB at 100%
 		const float sr = (float) currentSampleRate;
+		const float chaosDelaySmoothCoeff = 1.0f - std::exp (-1.0f / (sr * 0.002f));
 		
 		const int chCount = juce::jmin (numChannels, 2);
 		const int delayBufLen = LoaderState::kChaosDelayMaxSamples;
@@ -2381,7 +2417,26 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 		
 		for (int i = 0; i < numSamples; ++i)
 		{
-			// Advance Hermite+Drift D+G engines (per-channel)
+			const float targetAmt = juce::jlimit (kChaosAmtMin, kChaosAmtMax, chaosAmt);
+			const float targetSpd = juce::jlimit (kChaosSpdMin, kChaosSpdMax, chaosSpd);
+			if (! state.chaosDriveParamSmoothReady)
+			{
+				state.chaosDriveParamSmoothReady = true;
+				if (state.chaosDriveSpdSmoothed <= 0.0f)
+					state.chaosDriveSpdSmoothed = targetSpd;
+			}
+
+			state.chaosDriveAmtSmoothed += (targetAmt - state.chaosDriveAmtSmoothed) * chaosParamSmoothCoeff;
+			const float driveSpdLog = std::log (juce::jmax (kChaosSpdMin, state.chaosDriveSpdSmoothed));
+			const float driveTargetSpdLog = std::log (targetSpd);
+			state.chaosDriveSpdSmoothed = std::exp (driveSpdLog + (driveTargetSpdLog - driveSpdLog) * chaosParamSmoothCoeff);
+
+			const float amountNorm = state.chaosDriveAmtSmoothed * 0.01f; // 0..1
+			const float maxDelaySamples = amountNorm * maxDelaySec * sr;
+			const float shPeriodSamples = sr / juce::jmax (kChaosSpdMin, state.chaosDriveSpdSmoothed);
+			const float chaosGainMaxDb = amountNorm * 1.0f; // -1dB at 100%
+
+			// Advance smooth S&H + Drift D+G engines (per-channel)
 			for (int c = 0; c < chCount; ++c)
 			{
 				advanceChaosEngine (state.chaosDPrev[c], state.chaosDCurr[c], state.chaosDNext[c],
@@ -2407,8 +2462,20 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			// Read with per-channel delay using Lagrange interpolation
 			for (int ch = 0; ch < chCount; ++ch)
 			{
-				const float delaySamp = juce::jlimit (0.0f, (float) (delayBufLen - 2),
-				                                      maxDelaySamples + state.chaosDOut[ch] * maxDelaySamples);
+				const float targetDelaySamp = juce::jlimit (0.0f, (float) (delayBufLen - 2),
+				                                            maxDelaySamples + state.chaosDOut[ch] * maxDelaySamples);
+				float& smoothedDelaySamp = state.chaosDelaySmoothedSamples[ch];
+				if (! state.chaosDelaySmoothReady[ch])
+				{
+					smoothedDelaySamp = targetDelaySamp;
+					state.chaosDelaySmoothReady[ch] = true;
+				}
+				else
+				{
+					smoothedDelaySamp += (targetDelaySamp - smoothedDelaySamp) * chaosDelaySmoothCoeff;
+				}
+
+				const float delaySamp = smoothedDelaySamp;
 				const float readPos = (float) wp - delaySamp;
 				const int iPos = (int) std::floor (readPos);
 				const float frac = readPos - (float) iPos;
@@ -2435,6 +2502,14 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			state.chaosDelayWritePos = (wp + 1) & mask;
 		}
 	}
+	else
+	{
+		state.chaosDelaySmoothedSamples[0] = state.chaosDelaySmoothedSamples[1] = 0.0f;
+		state.chaosDelaySmoothReady[0] = state.chaosDelaySmoothReady[1] = false;
+		state.chaosDriveAmtSmoothed = juce::jlimit (kChaosAmtMin, kChaosAmtMax, chaosAmt);
+		state.chaosDriveSpdSmoothed = juce::jlimit (kChaosSpdMin, kChaosSpdMax, chaosSpd);
+		state.chaosDriveParamSmoothReady = false;
+	}
 
 	// 3. SATURATION (with optional oversampling + series chaining)
 	if (model != SatEngine::Model::Clean)
@@ -2452,6 +2527,8 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 		{
 			auto& os = *oversamplers_[loaderIndex][osOrder - 1];
 			auto block = juce::dsp::AudioBlock<float> (buffer);
+			jassert (oversamplingBlockCapacity_ > 0);
+			jassert (numSamples <= oversamplingBlockCapacity_);
 			auto osBlock = os.processSamplesUp (block);
 
 			float* osL = osBlock.getChannelPointer (0);
