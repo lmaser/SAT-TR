@@ -2181,6 +2181,14 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 		const float sr = (float) currentSampleRate;
 		const float hpBase = hpOn ? hpFreq : kFilterFreqMin;
 		const float lpBase = lpOn ? lpFreq : kFilterFreqMax;
+		if (chaosFilterActive && ! state.chaosFilterParamSmoothReady)
+		{
+			if (! hpOn)
+				state.smoothedHpFreq = kFilterFreqMin;
+			if (! lpOn)
+				state.smoothedLpFreq = kFilterFreqMax;
+			state.filterCoeffCountdown = 0;
+		}
 
 		auto updateFilterCoefficients = [&]()
 		{
@@ -2249,7 +2257,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 
 			// Apply HP filter (1 or 2 stages depending on slope).
 			// Also apply when chaos filter is active, even if HP knob is off (full-range sweep).
-			if (processHp && state.smoothedHpFreq >= 21.0f)
+			if (processHp && (chaosFilterActive || state.smoothedHpFreq >= 21.0f))
 			{
 				state.hpFilter.process (context);
 				if (hpSlope == 2) // 24 dB/oct: second stage
@@ -2258,7 +2266,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 
 			// Apply LP filter (1 or 2 stages depending on slope).
 			// Also apply when chaos filter is active, even if LP knob is off (full-range sweep).
-			if (processLp && state.smoothedLpFreq <= 19900.0f)
+			if (processLp && (chaosFilterActive || state.smoothedLpFreq <= 19900.0f))
 			{
 				state.lpFilter.process (context);
 				if (lpSlope == 2) // 24 dB/oct: second stage
