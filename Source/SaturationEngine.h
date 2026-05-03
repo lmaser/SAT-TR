@@ -557,6 +557,11 @@ struct TriodeReactState
     float supplyDrop = 0.0f;
     float strikeEnv = 0.0f;
     float bloomEnv = 0.0f;
+    float burnFast = 0.0f;
+    float burnSlow = 0.0f;
+    float burnEnv = 0.0f;
+    float atrophyEnv = 0.0f;
+    float reservoirDrainEnv = 0.0f;
 
     void reset() noexcept
     {
@@ -577,6 +582,11 @@ struct TriodeReactState
         supplyDrop = 0.0f;
         strikeEnv = 0.0f;
         bloomEnv = 0.0f;
+        burnFast = 0.0f;
+        burnSlow = 0.0f;
+        burnEnv = 0.0f;
+        atrophyEnv = 0.0f;
+        reservoirDrainEnv = 0.0f;
     }
 };
 
@@ -988,6 +998,11 @@ struct State
                 fl (triodeReact[sp][ch].supplyDrop);
                 fl (triodeReact[sp][ch].strikeEnv);
                 fl (triodeReact[sp][ch].bloomEnv);
+                fl (triodeReact[sp][ch].burnFast);
+                fl (triodeReact[sp][ch].burnSlow);
+                fl (triodeReact[sp][ch].burnEnv);
+                fl (triodeReact[sp][ch].atrophyEnv);
+                fl (triodeReact[sp][ch].reservoirDrainEnv);
                 fl (transistorPreHP[sp][ch]);
                 fl (transistorPreEdge[sp][ch]);
                 fl (transistorPostLP[sp][ch]);
@@ -1389,33 +1404,39 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
     int oldIdx = idx + offset;
     if (oldIdx >= kTriodeSagBufSize) oldIdx -= kTriodeSagBufSize;
 
-    // Current draw must rise faster than linearly with hot input, otherwise
-    // +6 dB or +12 dB material does not feel dramatically more sagged.
+    // Current draw feeds the short Airwindows-style shape sag. The slower
+    // supply detector below uses dB so already-hot host gain remains distinct.
     const float senseMag = std::abs (sense);
     const float senseNorm = juce::jlimit (0.0f, 4.0f, senseMag);
     const float currentDraw = senseNorm * (0.55f + 0.30f * std::min (1.0f, senseNorm))
                             + (senseNorm * senseNorm) * (0.18f + 0.22f * shapeDepth);
 
-    // Slow supply-sag detector: this is the time-domain part of the effect.
-    // It tracks sustained current draw with amp-like attack/recovery, but the
-    // resulting drop is applied to stage conditions later in the TUBE core.
-    const float supplyThreshold = juce::jmap (reactDepth, 0.92f, 0.56f);
-    const float supplyKnee = juce::jmap (reactDepth, 0.42f, 0.22f);
-    const float supplyOver = detail::smoothStep01 (
-        (currentDraw - supplyThreshold) / std::max (supplyKnee, 1.0e-4f));
-    const float supplyTarget = supplyOver * reactDepth * reactDepth;
-    const float supplyAttackHz = 6.5f + reactDepth * 11.5f;       // ~25 ms -> ~9 ms
-    const float supplyReleaseHz = 1.20f - reactDepth * 0.75f;     // ~130 ms -> ~350 ms
+    // Slow supply-sag detector: model SAG as supply stiffness. Low SAG needs
+    // very hot input to move; high SAG starts reacting around nominal 0 dBFS.
+    const float senseDb = juce::jlimit (
+        -80.0f, 24.0f,
+        20.0f * std::log10 (std::max (senseMag, 1.0e-6f)));
+    const float sagDepth = std::pow (reactDepth, 1.55f);
+    const float supplyThresholdDb = juce::jmap (reactDepth, 18.0f, -3.0f);
+    const float supplyScaleDb = juce::jmap (reactDepth, 24.0f, 10.0f);
+    const float supplyOverDb = std::max (0.0f, senseDb - supplyThresholdDb);
+    const float supplyTarget = juce::jlimit (
+        0.0f, 1.0f,
+        sagDepth * (1.0f - adaa::fastExp (-supplyOverDb / std::max (1.0f, supplyScaleDb))));
+    const float supplyAttackHz = 5.0f + reactDepth * 12.0f;       // ~32 ms -> ~9 ms
+    const float supplyReleaseHz = 1.35f - reactDepth * 0.95f;     // ~118 ms -> ~398 ms
     const float supplyCoeff = detail::onePoleCoeff (
         supplyTarget > st.supplyEnv ? supplyAttackHz : supplyReleaseHz, sr);
     st.supplyEnv += (supplyTarget - st.supplyEnv) * supplyCoeff;
     st.supplyDrop = juce::jlimit (0.0f, 1.0f, st.supplyEnv);
 
-    // Bloom is driven by level above nominal full scale, not by the supply
-    // detector. This keeps +3/+6/+12 dB inputs meaningfully different instead
-    // of saturating the side-chain at 0 dB.
-    const float hotExcess = std::max (0.0f, senseNorm - 1.0f);
-    const float hotTarget = (1.0f - adaa::fastExp (-0.55f * hotExcess)) * reactDepth;
+    // Bloom remembers both hot input and sustained supply collapse.
+    const float hotOverDb = std::max (0.0f, senseDb);
+    const float hotTarget = (1.0f - adaa::fastExp (-hotOverDb / (10.0f - reactDepth * 3.0f)))
+                          * reactDepth;
+    const float bloomInputTarget = juce::jlimit (
+        0.0f, 1.0f,
+        std::max (hotTarget, supplyTarget * (0.25f + reactDepth * 0.50f)));
     const float strikeAttackHz = 40.0f + reactDepth * 45.0f;     // ~4 ms -> ~2 ms
     const float strikeReleaseHz = 2.3f + reactDepth * 1.8f;      // ~70 ms -> ~39 ms
     const float strikeCoeff = detail::onePoleCoeff (
@@ -1423,7 +1444,7 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
     st.strikeEnv += (hotTarget - st.strikeEnv) * strikeCoeff;
     st.strikeEnv = juce::jlimit (0.0f, 1.0f, st.strikeEnv);
 
-    const float bloomWindowMs = 25.0f + (reactDepth * reactDepth) * 475.0f;
+    const float bloomWindowMs = 35.0f + (reactDepth * reactDepth) * 515.0f;
     const int targetBloomWindowSlots = juce::jlimit (1, kTriodeBloomSlotCount - 2,
                                                      (int) std::round (bloomWindowMs));
 
@@ -1449,7 +1470,7 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
     if (st.bloomWindowSlots < 1 || st.bloomWindowSlots > kTriodeBloomSlotCount - 2)
         st.bloomWindowSlots = targetBloomWindowSlots;
 
-    st.bloomSlotSum += hotTarget;
+    st.bloomSlotSum += bloomInputTarget;
     ++st.bloomSlotSamples;
 
     if (st.bloomSlotSamples >= samplesPerBloomSlot)
@@ -1506,6 +1527,40 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
         bloomTarget > st.bloomEnv ? bloomRiseHz : bloomFallHz, sr);
     st.bloomEnv += (bloomTarget - st.bloomEnv) * bloomCoeff;
     st.bloomEnv = juce::jlimit (0.0f, 1.0f, st.bloomEnv);
+
+    // Subsonic burn is not a free LFO: it is the small mechanical wobble left
+    // by supply movement. A fast/slow pair gives motion only while sag changes.
+    const float burnDrive = st.supplyDrop * (0.35f + reactDepth * 0.65f);
+    const float burnFastCoeff = detail::onePoleCoeff (2.6f + reactDepth * 2.4f, sr);
+    const float burnSlowCoeff = detail::onePoleCoeff (0.24f + reactDepth * 0.36f, sr);
+    st.burnFast += (burnDrive - st.burnFast) * burnFastCoeff;
+    st.burnSlow += (burnDrive - st.burnSlow) * burnSlowCoeff;
+    st.burnEnv = juce::jlimit (-1.0f, 1.0f,
+                               (st.burnFast - st.burnSlow) * (0.65f + reactDepth * 0.55f));
+
+    // Sustained hot input should also make the virtual supply feel atrophied:
+    // an exponential level-dependent compressor with amp-like long recovery.
+    const float atrophyDrive = (1.0f - adaa::fastExp (-hotOverDb / 7.5f)) * sagDepth;
+    const float atrophyTarget = juce::jlimit (0.0f, 1.0f, atrophyDrive);
+    const float atrophyAttackHz = 7.5f + reactDepth * 8.5f;       // ~21 ms -> ~10 ms
+    const float atrophyReleaseHz = juce::jmap (reactDepth, 1.10f, 0.318f); // ~145 ms -> ~500 ms
+    const float atrophyCoeff = detail::onePoleCoeff (
+        atrophyTarget > st.atrophyEnv ? atrophyAttackHz : atrophyReleaseHz, sr);
+    st.atrophyEnv += (atrophyTarget - st.atrophyEnv) * atrophyCoeff;
+    st.atrophyEnv = juce::jlimit (0.0f, 1.0f, st.atrophyEnv);
+
+    // The reservoir drain is slower and only appears on very hot material:
+    // it simulates the supply reserve taking seconds, not milliseconds, to recover.
+    const float drainOverDb = std::max (0.0f, senseDb - 6.0f);
+    const float drainHot = std::pow (1.0f - adaa::fastExp (-drainOverDb / 9.0f), 1.35f);
+    const float drainSusceptibility = 0.15f + sagDepth * 0.85f;
+    const float drainTarget = juce::jlimit (0.0f, 1.0f, drainHot * drainSusceptibility);
+    const float drainAttackHz = 1.15f + reactDepth * 0.85f;       // ~138 ms -> ~80 ms
+    const float drainReleaseHz = juce::jmap (reactDepth, 0.90f, 0.106f); // ~177 ms -> ~1.5 s
+    const float drainCoeff = detail::onePoleCoeff (
+        drainTarget > st.reservoirDrainEnv ? drainAttackHz : drainReleaseHz, sr);
+    st.reservoirDrainEnv += (drainTarget - st.reservoirDrainEnv) * drainCoeff;
+    st.reservoirDrainEnv = juce::jlimit (0.0f, 1.0f, st.reservoirDrainEnv);
 
     const float intensity = 0.0445556f * (0.12f + shapeDepthCurve * 1.65f);
     const float powerSag = 0.0033002237f;
@@ -1919,6 +1974,11 @@ inline float processTriode (float x, float drive, float girth, float bias, float
         triodeSag.supplyDrop *= 0.5f;
         triodeSag.strikeEnv *= 0.5f;
         triodeSag.bloomEnv *= 0.5f;
+        triodeSag.burnFast *= 0.5f;
+        triodeSag.burnSlow *= 0.5f;
+        triodeSag.burnEnv *= 0.5f;
+        triodeSag.atrophyEnv *= 0.5f;
+        triodeSag.reservoirDrainEnv *= 0.5f;
         triodeSag.bloomSum *= 0.5f;
         triodeSag.bloomSlotSum = 0.0f;
         triodeSag.bloomSlotSamples = 0;
@@ -1945,6 +2005,16 @@ inline float processTriode (float x, float drive, float girth, float bias, float
         juce::jlimit (0.0f, 1.0f, triodeSag.strikeEnv));
     const float bloomCore = detail::smoothStep01 (
         juce::jlimit (0.0f, 1.0f, triodeSag.bloomEnv)) * (1.0f - strikeCore * 0.18f);
+    const float burnCore = juce::jlimit (-1.0f, 1.0f, triodeSag.burnEnv);
+    const float burnPress = std::max (0.0f, burnCore);
+    const float atrophyCore = detail::smoothStep01 (
+        juce::jlimit (0.0f, 1.0f, triodeSag.atrophyEnv)) * (0.45f + supplyCore * 0.55f);
+    const float atrophyDb = atrophyCore * juce::jmap (tubeMorph, 4.5f, 7.5f);
+    const float reservoirCore = detail::smoothStep01 (
+        juce::jlimit (0.0f, 1.0f, triodeSag.reservoirDrainEnv))
+        * (0.35f + supplyCore * 0.65f);
+    const float reservoirDb = reservoirCore * juce::jmap (tubeMorph, 1.6f, 2.5f);
+    const float atrophyGain = adaa::fastExp (-(atrophyDb + reservoirDb) * 0.11512925465f);
 
     // Tube2ustyle stage inside the black box. MOD/GIRTH stay mostly outside
     // for now so we can match the core behavior first.
@@ -1968,8 +2038,11 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     // tightens headroom and shifts the operating point of the Tube2ustyle core.
     const float biasPos = std::max (0.0f, bEff);
     const float biasNeg = std::max (0.0f, -bEff);
-    const float stageBias12AX7 = bEff * 0.050f - sagCore * 0.095f - supplyCore * 0.040f;
-    const float stageBiasPower = bEff * 0.028f - sagCore * 0.072f - supplyCore * 0.055f;
+    const float burnBiasShift = burnCore * (0.004f + tubeMorph * 0.006f);
+    const float stageBias12AX7 = bEff * 0.050f - sagCore * 0.095f
+                               - supplyCore * 0.040f - burnBiasShift;
+    const float stageBiasPower = bEff * 0.028f - sagCore * 0.072f
+                               - supplyCore * 0.055f - burnBiasShift * 1.25f;
     const float stageBias = juce::jmap (tubeMorph, stageBias12AX7, stageBiasPower);
     const float cathodeDepth12AX7 = bodyCurve * (0.040f + d * 0.050f);
     const float cathodeDepthPower = bodyCurve * (0.026f + d * 0.032f);
@@ -1987,8 +2060,10 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     const float stageHeadroomBase = juce::jlimit (
         0.52f, 1.08f,
         juce::jmap (tubeMorph, headroom12AX7, headroomPower) + bloomHeadroomRecovery);
+    const float burnHeadroomLoss = burnPress * (0.010f + tubeMorph * 0.018f);
     const float stageHeadroom = juce::jlimit (0.52f, 1.08f,
-                                              stageHeadroomBase * (1.0f - cathodeDepth * 0.12f));
+                                              stageHeadroomBase * (1.0f - cathodeDepth * 0.12f
+                                                                        - burnHeadroomLoss));
     s += stageBias;
     s = detail::clampF (s, -stageHeadroom, stageHeadroom);
     s /= stageHeadroom;
@@ -2024,9 +2099,14 @@ inline float processTriode (float x, float drive, float girth, float bias, float
             0.0f, 1.0f,
             1.0f - supplyCore * (0.08f + tubeMorph * 0.10f)
                  + bloomPower * (0.078f + tubeMorph * 0.168f));
-        const float powerBloomLift = 1.0f + bloomPower * (0.069f + tubeMorph * 0.184f);
+        const float bloomLiftDamp = 1.0f - atrophyCore * (0.18f + tubeMorph * 0.12f);
+        const float powerBloomLift = 1.0f + bloomPower * (0.069f + tubeMorph * 0.184f)
+                                           * bloomLiftDamp;
+        const float burnPowerMod = juce::jlimit (
+            0.955f, 1.035f,
+            1.0f - burnCore * (0.012f + tubeMorph * 0.020f));
         const float powerGain = (1.0f + d * (0.70f + tubeMorph * 0.55f))
-                              * supplyPowerLoss * powerBloomLift;
+                              * supplyPowerLoss * powerBloomLift * burnPowerMod;
 
         const float posV = s * powerGain + idleBias;
         const float negV = -s * powerGain + idleBias;
@@ -2099,6 +2179,8 @@ inline float processTriode (float x, float drive, float girth, float bias, float
         const float depth = bodyPostLp * bodyCurve * depthAmt;
         s = (s + depth) / (1.0f + bodyCurve * depthAmt * 0.35f);
     }
+
+    s *= atrophyGain;
 
     state.triodeBlock[sp][ch] = 0.0f;
     return s;
@@ -3078,6 +3160,11 @@ inline void processBlock (State& state,
                     stageTriodeReact.supplyDrop *= 0.5f;
                     stageTriodeReact.strikeEnv *= 0.5f;
                     stageTriodeReact.bloomEnv *= 0.5f;
+                    stageTriodeReact.burnFast *= 0.5f;
+                    stageTriodeReact.burnSlow *= 0.5f;
+                    stageTriodeReact.burnEnv *= 0.5f;
+                    stageTriodeReact.atrophyEnv *= 0.5f;
+                    stageTriodeReact.reservoirDrainEnv *= 0.5f;
                     stageTriodeReact.bloomSum *= 0.5f;
                     stageTriodeReact.bloomSlotSum = 0.0f;
                     stageTriodeReact.bloomSlotSamples = 0;
