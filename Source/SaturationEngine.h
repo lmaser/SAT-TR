@@ -646,8 +646,9 @@ inline MultibandSagResult multibandReactProcess (
 
 // ----------------------------------------------------------------
 //  VARIATION -- analog component tolerance + slow thermal drift
-//  Static tolerance (dominant, 70%): per-instance hash -> fixed offset
-//  Thermal drift (secondary, 30%): 3 incommensurate sub-Hz sines
+//  Static tolerance (dominant): per-instance hash -> fixed offset
+//  Thermal drift: 3 incommensurate sub-Hz sines
+//  Micro-wander: very small high-range movement for extra analog instability
 // ----------------------------------------------------------------
 struct DriftOsc
 {
@@ -689,12 +690,57 @@ struct DriftOsc
     void reset() noexcept { phase1 = phase2 = phase3 = 0.0f; output = 0.0f; }
 };
 
+struct MicroWanderOsc
+{
+    float phase1 = 0.0f;
+    float phase2 = 0.0f;
+    float basePhase1 = 0.0f;
+    float basePhase2 = 0.0f;
+    float output = 0.0f;
+
+    void initPhase (uint32_t seed, int paramIdx) noexcept
+    {
+        uint32_t h = seed ^ (uint32_t (paramIdx) * 2246822519u);
+        h = ((h >> 15) ^ h) * 0x2c1b3c6du;
+        h = ((h >> 12) ^ h) * 0x297a2d39u;
+        h = (h >> 15) ^ h;
+
+        basePhase1 = float (h & 0xFFFFu) / 65536.0f;
+        basePhase2 = float ((h >> 16) & 0xFFFFu) / 65536.0f;
+        phase1 = basePhase1;
+        phase2 = basePhase2;
+    }
+
+    void advance (float rate, float depth, float sampleRate) noexcept
+    {
+        const float sr = juce::jmax (1.0f, sampleRate);
+        phase1 += rate / sr;
+        phase2 += rate * 1.618034f / sr;
+
+        if (phase1 >= 1.0f) phase1 -= std::floor (phase1);
+        if (phase2 >= 1.0f) phase2 -= std::floor (phase2);
+
+        const float wander = std::sin (phase1 * kTwoPi) * 0.6f
+                           + std::sin (phase2 * kTwoPi) * 0.4f;
+        output = wander * depth;
+    }
+
+    void reset() noexcept
+    {
+        phase1 = basePhase1;
+        phase2 = basePhase2;
+        output = 0.0f;
+    }
+};
+
 struct VariationState
 {
     DriftOsc gainDrift;
     DriftOsc biasDrift;
     DriftOsc shapeDrift;
     DriftOsc asymDrift;
+    MicroWanderOsc driveWander;
+    MicroWanderOsc shapeWander;
     bool     tolerancesReady = false;
 
     void initTolerances (uint32_t seed) noexcept
@@ -703,6 +749,8 @@ struct VariationState
         biasDrift.initTolerance  (seed, 1);
         shapeDrift.initTolerance (seed, 2);
         asymDrift.initTolerance  (seed, 3);
+        driveWander.initPhase    (seed, 4);
+        shapeWander.initPhase    (seed, 5);
         tolerancesReady = true;
     }
 
@@ -712,6 +760,8 @@ struct VariationState
         biasDrift.reset();
         shapeDrift.reset();
         asymDrift.reset();
+        driveWander.reset();
+        shapeWander.reset();
     }
 };
 
@@ -2685,8 +2735,7 @@ inline void processBlock (State& state,
     if (model == Model::Tape)
     {
         const bool tapeActive = driveCurved > 0.001f || modParam < 0.999f;
-        const bool driveJump = std::abs (driveCurved - state.lastTapeDrive) > 0.15f;
-        if (driveJump || tapeActive != state.tapeWasActive)
+        if (tapeActive != state.tapeWasActive)
         {
             for (int ch = 0; ch < 2; ++ch)
             {
@@ -2737,17 +2786,9 @@ inline void processBlock (State& state,
         float& lastShape = state.lastTransistorShape;
         bool& wasActive = state.transistorWasActive;
         // These black boxes use parameter-dependent ADAA stages, but snapping
-        // parameters every block was producing the audible zipper/clicks the
-        // user reported. We now smooth normally and only reset state on
-        // genuinely large target jumps.
-        const bool shapeJump = std::abs (shapeSig - lastShape) > 0.22f;
-        const bool driveJump = std::abs (driveCurved - lastDrive) > 0.10f;
-        const bool girthJump = std::abs (clampedGirth - lastGirth) > 0.12f;
-        const bool modJump   = std::abs (clampedMod   - lastMod)   > 0.12f;
-        const bool biasJump  = std::abs (clampedBias  - lastBias)  > 0.16f;
-        const bool reactJump = std::abs (clampedReact - lastReact) > 0.12f;
-
-        if (shapeJump || driveJump || girthJump || modJump || biasJump || reactJump || active != wasActive)
+        // parameters can produce clicks. Model switches are handled above; here
+        // we only reset when the transistor core enters/leaves its active state.
+        if (active != wasActive)
         {
             for (int ch = 0; ch < 2; ++ch)
             {
@@ -2855,7 +2896,7 @@ inline void processBlock (State& state,
         // -- VARIATION: analog component tolerance + slow thermal drift --
         // Static tolerance (per-instance hash): each "unit" has unique character.
         // Thermal drift (sub-Hz sines): very slow cathode/plate temp changes.
-        // NO fast oscillation -- real components don't modulate at Hz rates.
+        // Micro-wander only appears at high VAR and stays intentionally subtle.
         float driveMod = 1.0f, biasMod = 0.0f, shapeMod = 0.0f, asymMod = 0.0f;
         if (var > 0.001f)
         {
@@ -2875,11 +2916,23 @@ inline void processBlock (State& state,
             state.variation.shapeDrift.advance (rate * 1.43f, var, sampleRate);
             state.variation.asymDrift.advance  (rate * 0.61f, var, sampleRate);
 
+            const float wanderNorm = detail::smoothStep01 (
+                detail::clampF ((var - 0.70f) / 0.30f, 0.0f, 1.0f));
+            const float wanderDepth = wanderNorm * wanderNorm;
+            if (wanderDepth > 0.0f)
+            {
+                const float wanderRate = 0.45f + wanderDepth * 3.55f;
+                state.variation.driveWander.advance (wanderRate,         wanderDepth, sampleRate);
+                state.variation.shapeWander.advance (wanderRate * 1.37f, wanderDepth, sampleRate);
+            }
+
             // Output already incorporates var scaling (depth) -- no double-scaling
             driveMod = 1.0f + state.variation.gainDrift.output  * 0.08f;  // +/-8% gain (tube gm + resistor dividers)
             biasMod  =        state.variation.biasDrift.output  * 0.04f;  // +/-4% bias (cathode R + grid leak)
             shapeMod =        state.variation.shapeDrift.output * 0.02f;  // +/-2% shape (plate Rp variation)
             asymMod  =        state.variation.asymDrift.output  * 0.025f; // +/-2.5% L/R (matched pair mismatch)
+            driveMod += state.variation.driveWander.output * 0.015f;      // high-VAR +/-1.5% drive wander
+            shapeMod += state.variation.shapeWander.output * 0.005f;      // high-VAR +/-0.5% shape wander
         }
 
         // -- Per-sample series passes --
