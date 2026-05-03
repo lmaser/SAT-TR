@@ -536,6 +536,20 @@ struct ClipperPeakState
     }
 };
 
+struct TransistorPeakCatchState
+{
+    float peakEnv = 0.0f;
+    float bodyEnv = 0.0f;
+    float gain    = 1.0f;
+
+    void reset() noexcept
+    {
+        peakEnv = 0.0f;
+        bodyEnv = 0.0f;
+        gain = 1.0f;
+    }
+};
+
 struct TriodeReactState
 {
     float sagBuf[kTriodeSagBufSize] = {};
@@ -816,6 +830,7 @@ struct State
     float sagEnvelope[kMaxSeries][2] = {};
     DynamicsCompState dynamicsComp[kMaxSeries][2];
     ClipperPeakState clipperPeak[kMaxSeries][2];
+    TransistorPeakCatchState transistorPeakCatch[kMaxSeries][2];
     TriodeReactState triodeReact[kMaxSeries][2];
 
     // Per-stage DC blocker (1st-order HPF, post-saturation)
@@ -834,6 +849,7 @@ struct State
     float triodeBlock[kMaxSeries][2] = {};   // grid conduction / blocking memory
     float powerSag[kMaxSeries][2]    = {};   // supply compression memory
     float tapeFlux[kMaxSeries][2]    = {};   // magnetic remanence proxy
+    float tapeStressEnv[kMaxSeries][2] = {}; // high-level magnetic stress / drag
     float triodeBodyPreLP[kMaxSeries][2] = {};
     float triodeBodyPostLP[kMaxSeries][2] = {};
 
@@ -916,6 +932,7 @@ struct State
                 sagEnvelope[sp][ch] = 0.0f;
                 dynamicsComp[sp][ch].reset();
                 clipperPeak[sp][ch].reset();
+                transistorPeakCatch[sp][ch].reset();
                 triodeReact[sp][ch].reset();
                 dcX[sp][ch] = dcY[sp][ch] = 0.0f;
                 emphasis[sp][ch].reset();
@@ -923,6 +940,7 @@ struct State
                 triodeBlock[sp][ch] = 0.0f;
                 powerSag[sp][ch] = 0.0f;
                 tapeFlux[sp][ch] = 0.0f;
+                tapeStressEnv[sp][ch] = 0.0f;
                 triodeBodyPreLP[sp][ch] = 0.0f;
                 triodeBodyPostLP[sp][ch] = 0.0f;
                 triodeAdaa[sp][ch].reset();
@@ -986,6 +1004,9 @@ struct State
                 fl (dynamicsComp[sp][ch].gain);
                 fl (clipperPeak[sp][ch].peakEnv);
                 fl (clipperPeak[sp][ch].bodyEnv);
+                fl (transistorPeakCatch[sp][ch].peakEnv);
+                fl (transistorPeakCatch[sp][ch].bodyEnv);
+                fl (transistorPeakCatch[sp][ch].gain);
                 fl (triodeReact[sp][ch].control);
                 fl (triodeReact[sp][ch].prevIn);
                 fl (triodeReact[sp][ch].prevOut);
@@ -1023,6 +1044,7 @@ struct State
                 fl (triodeBlock[sp][ch]);
                 fl (powerSag[sp][ch]);
                 fl (tapeFlux[sp][ch]);
+                fl (tapeStressEnv[sp][ch]);
                 fl (triodeBodyPreLP[sp][ch]);
                 fl (triodeBodyPostLP[sp][ch]);
             }
@@ -1306,6 +1328,66 @@ inline DynamicsCompResult processTransistorComp (float x, DynamicsCompState& st,
     st.hfEnv += (detector - st.hfEnv) * detail::onePoleCoeff (releaseHz * 0.7f + 0.5f, sr);
 
     r.sample = x * st.gain;
+    r.amount = 1.0f - st.gain;
+    return r;
+}
+
+inline DynamicsCompResult processTransistorPeakCatch (float x, float detectorInput,
+                                                      TransistorPeakCatchState& st,
+                                                      float react, float drive, float type,
+                                                      float sr) noexcept
+{
+    DynamicsCompResult r;
+    r.sample = x;
+
+    if (react <= 0.0001f)
+        return r;
+
+    const float reactDepth = detail::clampF (react, 0.0f, 1.0f);
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float absX = std::abs (detectorInput);
+
+    // FET-style catch: nearly immediate peak detector over nominal 0 dB,
+    // with a slower body reference so sustained material releases naturally.
+    const float peakAtk = detail::onePoleCoeff (5400.0f + reactDepth * 5200.0f, sr);
+    const float peakRel = detail::onePoleCoeff (7.0f + reactDepth * 18.0f + d * 8.0f, sr);
+    if (absX > st.peakEnv)
+        st.peakEnv += (absX - st.peakEnv) * peakAtk;
+    else
+        st.peakEnv += (absX - st.peakEnv) * peakRel;
+
+    const float bodyAtk = detail::onePoleCoeff (42.0f + reactDepth * 72.0f, sr);
+    const float bodyRel = detail::onePoleCoeff (1.25f + reactDepth * 2.25f, sr);
+    if (absX > st.bodyEnv)
+        st.bodyEnv += (absX - st.bodyEnv) * bodyAtk;
+    else
+        st.bodyEnv += (absX - st.bodyEnv) * bodyRel;
+
+    const float peakCatch = detail::smoothStep01 ((st.peakEnv - 1.0f) / 1.0f);
+    const float transient = std::max (0.0f, st.peakEnv - st.bodyEnv * 0.92f);
+    const float transientCatch = detail::smoothStep01 ((transient - 0.06f) / 0.42f);
+    const float driveSusceptibility = 0.55f + detail::smoothStep01 ((d - 0.42f) / 0.58f) * 0.45f;
+    const float catchDepth = reactDepth * driveSusceptibility;
+    const float catchTarget = juce::jlimit (
+        0.0f, 1.0f,
+        peakCatch * (0.78f + transientCatch * 0.22f) * catchDepth);
+    const float maxCatchDb = juce::jmap (type, 3.7f, 3.2f) + reactDepth * 0.45f;
+    const float targetGain = adaa::fastExp (-(catchTarget * maxCatchDb) * 0.11512925465f);
+
+    const float gainAtk = detail::onePoleCoeff (7200.0f + reactDepth * 5200.0f, sr);
+    const float gainRel = detail::onePoleCoeff (1.8f + reactDepth * 3.2f + d * 1.2f, sr);
+    if (targetGain < st.gain)
+        st.gain += (targetGain - st.gain) * gainAtk;
+    else
+        st.gain += (targetGain - st.gain) * gainRel;
+    st.gain = juce::jlimit (0.55f, 1.0f, st.gain);
+
+    float out = x * st.gain;
+    const float stress = (1.0f - st.gain) * (0.006f + d * 0.014f)
+                       * juce::jmap (type, 1.15f, 0.85f);
+    out += out * std::abs (out) * stress;
+
+    r.sample = out;
     r.amount = 1.0f - st.gain;
     return r;
 }
@@ -2199,6 +2281,7 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
     auto& preEdge = state.transistorPreEdge[sp][ch];
     auto& postLP = state.transistorPostLP[sp][ch];
     auto& compState = state.dynamicsComp[sp][ch];
+    auto& peakCatchState = state.transistorPeakCatch[sp][ch];
     auto& coreAdaa = state.transistorCoreAdaa[sp][ch];
 
     const float d = detail::clampF (drive, 0.0f, 1.0f);
@@ -2241,19 +2324,6 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
         preHP = preEdge = postLP = 0.0f;
     }
 
-    if (react > 0.001f)
-    {
-        const float compAmt = detail::clampF (react, 0.0f, 1.0f);
-        const DynamicsCompResult comp = processTransistorComp (x, compState, compAmt, d, type, sr);
-        x = comp.sample;
-    }
-    else
-    {
-        compState.gain = 1.0f;
-        compState.env *= 0.5f;
-        compState.hfEnv *= 0.5f;
-    }
-
     const float inputPadBjt = detail::interpDrive5 (d,
                                                     0.14f, 0.30f, 0.68f, 1.32f, 2.75f)
                             * juce::jmap (bodyToneCurve, 1.00f, 1.22f);
@@ -2261,6 +2331,26 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
                                                     0.18f, 0.36f, 0.74f, 1.26f, 2.20f)
                             * juce::jmap (bodyToneCurve, 1.00f, 1.14f);
     const float inputPad = juce::jmap (type, inputPadBjt, inputPadFet);
+
+    if (react > 0.001f)
+    {
+        const float compAmt = detail::clampF (react, 0.0f, 1.0f);
+        const DynamicsCompResult peak = processTransistorPeakCatch (
+            x, x * inputPad, peakCatchState, compAmt, d, type, sr);
+        x = peak.sample;
+        const DynamicsCompResult comp = processTransistorComp (x, compState, compAmt, d, type, sr);
+        x = comp.sample;
+    }
+    else
+    {
+        peakCatchState.peakEnv *= 0.5f;
+        peakCatchState.bodyEnv *= 0.5f;
+        peakCatchState.gain += (1.0f - peakCatchState.gain) * 0.25f;
+        compState.gain = 1.0f;
+        compState.env *= 0.5f;
+        compState.hfEnv *= 0.5f;
+    }
+
     x *= inputPad;
     state.transistorDbgInputPad[sp][ch] = inputPad;
     trackDbg (state.transistorDbgPre[sp][ch], x);
@@ -2567,6 +2657,26 @@ inline float processTape (float x, float drive, float bias, float mod,
         satIn += oddBias * underBias * (0.004f + d * 0.012f);
     }
 
+    // Magnetic stress: only hot material or high DRIVE should load the tape.
+    // This stays out of the static curve so normal levels keep the existing feel.
+    float& tapeStress = state.tapeStressEnv[sp][ch];
+    const float stressDb = juce::jlimit (
+        -80.0f, 30.0f,
+        20.0f * std::log10 (std::max (std::abs (satIn), 1.0e-6f)));
+    const float stressOverDb = std::max (0.0f, stressDb - 3.0f);
+    const float driveStress = detail::smoothStep01 (detail::clampF ((d - 0.55f) / 0.45f, 0.0f, 1.0f));
+    const float stressTarget = juce::jlimit (
+        0.0f, 1.0f,
+        (1.0f - adaa::fastExp (-stressOverDb / 10.0f))
+            * (0.25f + driveStress * 0.75f));
+    const float stressAttackHz = 5.5f + driveStress * 7.5f;      // ~29 ms -> ~12 ms
+    const float stressReleaseHz = 0.80f + driveStress * 0.55f;   // ~199 ms -> ~118 ms
+    const float stressCoeff = detail::onePoleCoeff (
+        stressTarget > tapeStress ? stressAttackHz : stressReleaseHz, sr);
+    tapeStress += (stressTarget - tapeStress) * stressCoeff;
+    tapeStress = juce::jlimit (0.0f, 1.0f, tapeStress);
+    const float stressCore = detail::smoothStep01 (tapeStress);
+
     // Tape B needs a different transfer feel, not only different gain. Morph
     // the drive shape itself so MOD becomes audible even at identical drive.
     if (rabbitMod > 0.0001f)
@@ -2593,6 +2703,13 @@ inline float processTape (float x, float drive, float bias, float mod,
         const float oddBias = raw * std::abs (raw);
         raw -= oddBias * overBias * (0.004f + d * 0.010f);
         raw *= 1.0f - overBias * (0.02f + d * 0.03f);
+    }
+
+    if (stressCore > 0.0001f)
+    {
+        const float stressDensity = stressCore * (0.006f + d * 0.018f)
+                                  * (0.65f + rabbitMod * 0.35f);
+        raw += raw * std::abs (raw) * stressDensity;
     }
 
     if (rabbitMod > 0.0001f)
@@ -2631,6 +2748,8 @@ inline float processTape (float x, float drive, float bias, float mod,
     }
 
     float out = raw * (totalGain / pregain);
+    const float stressDrag = 1.0f / (1.0f + stressCore * (0.040f + d * 0.070f));
+    out *= stressDrag;
 
     if (rabbitMod > 0.0001f)
     {
@@ -2680,6 +2799,7 @@ inline void processBlock (State& state,
                 state.sagEnvelope[sp][ch] = 0.0f;
                 state.dynamicsComp[sp][ch].reset();
                 state.clipperPeak[sp][ch].reset();
+                state.transistorPeakCatch[sp][ch].reset();
                 state.triodeReact[sp][ch].reset();
                 state.emphasis[sp][ch].reset();
                 state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
@@ -2691,6 +2811,7 @@ inline void processBlock (State& state,
                 state.triodeBlock[sp][ch] = 0.0f;
                 state.powerSag[sp][ch] = 0.0f;
                 state.tapeFlux[sp][ch] = 0.0f;
+                state.tapeStressEnv[sp][ch] = 0.0f;
                 state.interStageLPF[sp][ch] = 0.0f;
                 state.interStageDCx[sp][ch] = 0.0f;
                 state.interStageDCy[sp][ch] = 0.0f;
@@ -2829,6 +2950,7 @@ inline void processBlock (State& state,
                     state.emphasis[sp][ch].reset();
                     state.dynamicsComp[sp][ch].reset();
                     state.clipperPeak[sp][ch].reset();
+                    state.transistorPeakCatch[sp][ch].reset();
                     state.triodeReact[sp][ch].reset();
                     state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
                     state.triodeAdaa[sp][ch].reset();
@@ -2841,6 +2963,7 @@ inline void processBlock (State& state,
                     state.bumpZ1[sp][ch] = 0.0f;
                     state.bumpZ2[sp][ch] = 0.0f;
                     state.tapeFlux[sp][ch] = 0.0f;
+                    state.tapeStressEnv[sp][ch] = 0.0f;
                 }
             }
         }
@@ -2881,6 +3004,7 @@ inline void processBlock (State& state,
                     state.sagEnvelope[sp][ch] = 0.0f;
                     state.dynamicsComp[sp][ch].reset();
                     state.clipperPeak[sp][ch].reset();
+                    state.transistorPeakCatch[sp][ch].reset();
                     state.emphasis[sp][ch].reset();
                     state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
                     state.transistorCoreAdaa[sp][ch].reset();
@@ -2938,6 +3062,7 @@ inline void processBlock (State& state,
                     {
                         state.dynamicsComp[sp][ch].reset();
                         state.tapeFlux[sp][ch] = 0.0f;
+                        state.tapeStressEnv[sp][ch] = 0.0f;
                     }
                 }
 
