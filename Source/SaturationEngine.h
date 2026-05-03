@@ -791,6 +791,7 @@ struct State
     // VARIATION drift
     VariationState variation;
     uint32_t variationSeed = 0;
+    float variationSignalEnv = 0.0f;
 
     // Multiband REACT (per-stage / per-channel)
     MultibandReactState mbReact[kMaxSeries][2];
@@ -891,6 +892,7 @@ struct State
         currentSeriesCount = 1;
         lastModel = Model::Clean;
         variation.reset();
+        variationSignalEnv = 0.0f;
         sDrive = sGirth = sBias = sReact = sMod = sVar = 0.0f;
         lastTapeDrive = 0.0f;
         tapeWasActive = false;
@@ -960,6 +962,7 @@ struct State
                 fl (triodeBodyPostLP[sp][ch]);
             }
         }
+        fl (variationSignalEnv);
     }
 };
 
@@ -2584,6 +2587,8 @@ inline void processBlock (State& state,
 
     // DC blocker coefficient
     const float dcR = 1.0f - (kTwoPi * 5.0f / sampleRate);
+    const float variationPresenceAttack = detail::onePoleCoeff (400.0f, sampleRate);
+    const float variationPresenceRelease = detail::onePoleCoeff (8.0f, sampleRate);
 
     // REACT window size (model-dependent base, scaled by react amount)
     int reactBaseWindow = 1024;
@@ -2838,6 +2843,14 @@ inline void processBlock (State& state,
         const float bias  = state.sBias;
         const float react = state.sReact;
         const float var   = state.sVar;
+        const float inputPeak = std::max (std::abs (left[i]), std::abs (right[i]));
+        const float presenceTarget = detail::smoothStep01 (
+            detail::clampF ((inputPeak - 1.0e-5f) / (5.0e-4f - 1.0e-5f), 0.0f, 1.0f));
+        const float presenceCoeff = presenceTarget > state.variationSignalEnv
+                                  ? variationPresenceAttack
+                                  : variationPresenceRelease;
+        state.variationSignalEnv += (presenceTarget - state.variationSignalEnv) * presenceCoeff;
+        const float variationBiasScale = state.variationSignalEnv;
 
         // -- VARIATION: analog component tolerance + slow thermal drift --
         // Static tolerance (per-instance hash): each "unit" has unique character.
@@ -2902,7 +2915,8 @@ inline void processBlock (State& state,
 
                 // -- Apply VARIATION per-channel (L/R asymmetry decorrelation) --
                 float effDrive = drive * driveMod;
-                float effBias  = bias  + biasMod + (ch == 0 ? asymMod : -asymMod);
+                const float variationBias = (biasMod + (ch == 0 ? asymMod : -asymMod)) * variationBiasScale;
+                float effBias  = bias + variationBias;
                 float effMod   = detail::clampF (mod + shapeMod, 0.0f, 1.0f);
 
                 // -- INTERNAL PRE-EMPHASIS (per series pass, unless rawMode) --
