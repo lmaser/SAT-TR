@@ -28,7 +28,7 @@ public:
 	static constexpr const char* kParamOutA         = "out_a";
 	static constexpr const char* kParamTiltA        = "tilt_a";
 	static constexpr const char* kParamSeriesA      = "series_a";
-	static constexpr const char* kParamVarA         = "var_a";
+	static constexpr const char* kParamInstabilityA         = "instability_a";
 	static constexpr const char* kParamPanA         = "pan_a";
 	static constexpr const char* kParamFredA        = "fred_a";
 	static constexpr const char* kParamPosA         = "pos_a";
@@ -75,7 +75,7 @@ public:
 	static constexpr const char* kParamOutB         = "out_b";
 	static constexpr const char* kParamTiltB        = "tilt_b";
 	static constexpr const char* kParamSeriesB      = "series_b";
-	static constexpr const char* kParamVarB         = "var_b";
+	static constexpr const char* kParamInstabilityB         = "instability_b";
 	static constexpr const char* kParamPanB         = "pan_b";
 	static constexpr const char* kParamFredB        = "fred_b";
 	static constexpr const char* kParamPosB         = "pos_b";
@@ -122,7 +122,7 @@ public:
 	static constexpr const char* kParamOutC         = "out_c";
 	static constexpr const char* kParamTiltC        = "tilt_c";
 	static constexpr const char* kParamSeriesC      = "series_c";
-	static constexpr const char* kParamVarC         = "var_c";
+	static constexpr const char* kParamInstabilityC         = "instability_c";
 	static constexpr const char* kParamPanC         = "pan_c";
 	static constexpr const char* kParamFredC        = "fred_c";
 	static constexpr const char* kParamPosC         = "pos_c";
@@ -297,9 +297,9 @@ public:
 	static constexpr float kSeriesMax               = 4.0f;
 	static constexpr float kSeriesDefault           = 1.0f;
 
-	static constexpr float kVarMin                  = 0.0f;
-	static constexpr float kVarMax                  = 1.0f;
-	static constexpr float kVarDefault              = 0.0f;
+	static constexpr float kInstabilityMin                  = 0.0f;
+	static constexpr float kInstabilityMax                  = 1.0f;
+	static constexpr float kInstabilityDefault              = 0.0f;
 
 	static constexpr float kPanMin                  = 0.0f;       // 0% = full left
 	static constexpr float kPanMax                  = 1.0f;       // 100% = full right
@@ -641,7 +641,7 @@ private:
 	std::atomic<float>* pHpSlopeA = nullptr;
 	std::atomic<float>* pLpSlopeA = nullptr;
 	std::atomic<float>* pSeriesA = nullptr;
-	std::atomic<float>* pVarA = nullptr;
+	std::atomic<float>* pInstabilityA = nullptr;
 	std::atomic<float>* pPanA = nullptr;
 	std::atomic<float>* pFredA = nullptr;
 	std::atomic<float>* pPosA = nullptr;
@@ -655,7 +655,7 @@ private:
 	std::atomic<float>* pHpSlopeB = nullptr;
 	std::atomic<float>* pLpSlopeB = nullptr;
 	std::atomic<float>* pSeriesB = nullptr;
-	std::atomic<float>* pVarB = nullptr;
+	std::atomic<float>* pInstabilityB = nullptr;
 	std::atomic<float>* pPanB = nullptr;
 	std::atomic<float>* pFredB = nullptr;
 	std::atomic<float>* pPosB = nullptr;
@@ -691,7 +691,7 @@ private:
 	std::atomic<float>* pHpSlopeC = nullptr;
 	std::atomic<float>* pLpSlopeC = nullptr;
 	std::atomic<float>* pSeriesC = nullptr;
-	std::atomic<float>* pVarC = nullptr;
+	std::atomic<float>* pInstabilityC = nullptr;
 	std::atomic<float>* pPanC = nullptr;
 	std::atomic<float>* pFredC = nullptr;
 	std::atomic<float>* pPosC = nullptr;

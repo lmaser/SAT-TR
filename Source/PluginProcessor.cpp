@@ -200,9 +200,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
 		kSeriesDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamVarA, "Variation A",
-		juce::NormalisableRange<float> (kVarMin, kVarMax, 0.001f),
-		kVarDefault));
+		kParamInstabilityA, "Instability A",
+		juce::NormalisableRange<float> (kInstabilityMin, kInstabilityMax, 0.001f),
+		kInstabilityDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamPanA, "Pan A", kPanMin, kPanMax, kPanDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -328,9 +328,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
 		kSeriesDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamVarB, "Variation B",
-		juce::NormalisableRange<float> (kVarMin, kVarMax, 0.001f),
-		kVarDefault));
+		kParamInstabilityB, "Instability B",
+		juce::NormalisableRange<float> (kInstabilityMin, kInstabilityMax, 0.001f),
+		kInstabilityDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamPanB, "Pan B", kPanMin, kPanMax, kPanDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -456,9 +456,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
 		kSeriesDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamVarC, "Variation C",
-		juce::NormalisableRange<float> (kVarMin, kVarMax, 0.001f),
-		kVarDefault));
+		kParamInstabilityC, "Instability C",
+		juce::NormalisableRange<float> (kInstabilityMin, kInstabilityMax, 0.001f),
+		kInstabilityDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamPanC, "Pan C", kPanMin, kPanMax, kPanDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -695,7 +695,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pHpSlopeA = parameters.getRawParameterValue (kParamHpSlopeA);
 	pLpSlopeA = parameters.getRawParameterValue (kParamLpSlopeA);
 	pSeriesA = parameters.getRawParameterValue (kParamSeriesA);
-	pVarA    = parameters.getRawParameterValue (kParamVarA);
+	pInstabilityA    = parameters.getRawParameterValue (kParamInstabilityA);
 	pPanA    = parameters.getRawParameterValue (kParamPanA);
 	pFredA   = parameters.getRawParameterValue (kParamFredA);
 	pPosA    = parameters.getRawParameterValue (kParamPosA);
@@ -709,7 +709,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pHpSlopeB = parameters.getRawParameterValue (kParamHpSlopeB);
 	pLpSlopeB = parameters.getRawParameterValue (kParamLpSlopeB);
 	pSeriesB = parameters.getRawParameterValue (kParamSeriesB);
-	pVarB    = parameters.getRawParameterValue (kParamVarB);
+	pInstabilityB    = parameters.getRawParameterValue (kParamInstabilityB);
 	pPanB    = parameters.getRawParameterValue (kParamPanB);
 	pFredB   = parameters.getRawParameterValue (kParamFredB);
 	pPosB    = parameters.getRawParameterValue (kParamPosB);
@@ -746,7 +746,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pHpSlopeC  = parameters.getRawParameterValue (kParamHpSlopeC);
 	pLpSlopeC  = parameters.getRawParameterValue (kParamLpSlopeC);
 	pSeriesC   = parameters.getRawParameterValue (kParamSeriesC);
-	pVarC      = parameters.getRawParameterValue (kParamVarC);
+	pInstabilityC      = parameters.getRawParameterValue (kParamInstabilityC);
 	pPanC      = parameters.getRawParameterValue (kParamPanC);
 	pFredC     = parameters.getRawParameterValue (kParamFredC);
 	pPosC      = parameters.getRawParameterValue (kParamPosC);
@@ -2035,7 +2035,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	const int   lpSlope = juce::jlimit (kFilterSlopeMin, kFilterSlopeMax,
 	                                    loadRelaxedInt (pick (pLpSlopeA, pLpSlopeB, pLpSlopeC)));
 	const int   seriesCount = juce::jlimit (1, 4, loadRelaxedInt (pick (pSeriesA, pSeriesB, pSeriesC)));
-	const float varAmt = loadRelaxed (pick (pVarA, pVarB, pVarC));
+	const float instabilityAmt = loadRelaxed (pick (pInstabilityA, pInstabilityB, pInstabilityC));
 	const float pan = loadRelaxed (pick (pPanA, pPanB, pPanC));
 	const float fred = loadRelaxed (pick (pFredA, pFredB, pFredC));
 	const float pos = loadRelaxed (pick (pPosA, pPosB, pPosC));
@@ -2545,7 +2545,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			const float osSr = (float) currentSampleRate * (float) os.getOversamplingFactor();
 
 			SatEngine::processBlock (state.satState, osL, osR, osNumSamples,
-			                         model, satDrive, satGirth, satMod, satBias, satSag, varAmt, osSr, seriesCount, false, satRaw, diagCollectorPtr);
+			                         model, satDrive, satGirth, satMod, satBias, satSag, instabilityAmt, osSr, seriesCount, false, satRaw, diagCollectorPtr);
 
 			os.processSamplesDown (block);
 		}
@@ -2555,7 +2555,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			float* dataR = numChannels > 1 ? buffer.getWritePointer (1) : dataL;
 
 			SatEngine::processBlock (state.satState, dataL, dataR, numSamples,
-			                         model, satDrive, satGirth, satMod, satBias, satSag, varAmt,
+			                         model, satDrive, satGirth, satMod, satBias, satSag, instabilityAmt,
 			                         (float) currentSampleRate, seriesCount, true, satRaw, diagCollectorPtr);
 		}
 
@@ -2567,6 +2567,14 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 				_diagCollector.feedOut (pL[n]);
 		}
 #endif
+	}
+	else
+	{
+		// Clean bypass skips SatEngine::processBlock, so mark the engine as
+		// clean here. Re-entering a nonlinear model will then reset model
+		// memory instead of resuming stale Tube/Instability state.
+		state.satState.lastModel = SatEngine::Model::Clean;
+		state.satState.instabilitySignalEnv = 0.0f;
 	}
 
 	// -- POST-saturation: apply tilt/filter if not already applied --

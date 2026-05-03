@@ -11,7 +11,7 @@
 //    ADAA (1st-order antiderivative anti-aliasing)
 //    REACT (Airwindows-inspired energy tracking -> parameter modulation)
 //    GIRTH (post-waveshaper wavefolding + sharpen)
-//    VARIATION (analog drift via Hermite S&H)
+//    Instability (analog drift via Hermite S&H)
 //    MOD (input-domain power warp + model-specific secondary)
 //    Internal emphasis / de-emphasis EQ per model
 //    Safety LPF for x1 (no oversampling) mode
@@ -669,7 +669,7 @@ inline MultibandSagResult multibandReactProcess (
 }
 
 // ----------------------------------------------------------------
-//  VARIATION -- analog component tolerance + slow thermal drift
+//  Instability -- analog component tolerance + slow thermal drift
 //  Static tolerance (dominant): per-instance hash -> fixed offset
 //  Thermal drift: 3 incommensurate sub-Hz sines
 //  Micro-wander: very small high-range movement for extra analog instability
@@ -680,6 +680,7 @@ struct DriftOsc
     float phase2 = 0.0f;
     float phase3 = 0.0f;
     float staticTol = 0.0f;     // per-component tolerance (fixed per instance)
+    float dynamic = 0.0f;
     float output = 0.0f;
 
     // Deterministic per-component tolerance from hash seed
@@ -706,12 +707,13 @@ struct DriftOsc
         const float drift = std::sin (phase1 * kTwoPi) * 0.5f
                           + std::sin (phase2 * kTwoPi) * 0.3f
                           + std::sin (phase3 * kTwoPi) * 0.2f;
+        dynamic = drift;
 
         // Static tolerance (70%) + slow thermal drift (30%)
         output = (staticTol * 0.7f + drift * 0.3f) * depth;
     }
 
-    void reset() noexcept { phase1 = phase2 = phase3 = 0.0f; output = 0.0f; }
+    void reset() noexcept { phase1 = phase2 = phase3 = 0.0f; dynamic = 0.0f; output = 0.0f; }
 };
 
 struct MicroWanderOsc
@@ -757,14 +759,82 @@ struct MicroWanderOsc
     }
 };
 
-struct VariationState
+struct SmoothSampleHoldOsc
+{
+    float curr = 0.0f;
+    float next = 0.0f;
+    float phase = 0.0f;
+    float output = 0.0f;
+    uint32_t baseSeed = 1u;
+    uint32_t state = 1u;
+
+    static uint32_t scramble (uint32_t v) noexcept
+    {
+        v ^= v >> 16;
+        v *= 0x7feb352du;
+        v ^= v >> 15;
+        v *= 0x846ca68bu;
+        v ^= v >> 16;
+        return v == 0u ? 1u : v;
+    }
+
+    static float toBipolar (uint32_t v) noexcept
+    {
+        return (float ((scramble (v) >> 8) & 0x00FFFFFFu) * (2.0f / 16777216.0f)) - 1.0f;
+    }
+
+    uint32_t nextHash() noexcept
+    {
+        state = state * 1664525u + 1013904223u;
+        return scramble (state);
+    }
+
+    void initSeed (uint32_t seed, int paramIdx) noexcept
+    {
+        baseSeed = scramble (seed ^ (uint32_t (paramIdx) * 3266489917u));
+        reset();
+    }
+
+    void reset() noexcept
+    {
+        state = baseSeed;
+        phase = 0.0f;
+        curr = toBipolar (nextHash());
+        next = toBipolar (nextHash());
+        output = curr;
+    }
+
+    void advance (float rate, float depth, float sampleRate) noexcept
+    {
+        const float sr = juce::jmax (1.0f, sampleRate);
+        phase += juce::jmax (0.0f, rate) / sr;
+
+        while (phase >= 1.0f)
+        {
+            phase -= 1.0f;
+            curr = next;
+            next = toBipolar (nextHash());
+        }
+
+        const float t = juce::jlimit (0.0f, 1.0f, phase);
+        const float t2 = t * t;
+        const float t3 = t2 * t;
+        const float smooth = t3 * (t * (t * 6.0f - 15.0f) + 10.0f);
+        output = (curr + (next - curr) * smooth) * depth;
+    }
+};
+
+struct InstabilityState
 {
     DriftOsc gainDrift;
     DriftOsc biasDrift;
     DriftOsc shapeDrift;
     DriftOsc asymDrift;
+    SmoothSampleHoldOsc gainSH;
+    SmoothSampleHoldOsc shapeSH;
     MicroWanderOsc driveWander;
     MicroWanderOsc shapeWander;
+    float shMix = 0.0f;
     bool     tolerancesReady = false;
 
     void initTolerances (uint32_t seed) noexcept
@@ -773,6 +843,8 @@ struct VariationState
         biasDrift.initTolerance  (seed, 1);
         shapeDrift.initTolerance (seed, 2);
         asymDrift.initTolerance  (seed, 3);
+        gainSH.initSeed          (seed, 6);
+        shapeSH.initSeed         (seed, 8);
         driveWander.initPhase    (seed, 4);
         shapeWander.initPhase    (seed, 5);
         tolerancesReady = true;
@@ -784,12 +856,15 @@ struct VariationState
         biasDrift.reset();
         shapeDrift.reset();
         asymDrift.reset();
+        gainSH.reset();
+        shapeSH.reset();
         driveWander.reset();
         shapeWander.reset();
+        shMix = 0.0f;
     }
 };
 
-inline uint32_t nextVariationSeed() noexcept
+inline uint32_t nextInstabilitySeed() noexcept
 {
     static std::atomic<uint32_t> counter { 0x5A54'5231u };
     return counter.fetch_add (0x9E37'79B9u, std::memory_order_relaxed);
@@ -864,10 +939,10 @@ struct State
     // GIRTH wavefolder ADAA [series pass][channel]
     adaa::SinFoldADAA girthAdaa[kMaxSeries][2];
 
-    // VARIATION drift
-    VariationState variation;
-    uint32_t variationSeed = 0;
-    float variationSignalEnv = 0.0f;
+    // Instability drift
+    InstabilityState instability;
+    uint32_t instabilitySeed = 0;
+    float instabilitySignalEnv = 0.0f;
 
     // Multiband REACT (per-stage / per-channel)
     MultibandReactState mbReact[kMaxSeries][2];
@@ -909,7 +984,7 @@ struct State
     float sBias  = 0.0f;
     float sReact = 0.0f;
     float sMod   = 0.0f;
-    float sVar   = 0.0f;
+    float sInstability   = 0.0f;
     float lastTapeDrive = 0.0f;
     bool tapeWasActive = false;
     float lastTransistorDrive = 0.0f;
@@ -969,9 +1044,9 @@ struct State
         currentSeriesPass = 0;
         currentSeriesCount = 1;
         lastModel = Model::Clean;
-        variation.reset();
-        variationSignalEnv = 0.0f;
-        sDrive = sGirth = sBias = sReact = sMod = sVar = 0.0f;
+        instability.reset();
+        instabilitySignalEnv = 0.0f;
+        sDrive = sGirth = sBias = sReact = sMod = sInstability = 0.0f;
         lastTapeDrive = 0.0f;
         tapeWasActive = false;
         lastTransistorDrive = 0.0f;
@@ -1049,7 +1124,7 @@ struct State
                 fl (triodeBodyPostLP[sp][ch]);
             }
         }
-        fl (variationSignalEnv);
+        fl (instabilitySignalEnv);
     }
 };
 
@@ -2012,6 +2087,8 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     const float b = detail::clampF (bias, -1.0f, 1.0f);
     const float tubeMorph = detail::smoothStep01 (m);
     const float tubeMorph2 = tubeMorph * tubeMorph;
+    const float signalPresence = detail::smoothStep01 (
+        juce::jlimit (0.0f, 1.0f, state.instabilitySignalEnv));
     auto& triodeSag = state.triodeReact[sp][ch];
     auto& bodyPreLp = state.triodeBodyPreLP[sp][ch];
     auto& bodyPostLp = state.triodeBodyPostLP[sp][ch];
@@ -2125,7 +2202,8 @@ inline float processTriode (float x, float drive, float girth, float bias, float
                                - supplyCore * 0.040f - burnBiasShift;
     const float stageBiasPower = bEff * 0.028f - sagCore * 0.072f
                                - supplyCore * 0.055f - burnBiasShift * 1.25f;
-    const float stageBias = juce::jmap (tubeMorph, stageBias12AX7, stageBiasPower);
+    const float stageBias = juce::jmap (tubeMorph, stageBias12AX7, stageBiasPower)
+                          * signalPresence;
     const float cathodeDepth12AX7 = bodyCurve * (0.040f + d * 0.050f);
     const float cathodeDepthPower = bodyCurve * (0.026f + d * 0.032f);
     const float cathodeDepth = juce::jmap (tubeMorph, cathodeDepth12AX7, cathodeDepthPower);
@@ -2775,7 +2853,7 @@ inline void processBlock (State& state,
                           float modParam,       // 0..1
                           float biasParam,      // -1..1
                           float reactParam,     // 0..1
-                          float varParam,       // 0..1
+                          float instabilityParam,       // 0..1
                           float sampleRate,
                           int   seriesCount = 1,
                           bool  isSafetyLpfOn = false,
@@ -2812,6 +2890,8 @@ inline void processBlock (State& state,
                 state.powerSag[sp][ch] = 0.0f;
                 state.tapeFlux[sp][ch] = 0.0f;
                 state.tapeStressEnv[sp][ch] = 0.0f;
+                state.triodeBodyPreLP[sp][ch] = 0.0f;
+                state.triodeBodyPostLP[sp][ch] = 0.0f;
                 state.interStageLPF[sp][ch] = 0.0f;
                 state.interStageDCx[sp][ch] = 0.0f;
                 state.interStageDCy[sp][ch] = 0.0f;
@@ -2831,6 +2911,7 @@ inline void processBlock (State& state,
             }
         }
         state.lastModel = model;
+        state.instabilitySignalEnv = 0.0f;
     }
 
     // Sample-rate-aware parameter smoothing (~15ms time constant at any SR).
@@ -2840,8 +2921,8 @@ inline void processBlock (State& state,
 
     // DC blocker coefficient
     const float dcR = 1.0f - (kTwoPi * 5.0f / sampleRate);
-    const float variationPresenceAttack = detail::onePoleCoeff (400.0f, sampleRate);
-    const float variationPresenceRelease = detail::onePoleCoeff (8.0f, sampleRate);
+    const float instabilityPresenceAttack = detail::onePoleCoeff (400.0f, sampleRate);
+    const float instabilityPresenceRelease = detail::onePoleCoeff (8.0f, sampleRate);
 
     // REACT window size (model-dependent base, scaled by react amount)
     int reactBaseWindow = 1024;
@@ -3036,7 +3117,25 @@ inline void processBlock (State& state,
         wasActive = active;
     }
 
-    state.currentSeriesCount = juce::jlimit (1, kMaxSeries, seriesCount);
+    const int requestedSeriesCount = juce::jlimit (1, kMaxSeries, seriesCount);
+    if (model == Model::Tube && requestedSeriesCount != state.currentSeriesCount)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            for (int sp = 0; sp < kMaxSeries; ++sp)
+            {
+                state.triodeReact[sp][ch].reset();
+                state.triodeBodyPreLP[sp][ch] = 0.0f;
+                state.triodeBodyPostLP[sp][ch] = 0.0f;
+                state.emphasis[sp][ch].reset();
+                state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
+                state.triodeAdaa[sp][ch].reset();
+                state.girthAdaa[sp][ch].reset();
+                state.sagEnvelope[sp][ch] = 0.0f;
+            }
+        }
+    }
+    state.currentSeriesCount = requestedSeriesCount;
     const bool rawStripFilters = rawMode && (model == Model::Tape || model == Model::Tube
                                           || model == Model::Transistor
                                           || model == Model::Diode);
@@ -3083,63 +3182,89 @@ inline void processBlock (State& state,
         state.sMod   += (modParam   - state.sMod)   * oneMinusSmooth;
         state.sBias  += (biasParam  - state.sBias)  * oneMinusSmooth;
         state.sReact += (reactParam - state.sReact) * oneMinusSmooth;
-        state.sVar   += (varParam   - state.sVar)   * oneMinusSmooth;
+        state.sInstability   += (instabilityParam   - state.sInstability)   * oneMinusSmooth;
 
         const float drive = state.sDrive;
         const float girth = state.sGirth;
         const float mod   = state.sMod;
         const float bias  = state.sBias;
         const float react = state.sReact;
-        const float var   = state.sVar;
+        const float instabilityAmount = state.sInstability;
         const float inputPeak = std::max (std::abs (left[i]), std::abs (right[i]));
         const float presenceTarget = detail::smoothStep01 (
             detail::clampF ((inputPeak - 1.0e-5f) / (5.0e-4f - 1.0e-5f), 0.0f, 1.0f));
-        const float presenceCoeff = presenceTarget > state.variationSignalEnv
-                                  ? variationPresenceAttack
-                                  : variationPresenceRelease;
-        state.variationSignalEnv += (presenceTarget - state.variationSignalEnv) * presenceCoeff;
-        const float variationBiasScale = state.variationSignalEnv;
+        const float presenceCoeff = presenceTarget > state.instabilitySignalEnv
+                                  ? instabilityPresenceAttack
+                                  : instabilityPresenceRelease;
+        state.instabilitySignalEnv += (presenceTarget - state.instabilitySignalEnv) * presenceCoeff;
+        const float instabilitySignalScale = state.instabilitySignalEnv;
 
-        // -- VARIATION: analog component tolerance + slow thermal drift --
+        // -- Instability: analog component tolerance + slow thermal drift --
         // Static tolerance (per-instance hash): each "unit" has unique character.
         // Thermal drift (sub-Hz sines): very slow cathode/plate temp changes.
-        // Micro-wander only appears at high VAR and stays intentionally subtle.
+        // Micro-wander only appears at high instability and stays intentionally subtle.
         float driveMod = 1.0f, biasMod = 0.0f, shapeMod = 0.0f, asymMod = 0.0f;
-        if (var > 0.001f)
+        if (instabilityAmount > 0.001f)
         {
             // Init static tolerances once per loader instance.
-            if (! state.variation.tolerancesReady)
+            if (! state.instability.tolerancesReady)
             {
-                if (state.variationSeed == 0)
-                    state.variationSeed = nextVariationSeed();
+                if (state.instabilitySeed == 0)
+                    state.instabilitySeed = nextInstabilitySeed();
 
-                state.variation.initTolerances (state.variationSeed);
+                state.instability.initTolerances (state.instabilitySeed);
             }
 
             // Very slow thermal drift: 0.03x0.15 Hz (one full cycle per 7x33 seconds)
-            const float rate = 0.03f + var * 0.12f;
-            state.variation.gainDrift.advance  (rate,         var, sampleRate);
-            state.variation.biasDrift.advance  (rate * 0.37f, var, sampleRate);
-            state.variation.shapeDrift.advance (rate * 1.43f, var, sampleRate);
-            state.variation.asymDrift.advance  (rate * 0.61f, var, sampleRate);
+            const float rate = 0.03f + instabilityAmount * 0.12f;
+            state.instability.gainDrift.advance  (rate,         instabilityAmount, sampleRate);
+            state.instability.biasDrift.advance  (rate * 0.37f, instabilityAmount, sampleRate);
+            state.instability.shapeDrift.advance (rate * 1.43f, instabilityAmount, sampleRate);
+            state.instability.asymDrift.advance  (rate * 0.61f, instabilityAmount, sampleRate);
+
+            // Smooth S&H adds a small non-periodic thermal/mechanical wrinkle
+            // inside the existing dynamic component. It remains deterministic
+            // and much smaller than the fixed component tolerance.
+            state.instability.gainSH.advance  (rate * 2.10f, 1.0f, sampleRate);
+            state.instability.shapeSH.advance (rate * 2.80f, 1.0f, sampleRate);
+            const float shTarget = detail::smoothStep01 (
+                detail::clampF ((instabilityAmount - 0.20f) / 0.80f, 0.0f, 1.0f));
+            state.instability.shMix += (shTarget - state.instability.shMix)
+                                   * detail::onePoleCoeff (5.0f, sampleRate);
+            const float shWeight = state.instability.shMix * 0.08f;
+            const float oscWeight = 1.0f - shWeight;
+            const float gainDynamic  = state.instability.gainDrift.dynamic  * oscWeight
+                                     + state.instability.gainSH.output      * shWeight;
+            const float biasDynamic  = state.instability.biasDrift.dynamic;
+            const float shapeDynamic = state.instability.shapeDrift.dynamic * oscWeight
+                                     + state.instability.shapeSH.output     * shWeight;
+            const float asymDynamic  = state.instability.asymDrift.dynamic;
+            const float gainInstability  = (state.instability.gainDrift.staticTol  * 0.70f + gainDynamic  * 0.30f) * instabilityAmount;
+            const float biasInstability  = (state.instability.biasDrift.staticTol  * 0.70f + biasDynamic  * 0.30f) * instabilityAmount;
+            const float shapeInstability = (state.instability.shapeDrift.staticTol * 0.70f + shapeDynamic * 0.30f) * instabilityAmount;
+            const float asymInstability  = (state.instability.asymDrift.staticTol  * 0.70f + asymDynamic  * 0.30f) * instabilityAmount;
 
             const float wanderNorm = detail::smoothStep01 (
-                detail::clampF ((var - 0.70f) / 0.30f, 0.0f, 1.0f));
+                detail::clampF ((instabilityAmount - 0.70f) / 0.30f, 0.0f, 1.0f));
             const float wanderDepth = wanderNorm * wanderNorm;
             if (wanderDepth > 0.0f)
             {
                 const float wanderRate = 0.45f + wanderDepth * 3.55f;
-                state.variation.driveWander.advance (wanderRate,         wanderDepth, sampleRate);
-                state.variation.shapeWander.advance (wanderRate * 1.37f, wanderDepth, sampleRate);
+                state.instability.driveWander.advance (wanderRate,         wanderDepth, sampleRate);
+                state.instability.shapeWander.advance (wanderRate * 1.37f, wanderDepth, sampleRate);
             }
 
-            // Output already incorporates var scaling (depth) -- no double-scaling
-            driveMod = 1.0f + state.variation.gainDrift.output  * 0.08f;  // +/-8% gain (tube gm + resistor dividers)
-            biasMod  =        state.variation.biasDrift.output  * 0.04f;  // +/-4% bias (cathode R + grid leak)
-            shapeMod =        state.variation.shapeDrift.output * 0.02f;  // +/-2% shape (plate Rp variation)
-            asymMod  =        state.variation.asymDrift.output  * 0.025f; // +/-2.5% L/R (matched pair mismatch)
-            driveMod += state.variation.driveWander.output * 0.015f;      // high-VAR +/-1.5% drive wander
-            shapeMod += state.variation.shapeWander.output * 0.005f;      // high-VAR +/-0.5% shape wander
+            // Output already incorporates instability scaling (depth) -- no double-scaling
+            driveMod = 1.0f + gainInstability  * 0.08f;  // +/-8% gain (tube gm + resistor dividers)
+            biasMod  =        biasInstability  * 0.04f;  // +/-4% bias (cathode R + grid leak)
+            shapeMod =        shapeInstability * 0.02f;  // +/-2% shape (plate Rp instability)
+            asymMod  =        asymInstability  * 0.025f; // +/-2.5% L/R (matched pair mismatch)
+            driveMod += state.instability.driveWander.output * 0.015f;      // high-instability +/-1.5% drive wander
+            shapeMod += state.instability.shapeWander.output * 0.005f;      // high-instability +/-0.5% shape wander
+        }
+        else
+        {
+            state.instability.shMix = 0.0f;
         }
 
         // -- Per-sample series passes --
@@ -3173,11 +3298,12 @@ inline void processBlock (State& state,
                     x = processSafetyLPF (state.safetyLpf[ch], x, safetyCoeffs);
 
 
-                // -- Apply VARIATION per-channel (L/R asymmetry decorrelation) --
-                float effDrive = drive * driveMod;
-                const float variationBias = (biasMod + (ch == 0 ? asymMod : -asymMod)) * variationBiasScale;
-                float effBias  = bias + variationBias;
-                float effMod   = detail::clampF (mod + shapeMod, 0.0f, 1.0f);
+                // -- Apply Instability per-channel (L/R asymmetry decorrelation) --
+                const float scaledDriveMod = 1.0f + (driveMod - 1.0f) * instabilitySignalScale;
+                float effDrive = drive * scaledDriveMod;
+                const float instabilityBias = (biasMod + (ch == 0 ? asymMod : -asymMod)) * instabilitySignalScale;
+                float effBias  = bias + instabilityBias;
+                float effMod   = detail::clampF (mod + shapeMod * instabilitySignalScale, 0.0f, 1.0f);
 
                 // -- INTERNAL PRE-EMPHASIS (per series pass, unless rawMode) --
                 if (!rawMode && model != Model::Transistor)

@@ -492,7 +492,7 @@ juce::String SATTRAudioProcessorEditor::BarSlider::getTextFromValue (double v)
 		case Type::Series:
 			return juce::String (static_cast<int> (std::round (v))) + "x";
 
-		case Type::Var:
+		case Type::Instability:
 			return juce::String (v * 100.0, 1) + "%";
 
 		case Type::Delay:
@@ -1222,7 +1222,7 @@ const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoad
 		SATTRAudioProcessor::kParamModeInA, SATTRAudioProcessor::kParamModeOutA, SATTRAudioProcessor::kParamSumBusA, SATTRAudioProcessor::kParamFilterPosA, SATTRAudioProcessor::kParamMixA,
 		SATTRAudioProcessor::kParamSatTypeA, SATTRAudioProcessor::kParamSatRawA, SATTRAudioProcessor::kParamSatDriveA, SATTRAudioProcessor::kParamSatGirthA,
 		SATTRAudioProcessor::kParamSatModA, SATTRAudioProcessor::kParamSatBiasA, SATTRAudioProcessor::kParamSatSagA,
-		SATTRAudioProcessor::kParamVarA,
+		SATTRAudioProcessor::kParamInstabilityA,
 		SATTRAudioProcessor::kParamDelayA,
 		SATTRAudioProcessor::kParamExpA
 	},
@@ -1236,7 +1236,7 @@ const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoad
 		SATTRAudioProcessor::kParamModeInB, SATTRAudioProcessor::kParamModeOutB, SATTRAudioProcessor::kParamSumBusB, SATTRAudioProcessor::kParamFilterPosB, SATTRAudioProcessor::kParamMixB,
 		SATTRAudioProcessor::kParamSatTypeB, SATTRAudioProcessor::kParamSatRawB, SATTRAudioProcessor::kParamSatDriveB, SATTRAudioProcessor::kParamSatGirthB,
 		SATTRAudioProcessor::kParamSatModB, SATTRAudioProcessor::kParamSatBiasB, SATTRAudioProcessor::kParamSatSagB,
-		SATTRAudioProcessor::kParamVarB,
+		SATTRAudioProcessor::kParamInstabilityB,
 		SATTRAudioProcessor::kParamDelayB,
 		SATTRAudioProcessor::kParamExpB
 	},
@@ -1250,7 +1250,7 @@ const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoad
 		SATTRAudioProcessor::kParamModeInC, SATTRAudioProcessor::kParamModeOutC, SATTRAudioProcessor::kParamSumBusC, SATTRAudioProcessor::kParamFilterPosC, SATTRAudioProcessor::kParamMixC,
 		SATTRAudioProcessor::kParamSatTypeC, SATTRAudioProcessor::kParamSatRawC, SATTRAudioProcessor::kParamSatDriveC, SATTRAudioProcessor::kParamSatGirthC,
 		SATTRAudioProcessor::kParamSatModC, SATTRAudioProcessor::kParamSatBiasC, SATTRAudioProcessor::kParamSatSagC,
-		SATTRAudioProcessor::kParamVarC,
+		SATTRAudioProcessor::kParamInstabilityC,
 		SATTRAudioProcessor::kParamDelayC,
 		SATTRAudioProcessor::kParamExpC
 	}
@@ -1268,19 +1268,19 @@ SATTRAudioProcessorEditor::LoaderRefs SATTRAudioProcessorEditor::getLoaderRefs (
 		                 invButtonB, chaosButtonB, chaosFilterButtonB, chaosDisplayB,
 		                 expButtonB, expDisplayB,
 		                 modeInComboB, modeOutComboB, sumBusComboB, filterPosComboB, filterBarB_, mixSliderB,
-		                 satTypeComboB, rawButtonB, satDriveSliderB, satGirthSliderB, satModSliderB, satBiasSliderB, satSagSliderB, varSliderB, delaySliderB };
+		                 satTypeComboB, rawButtonB, satDriveSliderB, satGirthSliderB, satModSliderB, satBiasSliderB, satSagSliderB, instabilitySliderB, delaySliderB };
 		case 2: return { enableButtonC,
 		                 hpFreqSliderC, lpFreqSliderC, inSliderC, outSliderC, tiltSliderC, seriesSliderC, panSliderC, fredSliderC, posSliderC,
 		                 invButtonC, chaosButtonC, chaosFilterButtonC, chaosDisplayC,
 		                 expButtonC, expDisplayC,
 		                 modeInComboC, modeOutComboC, sumBusComboC, filterPosComboC, filterBarC_, mixSliderC,
-		                 satTypeComboC, rawButtonC, satDriveSliderC, satGirthSliderC, satModSliderC, satBiasSliderC, satSagSliderC, varSliderC, delaySliderC };
+		                 satTypeComboC, rawButtonC, satDriveSliderC, satGirthSliderC, satModSliderC, satBiasSliderC, satSagSliderC, instabilitySliderC, delaySliderC };
 		default: return { enableButtonA,
 		                  hpFreqSliderA, lpFreqSliderA, inSliderA, outSliderA, tiltSliderA, seriesSliderA, panSliderA, fredSliderA, posSliderA,
 		                  invButtonA, chaosButtonA, chaosFilterButtonA, chaosDisplayA,
 		                  expButtonA, expDisplayA,
 		                  modeInComboA, modeOutComboA, sumBusComboA, filterPosComboA, filterBarA_, mixSliderA,
-		                  satTypeComboA, rawButtonA, satDriveSliderA, satGirthSliderA, satModSliderA, satBiasSliderA, satSagSliderA, varSliderA, delaySliderA };
+		                  satTypeComboA, rawButtonA, satDriveSliderA, satGirthSliderA, satModSliderA, satBiasSliderA, satSagSliderA, instabilitySliderA, delaySliderA };
 	}
 }
 
@@ -1292,17 +1292,17 @@ SATTRAudioProcessorEditor::AttachRefs SATTRAudioProcessorEditor::getAttachRefs (
 		                 hpFreqAttachB, lpFreqAttachB, inAttachB, outAttachB, tiltAttachB, seriesAttachB, panAttachB, fredAttachB, posAttachB,
 		                 invAttachB, chaosAttachB, chaosFilterAttachB, expAttachB,
 		                 modeInAttachB, modeOutAttachB, sumBusAttachB, filterPosAttachB, mixAttachB,
-		                 satTypeAttachB, rawAttachB, satDriveAttachB, satGirthAttachB, satModAttachB, satBiasAttachB, satSagAttachB, varAttachB, delayAttachB };
+		                 satTypeAttachB, rawAttachB, satDriveAttachB, satGirthAttachB, satModAttachB, satBiasAttachB, satSagAttachB, instabilityAttachB, delayAttachB };
 		case 2: return { enableAttachC,
 		                 hpFreqAttachC, lpFreqAttachC, inAttachC, outAttachC, tiltAttachC, seriesAttachC, panAttachC, fredAttachC, posAttachC,
 		                 invAttachC, chaosAttachC, chaosFilterAttachC, expAttachC,
 		                 modeInAttachC, modeOutAttachC, sumBusAttachC, filterPosAttachC, mixAttachC,
-		                 satTypeAttachC, rawAttachC, satDriveAttachC, satGirthAttachC, satModAttachC, satBiasAttachC, satSagAttachC, varAttachC, delayAttachC };
+		                 satTypeAttachC, rawAttachC, satDriveAttachC, satGirthAttachC, satModAttachC, satBiasAttachC, satSagAttachC, instabilityAttachC, delayAttachC };
 		default: return { enableAttachA,
 		                  hpFreqAttachA, lpFreqAttachA, inAttachA, outAttachA, tiltAttachA, seriesAttachA, panAttachA, fredAttachA, posAttachA,
 		                  invAttachA, chaosAttachA, chaosFilterAttachA, expAttachA,
 		                  modeInAttachA, modeOutAttachA, sumBusAttachA, filterPosAttachA, mixAttachA,
-		                  satTypeAttachA, rawAttachA, satDriveAttachA, satGirthAttachA, satModAttachA, satBiasAttachA, satSagAttachA, varAttachA, delayAttachA };
+		                  satTypeAttachA, rawAttachA, satDriveAttachA, satGirthAttachA, satModAttachA, satBiasAttachA, satSagAttachA, instabilityAttachA, delayAttachA };
 	}
 }
 
@@ -1333,7 +1333,7 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 	setupSlider (r.out,   "Output Gain " + suffix,                     ST::Output);
 	setupSlider (r.tilt,  "Tilt EQ " + suffix + " (-6/+6 dB)",    ST::Tilt);
 	setupSlider (r.series, "Series " + suffix + " (1-6x cascade)",      ST::Series);
-	setupSlider (r.var,   "Variation " + suffix + " (0-100%)",         ST::Var);
+	setupSlider (r.instability,   "Instability " + suffix + " (0-100%)",         ST::Instability);
 	setupSlider (r.delay, "Delay " + suffix + " (auto-align)",         ST::Delay);
 	r.delay.setEnabled (false);  // read-only, set by ALIGN
 	setupSlider (r.pan,   "Pan " + suffix + " (L-R)",                  ST::Pan);
@@ -1486,7 +1486,7 @@ void SATTRAudioProcessorEditor::createLoaderAttachments (juce::AudioProcessorVal
 	a.satModAtt   = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (params, ids.satMod,   ui.satMod);
 	a.satBiasAtt  = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (params, ids.satBias,  ui.satBias);
 	a.satSagAtt   = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (params, ids.satSag,   ui.satSag);
-	a.varAtt      = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (params, ids.var,      ui.var);
+	a.instabilityAtt      = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (params, ids.instability,      ui.instability);
 	a.delayAtt    = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (params, ids.delay,    ui.delay);
 
 	// UI-only skew: changes slider feel without altering VST3 parameter normalization
@@ -1961,7 +1961,7 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 			juce::Slider* loaderSliders[kNumCachedParams] = {
 				&refs.hp, &refs.lp, &refs.in, &refs.out, &refs.tilt, &refs.series,
 				&refs.pan, &refs.fred, &refs.pos, &refs.mix,
-				&refs.satDrive, &refs.satGirth, &refs.satMod, &refs.satBias, &refs.satSag, &refs.var, &refs.delay
+				&refs.satDrive, &refs.satGirth, &refs.satMod, &refs.satBias, &refs.satSag, &refs.instability, &refs.delay
 			};
 
 			for (int i = 0; i < kNumCachedParams; ++i)
@@ -2311,18 +2311,18 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		auto& sModS  = pick (satModSliderA,   satModSliderB,   satModSliderC);
 		auto& sBiasS = pick (satBiasSliderA,  satBiasSliderB,  satBiasSliderC);
 		auto& sSagS  = pick (satSagSliderA,   satSagSliderB,   satSagSliderC);
-		auto& sVarS  = pick (varSliderA,      varSliderB,      varSliderC);
+		auto& sInstabilityS  = pick (instabilitySliderA,      instabilitySliderB,      instabilitySliderC);
 		auto& rawBtn = pick (rawButtonA,      rawButtonB,      rawButtonC);
 		auto& delayS = pick (delaySliderA,    delaySliderB,    delaySliderC);
 		satTypeCmb.setVisible (false);
 		rawBtn.setVisible (false);
 		drive.setVisible (false);  girthS.setVisible (false);
 		sModS.setVisible (false);  sBiasS.setVisible (false);  sSagS.setVisible (false);
-		sVarS.setVisible (false);  delayS.setVisible (false);
+		sInstabilityS.setVisible (false);  delayS.setVisible (false);
 	}
 	else
 	{
-		// -- Collapsed main view: SatType combo + 5 sat sliders + SERIES + VAR + INV --
+		// -- Collapsed main view: SatType combo + 5 sat sliders + SERIES + INST + INV --
 
 		// SatType combo (same height as sliders) + RAW checkbox
 		auto& satTypeCmb = pick (satTypeComboA, satTypeComboB, satTypeComboC);
@@ -2342,7 +2342,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		auto& sMod  = pick (satModSliderA,   satModSliderB,   satModSliderC);
 		auto& sBias = pick (satBiasSliderA,  satBiasSliderB,  satBiasSliderC);
 		auto& sSag  = pick (satSagSliderA,   satSagSliderB,   satSagSliderC);
-		auto& sVar  = pick (varSliderA,      varSliderB,      varSliderC);
+		auto& sInstability  = pick (instabilitySliderA,      instabilitySliderB,      instabilitySliderC);
 
 		auto sliderRow = contentArea.removeFromTop (sliderH);
 		drive.setBounds (sliderRow.removeFromLeft (sliderW));
@@ -2375,8 +2375,8 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		sVar.setBounds (sliderRow.removeFromLeft (sliderW));
-		sVar.setVisible (true);
+		sInstability.setBounds (sliderRow.removeFromLeft (sliderW));
+		sInstability.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		// Delay slider (read-only, driven by ALIGN)
@@ -2426,7 +2426,7 @@ void SATTRAudioProcessorEditor::updateLoaderEnabledState (int loaderIndex)
 		&r.exp, &r.expDisp,
 		&r.modeIn, &r.modeOut, &r.sumBus, &r.filterPos,
 		&r.filterBar, &r.mix,
-		&r.satType, &r.raw, &r.satDrive, &r.satGirth, &r.satMod, &r.satBias, &r.satSag, &r.var, &r.delay
+		&r.satType, &r.raw, &r.satDrive, &r.satGirth, &r.satMod, &r.satBias, &r.satSag, &r.instability, &r.delay
 	};
 
 	for (auto* c : components)
@@ -2455,7 +2455,7 @@ void SATTRAudioProcessorEditor::updateSatControlsEnabledState (int loaderIndex)
 	const float satAlpha = satInteractive ? 1.0f : 0.35f;
 
 	juce::Component* satControls[] = {
-		&r.satDrive, &r.satGirth, &r.satMod, &r.satBias, &r.satSag, &r.var, &r.series, &r.raw
+		&r.satDrive, &r.satGirth, &r.satMod, &r.satBias, &r.satSag, &r.instability, &r.series, &r.raw
 	};
 
 	for (auto* c : satControls)
@@ -2802,7 +2802,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 	ParamFmt fmts[kNumCachedParams] = {
 		{0,"HP"}, {0,"LP"}, {1,"IN"}, {1,"OUT"}, {5,"TILT"}, {7,"SERIES"},
 		{4,"PAN"}, {3,"ANGLE"}, {3,"DIST"}, {3,"MIX"},
-		{3,"DRIVE"}, {3,"GIRTH"}, {3,"MOD"}, {6,"BIAS"}, {3,"RCT"}, {3,"VAR"}, {8,"DELAY"}
+		{3,"DRIVE"}, {3,"GIRTH"}, {3,"MOD"}, {6,"BIAS"}, {3,"RCT"}, {3,"INST"}, {8,"DELAY"}
 	};
 
 	for (int loader = 0; loader < 3; ++loader)
@@ -2817,7 +2817,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 		juce::Slider* loaderSliders[kNumCachedParams] = {
 			&refs.hp, &refs.lp, &refs.in, &refs.out, &refs.tilt, &refs.series,
 			&refs.pan, &refs.fred, &refs.pos, &refs.mix,
-			&refs.satDrive, &refs.satGirth, &refs.satMod, &refs.satBias, &refs.satSag, &refs.var, &refs.delay
+			&refs.satDrive, &refs.satGirth, &refs.satMod, &refs.satBias, &refs.satSag, &refs.instability, &refs.delay
 		};
 
 		for (int p = 0; p < kNumCachedParams; ++p)
@@ -2960,7 +2960,7 @@ juce::Slider* SATTRAudioProcessorEditor::getSliderForValueAreaPoint (juce::Point
 		const int colR = columnRight_[i];
 
 		BarSlider* sliders[] = { &r.hp, &r.lp, &r.in, &r.out, &r.tilt,
-		                         &r.series, &r.pan, &r.fred, &r.pos, &r.var };
+		                         &r.series, &r.pan, &r.fred, &r.pos, &r.instability };
 
 		for (auto* s : sliders)
 			if (getValueAreaFor (s->getBounds(), colR).contains (p))
@@ -3099,7 +3099,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	const bool isLimThresh = (stype == BarSlider::Type::LimThreshold);
 	const bool isTilt  = (stype == BarSlider::Type::Tilt);
 	const bool isSeries = (stype == BarSlider::Type::Series);
-	const bool isVar   = (stype == BarSlider::Type::Var);
+	const bool isInstability   = (stype == BarSlider::Type::Instability);
 	const bool isDelay = (stype == BarSlider::Type::Delay);
 	const bool isPan   = (stype == BarSlider::Type::Pan);
 	const bool isFred  = (stype == BarSlider::Type::Fred);
@@ -3177,7 +3177,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	else if (isLimThresh)   { suffix = " dB THRESH";   suffixShort = " dB THRESH"; }
 	else if (isTilt)        { suffix = " dB TILT"; suffixShort = " dB"; }
 	else if (isSeries)      { suffix = "x SERIES";     suffixShort = "x"; }
-	else if (isVar)         { suffix = " % VAR";       suffixShort = " %"; }
+	else if (isInstability)         { suffix = " % INST";       suffixShort = " %"; }
 	else if (isDelay)       { suffix = " ms";          suffixShort = " ms"; }
 	else if (isPan)         { suffix = " % PAN";       suffixShort = " %"; }
 	else if (isFred)        { suffix = " % ANGLE";    suffixShort = " %"; }
@@ -3205,7 +3205,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		currentDisplay = juce::String (s.getValue(), 2);
 	else if (isSeries)
 		currentDisplay = juce::String (static_cast<int> (std::round (s.getValue())));
-	else if (isVar)
+	else if (isInstability)
 		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 1);
 	else if (isDelay)
 		currentDisplay = juce::String (juce::jlimit (0.0, (double) SATTRAudioProcessor::kDelayMax, s.getValue()), 3);
@@ -3253,7 +3253,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		else if (isLimThresh)    worstCaseText = "-36.0";
 		else if (isTilt)         worstCaseText = "-6.00";
 		else if (isSeries)       worstCaseText = "6";
-		else if (isVar)          worstCaseText = "100.0";
+		else if (isInstability)          worstCaseText = "100.0";
 		else if (isDelay)        worstCaseText = "5.000";
 		else if (isPan)          worstCaseText = "100";
 		else if (isSatBias)      worstCaseText = "-100.0";
@@ -3361,7 +3361,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 			minVal = 1.0;    maxVal = 6.0;
 			maxDecs = 0;     maxLen = 1;     // "6"
 		}
-		else if (isVar)
+		else if (isInstability)
 		{
 			minVal = 0.0;    maxVal = 100.0;
 			maxDecs = 1;     maxLen = 5;     // "100.0"

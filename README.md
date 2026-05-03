@@ -11,7 +11,7 @@ SAT-TR does not use one generic waveshaper for every mode. It combines physicall
 
 Three independent loader slots can each run their own saturation model alongside per-loader gain staging, tilt, filters, expander/gate, chaos modulation, delay compensation, and Mid/Side bus routing. Loaders are routed through one of four topologies (series, parallel, or hybrid), with optional global wet limiting, normalization, oversampling, and auto-alignment.
 
-The saturation engine uses ADAA-backed nonlinear stages where they matter, per-model dynamics blocks (`SAG`, `COMP`, `PEAK` depending on algorithm), analog-style variation/drift, and multi-pass series processing for denser amplifier-style stacking.
+The saturation engine uses ADAA-backed nonlinear stages where they matter, per-model dynamics blocks (`SAG`, `COMP`, `PEAK` depending on algorithm), analog-style instability/drift, and multi-pass series processing for denser amplifier-style stacking.
 
 ## Interface
 
@@ -86,9 +86,9 @@ Model-dependent dynamics control:
 - **SAG**: tube-style reactive compression / supply behavior
 - **PEAK**: pre-clip transient shaving in `CLIPPER`
 
-#### VARIATION (0-100%)
+#### Instability (0-100%)
 
-Analog-style tolerance / drift control. Adds per-instance spread and slow movement to the model response without turning into obvious modulation.
+Analog-style tolerance / drift control. Adds deterministic per-instance spread, slow thermal movement, and very subtle smoothed micro-irregularity on gain/shape response without turning into obvious modulation.
 
 #### SERIES (1-4)
 
@@ -151,7 +151,7 @@ Per-loader expander accessible from the `EXP` button. Parameters:
 
 ### Chaos
 
-Per-loader micro-variation engine with two independent targets:
+Per-loader chaos engine with two independent targets:
 
 - **CHAOS D**: delay-domain drift before saturation
 - **CHAOS F**: filter cutoff drift
@@ -261,7 +261,7 @@ Practical note:
 - **Series Processing**: up to 4 internal passes per loader.
 - **REACT / Dynamics**: model-specific dynamics blocks rather than one universal behavior (`SAG`, `COMP`, `PEAK` depend on algorithm).
 - **Tube SAG**: reactive supply/sag behavior with short strike tracking plus longer bloom memory for time-dependent recovery.
-- **Variation**: deterministic spread plus slow drift.
+- **Instability**: deterministic spread plus slow drift, with subtle smoothed micro-irregularity on gain/shape response at higher settings.
 - **Oversampling**: global `x1` to `x16`, with latency reported to the host.
 - **Filters**: per-loader HP/LP plus tilt filtering with pre/post routing options.
 - **Alignment**: synthetic probe analysis used to estimate per-loader compensation delay and invert state.
@@ -287,6 +287,7 @@ Practical note:
 ### v1.4
 
 - Refined model-specific dynamics, including Tube SAG bloom/recovery and COMP behavior in compression-based models.
+- Refined `Instability` behavior with deterministic analog spread, slow drift, and subtle smoothed gain/shape micro-irregularity.
 - Added/maintained consistent -INF to +24 dB gain fader behavior with 0 dB centered.
 - Optimized global/per-loader dry-wet mix paths and stable delay processing without changing the intended audio behavior.
 - Optimized Tube bloom memory updates for lower CPU during SAG-heavy use.
