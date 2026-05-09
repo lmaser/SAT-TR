@@ -3197,7 +3197,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	if (isHpLp)             { suffix = " Hz";          suffixShort = " Hz"; }
 	else if (isIn)          { suffix = " dB INPUT";    suffixShort = " dB"; }
 	else if (isOut)         { suffix = " dB OUTPUT";   suffixShort = " dB"; }
-	else if (isLimThresh)   { suffix = " dB THRESH";   suffixShort = " dB THRESH"; }
+	else if (isLimThresh)   { suffix = " dB LIM";      suffixShort = " dB LIM"; }
 	else if (isTilt)        { suffix = " dB TILT"; suffixShort = " dB"; }
 	else if (isSeries)      { suffix = "x SERIES";     suffixShort = "x"; }
 	else if (isInstability)         { suffix = " % INST";       suffixShort = " %"; }
