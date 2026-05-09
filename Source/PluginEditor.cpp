@@ -1348,6 +1348,7 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 	setupSlider (r.out,   "Output Gain " + suffix,                     ST::Output);
 	setupSlider (r.tilt,  "Tilt EQ " + suffix + " (-6/+6 dB)",    ST::Tilt);
 	setupSlider (r.series, "Series " + suffix + " (1-6x cascade)",      ST::Series);
+	r.series.setAllowNumericPopup (false);
 	setupSlider (r.instability,   "Instability " + suffix + " (0-100%)",         ST::Instability);
 	setupSlider (r.delay, "Delay " + suffix + " (auto-align)",         ST::Delay);
 	r.delay.setEnabled (false);  // read-only, set by ALIGN
@@ -2982,7 +2983,7 @@ juce::Slider* SATTRAudioProcessorEditor::getSliderForValueAreaPoint (juce::Point
 		const int colR = columnRight_[i];
 
 		BarSlider* sliders[] = { &r.hp, &r.lp, &r.in, &r.out, &r.tilt,
-		                         &r.series, &r.pan, &r.fred, &r.pos, &r.instability };
+		                         &r.pan, &r.fred, &r.pos, &r.instability };
 
 		for (auto* s : sliders)
 			if (getValueAreaFor (s->getBounds(), colR).contains (p))
