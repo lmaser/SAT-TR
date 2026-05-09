@@ -228,9 +228,12 @@ private:
 		                   bool isButtonDown, int buttonX, int buttonY,
 		                   int buttonW, int buttonH, juce::ComboBox&) override;
 
+		juce::Font getComboBoxFont (juce::ComboBox& box) override;
+
 		void positionComboBoxText (juce::ComboBox& box, juce::Label& label) override
 		{
-			label.setBounds (0, 0, box.getWidth(), box.getHeight());
+			label.setFont (getComboBoxFont (box));
+			label.setBounds (1, 1, box.getWidth() - 2, box.getHeight() - 2);
 			label.setJustificationType (juce::Justification::centred);
 		}
 

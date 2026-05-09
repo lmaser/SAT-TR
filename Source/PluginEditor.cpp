@@ -49,6 +49,15 @@ namespace
 		return juce::String (dB, 1) + " dB";
 	}
 
+	juce::String formatChaosTooltip (float amountPercent, float speedHz)
+	{
+		return "AMT " + juce::String (juce::roundToInt (juce::jlimit (0.0f, 100.0f, amountPercent))) + "%"
+		     + " | SPD " + juce::String (juce::jlimit (SATTRAudioProcessor::kChaosSpdMin,
+		                                               SATTRAudioProcessor::kChaosSpdMax,
+		                                               speedHz), 1)
+		     + " Hz";
+	}
+
 	constexpr int satTypeModelToVisibleComboId (int modelIndex) noexcept
 	{
 		switch (modelIndex)
@@ -1070,6 +1079,12 @@ void SATTRAudioProcessorEditor::MinimalLNF::drawPopupMenuBackground (
 	g.drawRect (0, 0, width, height, 2);
 }
 
+juce::Font SATTRAudioProcessorEditor::MinimalLNF::getComboBoxFont (juce::ComboBox& box)
+{
+	const float h = juce::jlimit (12.0f, 24.0f, box.getHeight() * 0.59f);
+	return juce::Font (juce::FontOptions (h).withStyle ("Bold"));
+}
+
 void SATTRAudioProcessorEditor::MinimalLNF::drawScrollbar (
 	juce::Graphics& g, juce::ScrollBar&,
 	int x, int y, int width, int height,
@@ -1352,7 +1367,7 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 		r.chaosDisp.setText ("", juce::dontSendNotification);
 		r.chaosDisp.setInterceptsMouseClicks (true, false);
 		r.chaosDisp.addMouseListener (this, false);
-		r.chaosDisp.setTooltip (juce::String (juce::roundToInt (savedAmt)) + "% | " + juce::String (juce::roundToInt (savedSpd)) + " Hz");
+		r.chaosDisp.setTooltip (formatChaosTooltip (savedAmt, savedSpd));
 		r.chaosDisp.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
 		r.chaosDisp.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
 		r.chaosDisp.setOpaque (false);
@@ -1705,10 +1720,10 @@ SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 
 	// Restore persisted window size
 	const int restoredW = juce::jlimit (800, 2000, audioProcessor.getUiEditorWidth());
-	const int restoredH = juce::jlimit (500, 1200, audioProcessor.getUiEditorHeight());
+	const int restoredH = juce::jlimit (740, 1200, audioProcessor.getUiEditorHeight());
 	setSize (restoredW, restoredH);
 	setResizable (true, true);
-	setResizeLimits (800, 560, 2000, 1200);
+	setResizeLimits (800, 740, 2000, 1200);
 
 	// Start timer
 	startTimer (kIdleTimerHz);
@@ -1913,12 +1928,12 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 			if (! modeIn.isVisible()) return;
 			const float alpha = enableBtn.getToggleState() ? 1.0f : 0.35f;
 			g.setColour (activeScheme.text.withAlpha (alpha));
-			const auto font = juce::Font (juce::FontOptions (11.0f).withStyle ("Bold"));
+			const auto font = juce::Font (juce::FontOptions (15.0f).withStyle ("Bold"));
 			g.setFont (font);
-			const auto miArea = modeIn.getBounds().withHeight (14).translated (0, -15);
-			const auto moArea = modeOut.getBounds().withHeight (14).translated (0, -15);
-			const auto sbArea = sumBus.getBounds().withHeight (14).translated (0, -15);
-			const auto fpArea = filterPos.getBounds().withHeight (14).translated (0, -15);
+			const auto miArea = modeIn.getBounds().withHeight (18).translated (0, -19);
+			const auto moArea = modeOut.getBounds().withHeight (18).translated (0, -19);
+			const auto sbArea = sumBus.getBounds().withHeight (18).translated (0, -19);
+			const auto fpArea = filterPos.getBounds().withHeight (18).translated (0, -19);
 			const float comboW = (float) modeIn.getWidth();
 			juce::GlyphArrangement ga;
 			ga.addLineOfText (font, "MODE OUT", 0.0f, 0.0f);
@@ -2218,7 +2233,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	                     :                      ioExpandedC_;
 
 	const int modeLabelGap = gap * 2;
-	const int comboLabelGap2 = modeLabelGap + 8;
+	const int comboLabelGap2 = 19;
 	const int checkH = 30;
 
 	// Compute per-view: expanded has 8 rows, collapsed has 9
@@ -2235,53 +2250,60 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	                         ? ((gap * 6) + modeLabelGap + comboLabelGap2)
 	                         : (modeLabelGap + (gap * 7));
 	const int sliderH = juce::jmax (18, (contentArea.getHeight() - layoutOverhead) / numRows);
+	const int visualSliderH = juce::jlimit (24, 30, sliderH);
+	const int visualComboH = 38;
+	auto fitControlHeight = [] (juce::Rectangle<int> r, int h)
+	{
+		return r.withSizeKeepingCentre (r.getWidth(), juce::jmin (h, r.getHeight()));
+	};
 
 	if (expanded)
 	{
 		// -- Expanded IO view: IN, OUT, TILT, FILTER, PAN, MIX, MODE IN/OUT, CHAOS --
 
 		auto sliderRow = contentArea.removeFromTop (sliderH);
-		in_.setBounds (sliderRow.removeFromLeft (sliderW));
+		in_.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		in_.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		out.setBounds (sliderRow.removeFromLeft (sliderW));
+		out.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		out.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		tilt.setBounds (sliderRow.removeFromLeft (sliderW));
+		tilt.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		tilt.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		filterBar.setBounds (sliderRow.removeFromLeft (sliderW));
+		filterBar.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		filterBar.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		pan.setBounds (sliderRow.removeFromLeft (sliderW));
+		pan.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		pan.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		mix.setBounds (sliderRow.removeFromLeft (sliderW));
+		mix.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		mix.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		// MODE IN / MODE OUT / F/T / SUM BUS combos (2x2 grid, same height as sliders)
 		contentArea.removeFromTop (modeLabelGap);
 		const int modeComboW = (sliderW - gap) / 2;
-		auto modeRow1 = contentArea.removeFromTop (sliderH);
-		modeInCmb.setBounds  (modeRow1.getX(), modeRow1.getY(), modeComboW, sliderH);
-		modeOutCmb.setBounds (modeRow1.getX() + modeComboW + gap, modeRow1.getY(), modeComboW, sliderH);
+		const int comboSlotH = juce::jlimit (38, 48, sliderH + 14);
+		auto modeRow1 = contentArea.removeFromTop (comboSlotH);
+		modeInCmb.setBounds  (fitControlHeight ({ modeRow1.getX(), modeRow1.getY(), modeComboW, comboSlotH }, visualComboH));
+		modeOutCmb.setBounds (fitControlHeight ({ modeRow1.getX() + modeComboW + gap, modeRow1.getY(), modeComboW, comboSlotH }, visualComboH));
 		modeInCmb.setVisible (true);
 		modeOutCmb.setVisible (true);
 		contentArea.removeFromTop (comboLabelGap2);
-		auto modeRow2 = contentArea.removeFromTop (sliderH);
-		filterPosCmb.setBounds (modeRow2.getX(), modeRow2.getY(), modeComboW, sliderH);
-		sumBusCmb.setBounds    (modeRow2.getX() + modeComboW + gap, modeRow2.getY(), modeComboW, sliderH);
+		auto modeRow2 = contentArea.removeFromTop (comboSlotH);
+		filterPosCmb.setBounds (fitControlHeight ({ modeRow2.getX(), modeRow2.getY(), modeComboW, comboSlotH }, visualComboH));
+		sumBusCmb.setBounds    (fitControlHeight ({ modeRow2.getX() + modeComboW + gap, modeRow2.getY(), modeComboW, comboSlotH }, visualComboH));
 		filterPosCmb.setVisible (true);
 		sumBusCmb.setVisible (true);
 
@@ -2328,11 +2350,11 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		auto& satTypeCmb = pick (satTypeComboA, satTypeComboB, satTypeComboC);
 		auto& rawBtn     = pick (rawButtonA,    rawButtonB,    rawButtonC);
 		auto comboRow = contentArea.removeFromTop (sliderH);
-		satTypeCmb.setBounds (comboRow.removeFromLeft (sliderW));
+		satTypeCmb.setBounds (fitControlHeight (comboRow.removeFromLeft (sliderW), visualComboH));
 		satTypeCmb.setVisible (true);
 		// RAW checkbox sits to the right of the combo
 		constexpr int rawGap = 6;
-		rawBtn.setBounds (comboRow.getX() + rawGap, comboRow.getY(), comboRow.getWidth() - rawGap, sliderH);
+		rawBtn.setBounds (fitControlHeight ({ comboRow.getX() + rawGap, comboRow.getY(), comboRow.getWidth() - rawGap, sliderH }, visualSliderH));
 		rawBtn.setVisible (true);
 		contentArea.removeFromTop (modeLabelGap);
 
@@ -2345,44 +2367,44 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		auto& sInstability  = pick (instabilitySliderA,      instabilitySliderB,      instabilitySliderC);
 
 		auto sliderRow = contentArea.removeFromTop (sliderH);
-		drive.setBounds (sliderRow.removeFromLeft (sliderW));
+		drive.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		drive.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		girth.setBounds (sliderRow.removeFromLeft (sliderW));
+		girth.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		girth.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		sMod.setBounds (sliderRow.removeFromLeft (sliderW));
+		sMod.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		sMod.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		sBias.setBounds (sliderRow.removeFromLeft (sliderW));
+		sBias.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		sBias.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		sSag.setBounds (sliderRow.removeFromLeft (sliderW));
+		sSag.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		sSag.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		series.setBounds (sliderRow.removeFromLeft (sliderW));
+		series.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		series.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		sInstability.setBounds (sliderRow.removeFromLeft (sliderW));
+		sInstability.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		sInstability.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		// Delay slider (read-only, driven by ALIGN)
 		auto& delayS = pick (delaySliderA, delaySliderB, delaySliderC);
 		sliderRow = contentArea.removeFromTop (sliderH);
-		delayS.setBounds (sliderRow.removeFromLeft (sliderW));
+		delayS.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		delayS.setVisible (true);
 
 		// Checkbox: INV + EXP
@@ -4721,8 +4743,7 @@ void SATTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 			const float newSpd = juce::jlimit (SATTRAudioProcessor::kChaosSpdMin,
 			                                    SATTRAudioProcessor::kChaosSpdMax,
 			                                    std::exp (spdLogMin + juce::jlimit (0.0f, 1.0f, spdBar->value) * spdLogRange));
-			auto tip = juce::String (juce::roundToInt (newAmt)) + "% | "
-			         + juce::String (juce::roundToInt (newSpd)) + " Hz";
+			auto tip = formatChaosTooltip (newAmt, newSpd);
 			auto& disp = loaderIndex == 0 ? safeThis->chaosDisplayA : (loaderIndex == 1 ? safeThis->chaosDisplayB : safeThis->chaosDisplayC);
 			disp.setTooltip (tip);
 		}),
