@@ -2077,6 +2077,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	const float satMod   = loadRelaxed    (pick (pSatModA,   pSatModB,   pSatModC));
 	const float satBias  = loadRelaxed    (pick (pSatBiasA,  pSatBiasB,  pSatBiasC));
 	const float satSag   = loadRelaxed    (pick (pSatSagA,   pSatSagB,   pSatSagC));
+	const float satDetail = loadRelaxed   (pick (pDetailA,   pDetailB,   pDetailC));
 	const bool  satRaw   = loadRelaxedBool (pick (pSatRawA,   pSatRawB,   pSatRawC));
 	const int   osOrder  = loadRelaxedInt (pOversample);
 	const float delayMs = loadRelaxed (pick (pDelayA, pDelayB, pDelayC));
@@ -2560,7 +2561,8 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			const float osSr = (float) currentSampleRate * (float) os.getOversamplingFactor();
 
 			SatEngine::processBlock (state.satState, osL, osR, osNumSamples,
-			                         model, satDrive, satGirth, satMod, satBias, satSag, instabilityAmt, osSr, seriesCount, false, satRaw, diagCollectorPtr);
+			                         model, satDrive, satGirth, satMod, satBias, satSag, satDetail,
+			                         instabilityAmt, osSr, seriesCount, false, satRaw, diagCollectorPtr);
 
 			os.processSamplesDown (block);
 		}
@@ -2570,7 +2572,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			float* dataR = numChannels > 1 ? buffer.getWritePointer (1) : dataL;
 
 			SatEngine::processBlock (state.satState, dataL, dataR, numSamples,
-			                         model, satDrive, satGirth, satMod, satBias, satSag, instabilityAmt,
+			                         model, satDrive, satGirth, satMod, satBias, satSag, satDetail, instabilityAmt,
 			                         (float) currentSampleRate, seriesCount, true, satRaw, diagCollectorPtr);
 		}
 

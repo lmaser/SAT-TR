@@ -1,6 +1,6 @@
 # SAT-TR DETAIL DSP Plan
 
-Estado: diseno previo. El parametro `DETAIL/DTL` ya existe en UI/APVTS, pero todavia no debe alterar DSP hasta que este plan se valide.
+Estado: DSP implementado en `Clipper`, `Diode`, `Transistor`, `Tape` y `Tube`; pendiente de tuning perceptivo final y README.
 
 ## Objetivo
 
@@ -106,7 +106,7 @@ struct DetailState
     float hp1 = 0.0f;
     float hp2 = 0.0f;
     float env = 0.0f;
-    float lastCorrection = 0.0f;
+    float lastReduction = 0.0f;
 };
 
 DetailState detail[kMaxSeries][2];
@@ -174,48 +174,25 @@ ceiling = 0.12 .. 0.35 relativo al core
 
 El techo debe depender de `DETAIL`, no de `DRIVE` directamente. El detector ya depende de cuanto clippea la senal.
 
-### 6. Aplicacion al core: foldback/duck sample-accurate
+### 6. Aplicacion al core: duck RMSC/Compactor
 
-Hay dos formas candidatas:
-
-#### A. Correccion foldback firmada
-
-```text
-out = core - hpDeltaLimited * foldDepth
-```
-
-Ventaja: se parece a la idea "foldback" y actua solo donde hay delta.
-
-Riesgo: signo incorrecto puede matar detalle o invertirlo de forma rara.
-
-#### B. Ducking dependiente de sidechain
+Tras revisar la semantica de RMSC/Compactor, la ruta correcta no debe sumar el
+delta como audio. El delta HP actua como sidechain de amplitud y reduce la
+magnitud del core saturado:
 
 ```text
-duck = abs(hpDeltaLimited) * duckDepth
-out = core * (1 - duck)
-out += hpDeltaLimited * preserveDepth
+side = abs(softLimit(HP12(clipDelta)))
+env  = attack rapido, release ~1 ms
+reduction = clamp(env * depth, 0, abs(core) * maxReduction)
+out = sign(core) * (abs(core) - reduction)
 ```
 
-Ventaja: mas controlado y cercano a RMSC/Compactor como reduccion por amplitud de sidechain.
+Motivos:
 
-Riesgo: si se exagera, puede sonar a compresion HF.
-
-Decision propuesta: implementar primero una forma hibrida y muy acotada:
-
-```text
-correction = hpDeltaLimited * preserveDepth
-duck = abs(hpDeltaLimited) * duckDepth
-out = core * (1 - duck) + correction
-```
-
-Con:
-
-```text
-preserveDepth = detail^1.35 * 0.50
-duckDepth     = detail^1.55 * 0.20
-```
-
-Esto permite que `DETAIL` a 100% preserve textura sin volverse un excitador libre.
+- No hay audio ex nihilo: si `core` es cero, la salida sigue siendo cero.
+- Evita que `DETAIL` se convierta en exciter HF.
+- Es mas fiel a la idea "sidechain amplitude subtractor" que una correccion firmada.
+- El release corto evita zipper/crackle sin convertirlo en compresion lenta.
 
 ### 7. Relacion con RAW
 
@@ -284,14 +261,16 @@ Sin codigo DSP. Este documento es la salida de fase 0.
 - Anadir `DetailState` y resets.
 - Mantener `detail <= epsilon` como bypass exacto.
 
-Criterio: con `DETAIL 0%` y `100%`, salida aun no cambia si el helper esta desactivado.
+Estado: implementado. Criterio de fase ya superado: el cableado quedo verificado antes de activar el helper de clipped-residual.
 
 ### Fase 2: Prototipo solo en CLIPPER
 
 - Implementar delta usando el tap natural de `processClipper`.
 - HP 12 dB/oct fijo a 2500 Hz.
 - Limiter interno del delta.
-- Correccion hibrida `core * (1 - duck) + correction`.
+- Duck estilo RMSC/Compactor: la amplitud del delta HP reduce la magnitud del core saturado; el delta no se suma como audio.
+
+Estado: implementado inicialmente en `Model::Clipper`; despues generalizado con el mismo helper comun.
 
 Criterio:
 
@@ -306,6 +285,8 @@ Criterio:
 - `Transistor`: usar `railIn` y thresholds de rail.
 - Mantener intensidades algo mas bajas que `Clipper` si hace falta.
 
+Estado: implementado. Ambos usan el mismo helper comun que `Clipper`; solo cambia el tap normalizado de delta.
+
 Criterio: no alterar el caracter base con `DETAIL 0%`.
 
 ### Fase 4: TAPE y TUBE conservadores
@@ -313,13 +294,17 @@ Criterio: no alterar el caracter base con `DETAIL 0%`.
 - `Tape`: delta posterior a pregain/tape core, profundidad reducida.
 - `Tube`: delta dependiente del headroom/sag, profundidad reducida para no competir con SAG.
 
+Estado: implementado. `Tape` usa residuo de `satIn` antes del ADAA tape core y lo escala de forma conservadora; `Tube` usa el residuo del ceiling final del core y lo escala para no competir con SAG.
+
 Criterio: `Tube SAG` sigue siendo el fenomeno dominante; `DETAIL` solo recupera textura de clipping.
 
 ### Fase 5: Tuning final y README
 
 - Ajustar curva `detail^p`.
-- Ajustar `preserveDepth` y `duckDepth`.
+- Ajustar profundidad de reduccion y release del duck.
 - Actualizar README solo cuando el DSP este activo y validado.
+
+Estado parcial: el helper comun ya usa reduccion de magnitud RMSC-like con release perceptivo corto; el detector usa tau ~0.33 ms, aprox 1 ms hasta 95% de recuperacion. Esto reemplaza la primera prueba de correccion firmada, que era menos fiel a Compactor/RMSC y podia sentirse demasiado sutil o ambiguamente aditiva.
 
 ## Pruebas obligatorias
 
@@ -334,8 +319,8 @@ Criterio: `Tube SAG` sigue siendo el fenomeno dominante; `DETAIL` solo recupera 
 
 ## Riesgos
 
-- Signo incorrecto en foldback: puede borrar detalle en lugar de preservarlo.
-- Additive detail demasiado alto: se convierte en exciter HF.
+- Reduccion excesiva: puede sentirse como compresion HF en lugar de preservacion.
+- Release demasiado corto: puede sonar rasposo; demasiado largo, bombea.
 - HP con demasiada pendiente: puede sonar artificial o phasey.
 - HP demasiado bajo: graves controlan el sidechain y aparece pumping.
 - Aplicarlo despues del limiter final: generaria overs o clicks.
@@ -348,8 +333,9 @@ Implementar `DETAIL` como "high-passed clipped-residual preservation":
 ```text
 detailSignal = HP12(clipDelta)
 detailSignal = softLimit(detailSignal)
-out = core * (1 - abs(detailSignal) * duckDepth)
-    + detailSignal * preserveDepth
+side = abs(detailSignal)
+reduction = clamp(sideEnvelope * depth, 0, abs(core) * maxReduction)
+out = sign(core) * (abs(core) - reduction)
 ```
 
 Conservador, sample-accurate, dependiente de clipping real, sin audio ex nihilo, y con `DETAIL 0%` como bypass exacto.

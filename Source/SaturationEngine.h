@@ -894,6 +894,19 @@ struct SafetyLPF
     void reset() noexcept { x1 = x2 = y1 = y2 = 0.0f; }
 };
 
+struct DetailState
+{
+    float hp1 = 0.0f;
+    float hp2 = 0.0f;
+    float env = 0.0f;
+    float lastReduction = 0.0f;
+
+    void reset() noexcept
+    {
+        hp1 = hp2 = env = lastReduction = 0.0f;
+    }
+};
+
 // ----------------------------------------------------------------
 //  Full per-channel / per-loader state
 // ----------------------------------------------------------------
@@ -930,6 +943,11 @@ struct State
 
     // Internal emphasis/de-emphasis (per-stage / per-channel)
     EmphasisState emphasis[kMaxSeries][2];
+
+    // DETAIL preservation path (per-stage / per-channel).
+    // The clipped residual is filtered and used as an RMSC-like sidechain
+    // reducer, never injected directly as audio.
+    DetailState detailState[kMaxSeries][2];
 
     // ADAA states -- main waveshaper [series pass][channel]
     adaa::StableTanhADAA triodeAdaa[kMaxSeries][2];
@@ -984,6 +1002,7 @@ struct State
     float sBias  = 0.0f;
     float sReact = 0.0f;
     float sMod   = 0.0f;
+    float sDetail = 0.0f;
     float sInstability   = 0.0f;
     float lastTapeDrive = 0.0f;
     bool tapeWasActive = false;
@@ -1011,6 +1030,7 @@ struct State
                 triodeReact[sp][ch].reset();
                 dcX[sp][ch] = dcY[sp][ch] = 0.0f;
                 emphasis[sp][ch].reset();
+                detailState[sp][ch].reset();
                 bumpZ1[sp][ch] = bumpZ2[sp][ch] = 0.0f;
                 triodeBlock[sp][ch] = 0.0f;
                 powerSag[sp][ch] = 0.0f;
@@ -1046,7 +1066,7 @@ struct State
         lastModel = Model::Clean;
         instability.reset();
         instabilitySignalEnv = 0.0f;
-        sDrive = sGirth = sBias = sReact = sMod = sInstability = 0.0f;
+        sDrive = sGirth = sBias = sReact = sMod = sDetail = sInstability = 0.0f;
         lastTapeDrive = 0.0f;
         tapeWasActive = false;
         lastTransistorDrive = 0.0f;
@@ -1073,6 +1093,10 @@ struct State
                 fl (emphasis[sp][ch].preSh);
                 fl (emphasis[sp][ch].postHP);
                 fl (emphasis[sp][ch].postLP);
+                fl (detailState[sp][ch].hp1);
+                fl (detailState[sp][ch].hp2);
+                fl (detailState[sp][ch].env);
+                fl (detailState[sp][ch].lastReduction);
                 fl (dynamicsComp[sp][ch].scLP);
                 fl (dynamicsComp[sp][ch].env);
                 fl (dynamicsComp[sp][ch].hfEnv);
@@ -1247,6 +1271,61 @@ namespace detail
         return juce::jmap (t, p75, p100);
     }
 } // namespace detail
+
+struct DetailCoeffs
+{
+    float hpCoeff = 0.0f;
+    float envAttack = 0.0f;
+    float envRelease = 0.0f;
+    float correction = 0.0f;
+};
+
+inline float applyDetailPreservation (float core,
+                                      float clipDelta,
+                                      float detailAmount,
+                                      DetailState& state,
+                                      const DetailCoeffs& coeffs) noexcept
+{
+    const float d = detail::clampF (detailAmount, 0.0f, 1.0f);
+    if (d <= 1.0e-5f)
+    {
+        state.reset();
+        return core;
+    }
+
+    // Two cascaded one-pole high-pass filters approximate a gentle 12 dB/oct
+    // detail path. This keeps low-end clipping energy from driving the effect.
+    state.hp1 += (clipDelta - state.hp1) * coeffs.hpCoeff;
+    const float hpA = clipDelta - state.hp1;
+    state.hp2 += (hpA - state.hp2) * coeffs.hpCoeff;
+    const float hpDelta = hpA - state.hp2;
+
+    const float detailDrive = d * std::sqrt (d);
+    const float ceiling = 0.12f + detailDrive * 0.45f;
+    const float gain = 3.00f * detailDrive;
+    const float limitIn = detail::clampF ((hpDelta * gain) / std::max (ceiling, 1.0e-5f),
+                                          -3.0f, 3.0f);
+    const float limited = ceiling * detail::fastTanh (limitIn);
+
+    const float sideTarget = std::abs (limited);
+    const float envCoeff = sideTarget > state.env ? coeffs.envAttack : coeffs.envRelease;
+    state.env += (sideTarget - state.env) * envCoeff;
+
+    // RMSC/Compactor-style sidechain reduction: the HP clipped residual
+    // controls how much magnitude is subtracted from the already-saturated
+    // signal. It never injects the delta as audio, so no input/core means no
+    // generated output.
+    const float subtractDepth = 1.65f * detailDrive;
+    const float coreAbs = std::abs (core);
+    const float maxReduction = coreAbs * (0.10f + 0.75f * d);
+    const float targetReduction = detail::clampF (state.env * subtractDepth,
+                                                  0.0f, maxReduction);
+    state.lastReduction += (targetReduction - state.lastReduction) * coeffs.correction;
+    state.lastReduction = std::min (state.lastReduction, maxReduction);
+
+    return core >= 0.0f ? core - state.lastReduction
+                        : core + state.lastReduction;
+}
 
 struct DynamicsCompResult
 {
@@ -2078,8 +2157,12 @@ inline float processTriode (float x, float drive, float girth, float bias, float
                             float react, bool rawMode,
                             State& state, int ch, float sr,
                             int triodeBloomSamplesPerSlot,
-                            adaa::StableTanhADAA& adaaState) noexcept
+                            adaa::StableTanhADAA& adaaState,
+                            float* detailDeltaOut = nullptr) noexcept
 {
+    if (detailDeltaOut != nullptr)
+        *detailDeltaOut = 0.0f;
+
     const int sp = state.currentSeriesPass;
     const float d = detail::clampF (drive, 0.0f, 1.0f);
     const float g = detail::clampF (girth, 0.0f, 1.0f);
@@ -2323,8 +2406,10 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     }
 
     const float ceiling = juce::jmap (tubeMorph2, 0.52f, 0.62f);
-    s = detail::clampF (s, -ceiling, ceiling);
-    s *= 1.0f / ceiling;
+    const float preCeiling = s;
+    const float ceilingClamped = detail::clampF (preCeiling, -ceiling, ceiling);
+    float tubeDetailDelta = (preCeiling - ceilingClamped) / std::max (ceiling, 1.0e-5f);
+    s = ceilingClamped * (1.0f / ceiling);
 
     {
         const float bodyPostHz12AX7 = 145.0f - d * 18.0f;
@@ -2342,6 +2427,9 @@ inline float processTriode (float x, float drive, float girth, float bias, float
 
     s *= atrophyGain;
 
+    if (detailDeltaOut != nullptr)
+        *detailDeltaOut = tubeDetailDelta * atrophyGain * 0.38f;
+
     state.triodeBlock[sp][ch] = 0.0f;
     return s;
 }
@@ -2352,8 +2440,12 @@ inline float processTriode (float x, float drive, float girth, float bias, float
 inline float processTransistorStage (float x, float drive, float girth, float bias, float mod,
                                      float react, bool rawMode,
                                      State& state, int ch, float sr,
-                                     adaa::ClipperADAA& clipAdaa) noexcept
+                                     adaa::ClipperADAA& clipAdaa,
+                                     float* detailDeltaOut = nullptr) noexcept
 {
+    if (detailDeltaOut != nullptr)
+        *detailDeltaOut = 0.0f;
+
     const int sp = state.currentSeriesPass;
     auto& preHP = state.transistorPreHP[sp][ch];
     auto& preEdge = state.transistorPreEdge[sp][ch];
@@ -2507,6 +2599,15 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
     float out = clipAdaa.process (railIn, posThresh, negThresh, kneePos, kneeNeg);
     trackDbg (state.transistorDbgRailOut[sp][ch], out);
 
+    if (detailDeltaOut != nullptr)
+    {
+        const float hardRef = railIn >= 0.0f
+                            ? std::min (railIn, posThresh)
+                            : std::max (railIn, -negThresh);
+        const float railScale = 2.0f / std::max (posThresh + negThresh, 1.0e-5f);
+        *detailDeltaOut = (railIn - hardRef) * railScale;
+    }
+
     if (!rawMode)
     {
         const float lpHz = juce::jmap (type,
@@ -2525,8 +2626,12 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
 }
 
 inline float processDiodeStage (float x, float drive, float girth, float bias, float mod,
-                                adaa::ClipperADAA& adaaState) noexcept
+                                adaa::ClipperADAA& adaaState,
+                                float* detailDeltaOut = nullptr) noexcept
 {
+    if (detailDeltaOut != nullptr)
+        *detailDeltaOut = 0.0f;
+
     const float d = detail::clampF (drive, 0.0f, 1.0f);
     const float c = detail::clampF (girth, 0.0f, 1.0f);
     const float s = detail::clampF (bias, -1.0f, 1.0f);
@@ -2587,12 +2692,21 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
     float clipped = adaaState.process (clipIn, thresholdPos, thresholdNeg,
                                        kneePos, kneeNeg);
 
-    clipped *= 2.0f / (thresholdPos + thresholdNeg);
+    const float outputScale = 2.0f / (thresholdPos + thresholdNeg);
+    clipped *= outputScale;
 
     if (cleanBlend > 0.0001f)
     {
         const float clean = detail::clampF (x * juce::jmap (c, 0.96f, 1.06f), -1.30f, 1.30f);
         clipped = juce::jmap (cleanBlend, clipped, clean);
+    }
+
+    if (detailDeltaOut != nullptr)
+    {
+        const float hardRef = clipIn >= 0.0f
+                            ? std::min (clipIn, thresholdPos)
+                            : std::max (clipIn, -thresholdNeg);
+        *detailDeltaOut = (clipIn - hardRef) * outputScale * voiceTrim * (1.0f - cleanBlend);
     }
 
     return clipped * voiceTrim;
@@ -2601,8 +2715,12 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
 // CLIPPER: threshold-driven clipper with continuous soft->hard knee control
 // and a voice morph from broadband classic -> TS-style -> Klon-style.
 inline float processClipper (float x, float drive, float girth, float bias, float mod,
-                             adaa::ClipperADAA& adaaState) noexcept
+                             adaa::ClipperADAA& adaaState,
+                             float* detailDeltaOut = nullptr) noexcept
 {
+    if (detailDeltaOut != nullptr)
+        *detailDeltaOut = 0.0f;
+
     const float d = detail::clampF (drive, 0.0f, 1.0f);
     const float k = detail::clampF (girth, 0.0f, 1.0f);
     const float b = detail::clampF (bias, -1.0f, 1.0f);
@@ -2644,7 +2762,8 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
                                        kneePos, kneeNeg);
 
     // Preserve average ceiling when asymmetry moves thresholds apart.
-    clipped *= 2.0f / (thresholdPos + thresholdNeg);
+    const float outputScale = 2.0f / (thresholdPos + thresholdNeg);
+    clipped *= outputScale;
 
     if (cleanBlend > 0.0001f)
     {
@@ -2652,7 +2771,18 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
         clipped = juce::jmap (cleanBlend, clipped, clean);
     }
 
-    return clipped * voiceLift * juce::jmap (d, 0.98f, 0.92f);
+    const float finalTrim = voiceLift * juce::jmap (d, 0.98f, 0.92f);
+
+    if (detailDeltaOut != nullptr)
+    {
+        const float hardRef = clipIn >= 0.0f
+                            ? std::min (clipIn, thresholdPos)
+                            : std::max (clipIn, -thresholdNeg);
+        const float clipDelta = (clipIn - hardRef) * outputScale * finalTrim * (1.0f - cleanBlend);
+        *detailDeltaOut = clipDelta;
+    }
+
+    return clipped * finalTrim;
 }
 
 // TAPE: ADAA tape stage with two fitted families:
@@ -2663,8 +2793,12 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
 inline float processTape (float x, float drive, float bias, float mod,
                           bool rawMode, State& state, int ch, float sr,
                           adaa::TapeTanhADAA& adaaState,
-                          bool advanceOsc = true) noexcept
+                          bool advanceOsc = true,
+                          float* detailDeltaOut = nullptr) noexcept
 {
+    if (detailDeltaOut != nullptr)
+        *detailDeltaOut = 0.0f;
+
     const int sp = state.currentSeriesPass;
     (void) sr;
     (void) advanceOsc;
@@ -2734,6 +2868,9 @@ inline float processTape (float x, float drive, float bias, float mod,
         const float oddBias = satIn * std::abs (satIn);
         satIn += oddBias * underBias * (0.004f + d * 0.012f);
     }
+
+    const float tapeDetailRef = detail::clampF (satIn, -1.0f, 1.0f);
+    const float tapeDetailDelta = satIn - tapeDetailRef;
 
     // Magnetic stress: only hot material or high DRIVE should load the tape.
     // This stays out of the static curve so normal levels keep the existing feel.
@@ -2825,9 +2962,11 @@ inline float processTape (float x, float drive, float bias, float mod,
         raw += oddHard * rabbit * (0.010f + d * 0.022f);
     }
 
-    float out = raw * (totalGain / pregain);
+    float outScale = totalGain / pregain;
+    float out = raw * outScale;
     const float stressDrag = 1.0f / (1.0f + stressCore * (0.040f + d * 0.070f));
     out *= stressDrag;
+    outScale *= stressDrag;
 
     if (rabbitMod > 0.0001f)
     {
@@ -2835,7 +2974,11 @@ inline float processTape (float x, float drive, float bias, float mod,
         const float rabbitMakeup = detail::interpDrive5 (d,
                                                          1.24f, 1.20f, 1.16f, 1.13f, 1.10f);
         out *= juce::jmap (rabbit, 1.0f, rabbitMakeup);
+        outScale *= juce::jmap (rabbit, 1.0f, rabbitMakeup);
     }
+
+    if (detailDeltaOut != nullptr)
+        *detailDeltaOut = tapeDetailDelta * outScale * 0.55f;
 
     return out;
 }
@@ -2853,6 +2996,7 @@ inline void processBlock (State& state,
                           float modParam,       // 0..1
                           float biasParam,      // -1..1
                           float reactParam,     // 0..1
+                          float detailParam,    // 0..1
                           float instabilityParam,       // 0..1
                           float sampleRate,
                           int   seriesCount = 1,
@@ -2880,6 +3024,7 @@ inline void processBlock (State& state,
                 state.transistorPeakCatch[sp][ch].reset();
                 state.triodeReact[sp][ch].reset();
                 state.emphasis[sp][ch].reset();
+                state.detailState[sp][ch].reset();
                 state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
                 state.triodeAdaa[sp][ch].reset();
                 state.transistorCoreAdaa[sp][ch].reset();
@@ -2975,6 +3120,12 @@ inline void processBlock (State& state,
     // Multiband REACT crossover coefficients (~200Hz sub/mid, ~4kHz mid/air)
     const float mbSubCoeff = detail::onePoleCoeff (200.0f, sampleRate);
     const float mbAirCoeff = detail::onePoleCoeff (4000.0f, sampleRate);
+    const DetailCoeffs detailCoeffs {
+        detail::onePoleCoeff (2500.0f, sampleRate),
+        detail::onePoleCoeff (4800.0f, sampleRate),
+        detail::onePoleCoeff (480.0f, sampleRate),
+        detail::onePoleCoeff (12000.0f, sampleRate)
+    };
 
     // TRANSISTOR owns its colour inside the black box instead of relying on
     // generic interstage coupling.
@@ -2999,6 +3150,7 @@ inline void processBlock (State& state,
     // -- Per-block hoisted computations (avoid per-sample transcendentals) --
     // Drive curve: std::pow only once per block (driveParam is constant within a block)
     const float driveCurved = applyDriveCurve (driveParam, model);
+    const float detailTarget = detail::clampF (detailParam, 0.0f, 1.0f);
 
     for (int ch = 0; ch < 2; ++ch)
     {
@@ -3182,6 +3334,7 @@ inline void processBlock (State& state,
         state.sMod   += (modParam   - state.sMod)   * oneMinusSmooth;
         state.sBias  += (biasParam  - state.sBias)  * oneMinusSmooth;
         state.sReact += (reactParam - state.sReact) * oneMinusSmooth;
+        state.sDetail += (detailTarget - state.sDetail) * oneMinusSmooth;
         state.sInstability   += (instabilityParam   - state.sInstability)   * oneMinusSmooth;
 
         const float drive = state.sDrive;
@@ -3189,6 +3342,7 @@ inline void processBlock (State& state,
         const float mod   = state.sMod;
         const float bias  = state.sBias;
         const float react = state.sReact;
+        const float detailAmount = state.sDetail;
         const float instabilityAmount = state.sInstability;
         const float inputPeak = std::max (std::abs (left[i]), std::abs (right[i]));
         const float presenceTarget = detail::smoothStep01 (
@@ -3452,30 +3606,55 @@ inline void processBlock (State& state,
                 switch (model)
                 {
                     case Model::Tube:
+                    {
+                        float detailDelta = 0.0f;
                         x = processTriode (x, effDrive, girth, effBias, effMod, react, rawMode,
                                            state, ch, sampleRate,
                                            triodeBloomSamplesPerSlot,
-                                           state.triodeAdaa[sp][ch]);
+                                           state.triodeAdaa[sp][ch], &detailDelta);
+                        x = applyDetailPreservation (x, detailDelta, detailAmount,
+                                                     state.detailState[sp][ch], detailCoeffs);
                         break;
+                    }
                     case Model::Transistor:
+                    {
+                        float detailDelta = 0.0f;
                         x = processTransistorStage (x, effDrive, girth, effBias, effMod,
                                                     react, rawMode,
                                                     state, ch, sampleRate,
-                                                    state.clipperAdaa[sp][ch]);
+                                                    state.clipperAdaa[sp][ch], &detailDelta);
+                        x = applyDetailPreservation (x, detailDelta, detailAmount,
+                                                     state.detailState[sp][ch], detailCoeffs);
                         break;
+                    }
                     case Model::Diode:
+                    {
+                        float detailDelta = 0.0f;
                         x = processDiodeStage (x, effDrive, girth, effBias, effMod,
-                                               state.clipperAdaa[sp][ch]);
+                                               state.clipperAdaa[sp][ch], &detailDelta);
+                        x = applyDetailPreservation (x, detailDelta, detailAmount,
+                                                     state.detailState[sp][ch], detailCoeffs);
                         break;
+                    }
                     case Model::Tape:
+                    {
+                        float detailDelta = 0.0f;
                         x = processTape (x, effDrive, effBias, effMod, rawMode,
                                          state, ch, sampleRate,
-                                         state.tapeAdaa[sp][ch], isFirst);
+                                         state.tapeAdaa[sp][ch], isFirst, &detailDelta);
+                        x = applyDetailPreservation (x, detailDelta, detailAmount,
+                                                     state.detailState[sp][ch], detailCoeffs);
                         break;
+                    }
                     case Model::Clipper:
+                    {
+                        float detailDelta = 0.0f;
                         x = processClipper (x, effDrive, girth, effBias, effMod,
-                                            state.clipperAdaa[sp][ch]);
+                                            state.clipperAdaa[sp][ch], &detailDelta);
+                        x = applyDetailPreservation (x, detailDelta, detailAmount,
+                                                     state.detailState[sp][ch], detailCoeffs);
                         break;
+                    }
                     default: break;
                 }
 
