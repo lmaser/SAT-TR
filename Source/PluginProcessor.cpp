@@ -196,13 +196,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kTiltMin, kTiltMax, 0.01f),
 		kTiltDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSeriesA, "Series A",
-		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
-		kSeriesDefault));
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamDetailA, "Detail A",
 		juce::NormalisableRange<float> (kDetailMin, kDetailMax, 0.001f),
 		kDetailDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSeriesA, "Series A",
+		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
+		kSeriesDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamInstabilityA, "Instability A",
 		juce::NormalisableRange<float> (kInstabilityMin, kInstabilityMax, 0.001f),
@@ -328,13 +328,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kTiltMin, kTiltMax, 0.01f),
 		kTiltDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSeriesB, "Series B",
-		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
-		kSeriesDefault));
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamDetailB, "Detail B",
 		juce::NormalisableRange<float> (kDetailMin, kDetailMax, 0.001f),
 		kDetailDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSeriesB, "Series B",
+		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
+		kSeriesDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamInstabilityB, "Instability B",
 		juce::NormalisableRange<float> (kInstabilityMin, kInstabilityMax, 0.001f),
@@ -460,13 +460,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kTiltMin, kTiltMax, 0.01f),
 		kTiltDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSeriesC, "Series C",
-		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
-		kSeriesDefault));
-	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamDetailC, "Detail C",
 		juce::NormalisableRange<float> (kDetailMin, kDetailMax, 0.001f),
 		kDetailDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSeriesC, "Series C",
+		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
+		kSeriesDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamInstabilityC, "Instability C",
 		juce::NormalisableRange<float> (kInstabilityMin, kInstabilityMax, 0.001f),

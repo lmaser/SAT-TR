@@ -1399,9 +1399,9 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 	setupSlider (r.in,    "Input Gain " + suffix,                      ST::Input);
 	setupSlider (r.out,   "Output Gain " + suffix,                     ST::Output);
 	setupSlider (r.tilt,  "Tilt EQ " + suffix + " (-6/+6 dB)",    ST::Tilt);
+	setupSlider (r.detail, "Detail " + suffix + " (0-100%)",           ST::Detail);
 	setupSlider (r.series, "Series " + suffix + " (1-6x cascade)",      ST::Series);
 	r.series.setAllowNumericPopup (false);
-	setupSlider (r.detail, "Detail " + suffix + " (0-100%)",           ST::Detail);
 	setupSlider (r.instability,   "Instability " + suffix + " (0-100%)",         ST::Instability);
 	setupSlider (r.delay, "Delay " + suffix + " (auto-align)",         ST::Delay);
 	r.delay.setEnabled (false);  // read-only, set by ALIGN
@@ -2401,7 +2401,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	}
 	else
 	{
-		// -- Collapsed main view: SatType combo + sat sliders + SERIES + DTL + INST + delay --
+		// -- Collapsed main view: SatType combo + sat sliders + DTL + SERIES + INST + delay --
 
 		// SatType combo (same height as sliders) + RAW checkbox
 		auto& satTypeCmb = pick (satTypeComboA, satTypeComboB, satTypeComboC);
@@ -2449,13 +2449,13 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		series.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
-		series.setVisible (true);
+		detail.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
+		detail.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		detail.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
-		detail.setVisible (true);
+		series.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
+		series.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
@@ -2539,7 +2539,7 @@ void SATTRAudioProcessorEditor::updateSatControlsEnabledState (int loaderIndex)
 	const float satAlpha = satInteractive ? 1.0f : 0.35f;
 
 	juce::Component* satControls[] = {
-		&r.satDrive, &r.satGirth, &r.satMod, &r.satBias, &r.satSag, &r.detail, &r.instability, &r.series, &r.raw
+		&r.satDrive, &r.satGirth, &r.satMod, &r.satBias, &r.satSag, &r.detail, &r.series, &r.instability, &r.raw
 	};
 
 	for (auto* c : satControls)
