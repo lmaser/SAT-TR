@@ -1511,7 +1511,7 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 	setupSlider (r.satGirth, "Girth " + suffix + " (low emphasis)",   ST::SatGirth);
 	setupSlider (r.satMod,   "Mod " + suffix + " (model modulation)", ST::SatMod);
 	setupSlider (r.satBias,  "Bias " + suffix + " (asymmetry)",       ST::SatBias);
-	setupSlider (r.satSag,   "React " + suffix + " (energy react)",   ST::SatSag);
+	setupSlider (r.satSag,   "Dynamics " + suffix + " (model-dependent dynamics)", ST::SatSag);
 }
 
 // ----------------------------------------------------------------
@@ -2866,14 +2866,14 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 				biasLabels[l]  = "SYM";
 				reactLabels[l] = "PEAK";
 				break;
-			default:                         reactLabels[l] = "RCT";   break; // Clean/unknown
+			default:                         reactLabels[l] = "DYN";   break; // Clean/unknown
 		}
 	}
 
 	ParamFmt fmts[kNumCachedParams] = {
 		{0,"HP"}, {0,"LP"}, {1,"IN"}, {1,"OUT"}, {5,"TILT"}, {7,"SERIES"},
 		{4,"PAN"}, {3,"ANGLE"}, {3,"DIST"}, {3,"MIX"},
-		{3,"DRIVE"}, {3,"GIRTH"}, {3,"MOD"}, {6,"BIAS"}, {3,"RCT"}, {3,"INST"}, {8,"DELAY"}
+		{3,"DRIVE"}, {3,"GIRTH"}, {3,"MOD"}, {6,"BIAS"}, {3,"DYN"}, {3,"INST"}, {8,"DELAY"}
 	};
 
 	for (int loader = 0; loader < 3; ++loader)
@@ -3225,7 +3225,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 				case BarSlider::Type::SatGirth: return "GIRTH";
 				case BarSlider::Type::SatMod:   return "MOD";
 				case BarSlider::Type::SatBias:  return "BIAS";
-				case BarSlider::Type::SatSag:   return "REACT";
+				case BarSlider::Type::SatSag:   return "DYN";
 				default:                        return {};
 			}
 		}
@@ -3236,7 +3236,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		juce::String girthLabel = "GIRTH";
 		juce::String modLabel   = "MOD";
 		juce::String biasLabel  = "BIAS";
-		juce::String reactLabel = "REACT";
+		juce::String reactLabel = "DYN";
 
 		switch (satModel)
 		{

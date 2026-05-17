@@ -78,13 +78,14 @@ Operating-point or asymmetry control, depending on the model:
 - **BIAS**: stage bias / operating point
 - **SYM**: positive/negative clipping symmetry
 
-#### REACT / COMP / SAG / PEAK
+#### DYN / COMP / SAG / PEAK
 
 Model-dependent dynamics control:
 
 - **COMP**: dynamics conditioning before or inside the stage
 - **SAG**: tube-style reactive compression / supply behavior
 - **PEAK**: pre-clip transient shaving in `CLIPPER`
+- **DYN**: generic fallback label when no model-specific dynamics name applies
 
 #### Instability (0-100%)
 
@@ -96,7 +97,7 @@ Number of cascaded saturation passes for the active loader. Each pass runs the m
 
 #### RAW
 
-Bypasses the model's internal pre/post colour-shaping path where supported, exposing a rawer stage response. Dedicated model dynamics may remain active when they are part of the mode's behaviour rather than just wrapper voicing. Useful when you want external filtering or want to hear more of the bare nonlinear core.
+Bypasses the model's internal pre/post colour-shaping path where supported, exposing a rawer stage response. `RAW` is not a total safety or dynamics bypass: dedicated model dynamics may remain active when they are part of the mode's behaviour rather than just wrapper voicing. Useful when you want external filtering or want to hear more of the bare nonlinear core.
 
 ### Per-Loader
 
@@ -259,7 +260,7 @@ Practical note:
 - **Models**: `CLEAN`, `TAPE`, `TUBE`, `TRANSISTOR`, `DIODE`, `CLIPPER`.
 - **ADAA**: used on the main nonlinear stages where needed; exact placement varies by model.
 - **Series Processing**: up to 4 internal passes per loader.
-- **REACT / Dynamics**: model-specific dynamics blocks rather than one universal behavior (`SAG`, `COMP`, `PEAK` depend on algorithm).
+- **Dynamics**: model-specific dynamics blocks rather than one universal behavior (`SAG`, `COMP`, `PEAK` depend on algorithm).
 - **Tube SAG**: reactive supply/sag behavior with short strike tracking plus longer bloom memory for time-dependent recovery.
 - **Instability**: deterministic spread plus slow drift, with subtle smoothed micro-irregularity on gain/shape response at higher settings.
 - **Oversampling**: global `x1` to `x16`, with latency reported to the host.

@@ -264,7 +264,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamSatBiasA, "Sat Bias A",
 		juce::NormalisableRange<float> (kSatBiasMin, kSatBiasMax, 0.001f), kSatBiasDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSatSagA, "Sat Sag A",
+		kParamSatSagA, "Sat Dynamics A",
 		juce::NormalisableRange<float> (kSatSagMin, kSatSagMax, 0.001f), kSatSagDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSatRawA, "Sat Raw A", false));
@@ -392,7 +392,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamSatBiasB, "Sat Bias B",
 		juce::NormalisableRange<float> (kSatBiasMin, kSatBiasMax, 0.001f), kSatBiasDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSatSagB, "Sat Sag B",
+		kParamSatSagB, "Sat Dynamics B",
 		juce::NormalisableRange<float> (kSatSagMin, kSatSagMax, 0.001f), kSatSagDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSatRawB, "Sat Raw B", false));
@@ -520,7 +520,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamSatBiasC, "Sat Bias C",
 		juce::NormalisableRange<float> (kSatBiasMin, kSatBiasMax, 0.001f), kSatBiasDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSatSagC, "Sat Sag C",
+		kParamSatSagC, "Sat Dynamics C",
 		juce::NormalisableRange<float> (kSatSagMin, kSatSagMax, 0.001f), kSatSagDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSatRawC, "Sat Raw C", false));
