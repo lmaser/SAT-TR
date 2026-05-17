@@ -28,6 +28,7 @@ public:
 	static constexpr const char* kParamOutA         = "out_a";
 	static constexpr const char* kParamTiltA        = "tilt_a";
 	static constexpr const char* kParamSeriesA      = "series_a";
+	static constexpr const char* kParamDetailA      = "detail_a";
 	static constexpr const char* kParamInstabilityA         = "instability_a";
 	static constexpr const char* kParamPanA         = "pan_a";
 	static constexpr const char* kParamFredA        = "fred_a";
@@ -75,6 +76,7 @@ public:
 	static constexpr const char* kParamOutB         = "out_b";
 	static constexpr const char* kParamTiltB        = "tilt_b";
 	static constexpr const char* kParamSeriesB      = "series_b";
+	static constexpr const char* kParamDetailB      = "detail_b";
 	static constexpr const char* kParamInstabilityB         = "instability_b";
 	static constexpr const char* kParamPanB         = "pan_b";
 	static constexpr const char* kParamFredB        = "fred_b";
@@ -122,6 +124,7 @@ public:
 	static constexpr const char* kParamOutC         = "out_c";
 	static constexpr const char* kParamTiltC        = "tilt_c";
 	static constexpr const char* kParamSeriesC      = "series_c";
+	static constexpr const char* kParamDetailC      = "detail_c";
 	static constexpr const char* kParamInstabilityC         = "instability_c";
 	static constexpr const char* kParamPanC         = "pan_c";
 	static constexpr const char* kParamFredC        = "fred_c";
@@ -296,6 +299,10 @@ public:
 	static constexpr float kSeriesMin               = 1.0f;
 	static constexpr float kSeriesMax               = 4.0f;
 	static constexpr float kSeriesDefault           = 1.0f;
+
+	static constexpr float kDetailMin               = 0.0f;
+	static constexpr float kDetailMax               = 1.0f;
+	static constexpr float kDetailDefault           = 0.0f;
 
 	static constexpr float kInstabilityMin                  = 0.0f;
 	static constexpr float kInstabilityMax                  = 1.0f;
@@ -641,6 +648,7 @@ private:
 	std::atomic<float>* pHpSlopeA = nullptr;
 	std::atomic<float>* pLpSlopeA = nullptr;
 	std::atomic<float>* pSeriesA = nullptr;
+	std::atomic<float>* pDetailA = nullptr;
 	std::atomic<float>* pInstabilityA = nullptr;
 	std::atomic<float>* pPanA = nullptr;
 	std::atomic<float>* pFredA = nullptr;
@@ -655,6 +663,7 @@ private:
 	std::atomic<float>* pHpSlopeB = nullptr;
 	std::atomic<float>* pLpSlopeB = nullptr;
 	std::atomic<float>* pSeriesB = nullptr;
+	std::atomic<float>* pDetailB = nullptr;
 	std::atomic<float>* pInstabilityB = nullptr;
 	std::atomic<float>* pPanB = nullptr;
 	std::atomic<float>* pFredB = nullptr;
@@ -691,6 +700,7 @@ private:
 	std::atomic<float>* pHpSlopeC = nullptr;
 	std::atomic<float>* pLpSlopeC = nullptr;
 	std::atomic<float>* pSeriesC = nullptr;
+	std::atomic<float>* pDetailC = nullptr;
 	std::atomic<float>* pInstabilityC = nullptr;
 	std::atomic<float>* pPanC = nullptr;
 	std::atomic<float>* pFredC = nullptr;

@@ -200,6 +200,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
 		kSeriesDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamDetailA, "Detail A",
+		juce::NormalisableRange<float> (kDetailMin, kDetailMax, 0.001f),
+		kDetailDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamInstabilityA, "Instability A",
 		juce::NormalisableRange<float> (kInstabilityMin, kInstabilityMax, 0.001f),
 		kInstabilityDefault));
@@ -328,6 +332,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
 		kSeriesDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamDetailB, "Detail B",
+		juce::NormalisableRange<float> (kDetailMin, kDetailMax, 0.001f),
+		kDetailDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamInstabilityB, "Instability B",
 		juce::NormalisableRange<float> (kInstabilityMin, kInstabilityMax, 0.001f),
 		kInstabilityDefault));
@@ -455,6 +463,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamSeriesC, "Series C",
 		juce::NormalisableRange<float> (kSeriesMin, kSeriesMax, 1.0f),
 		kSeriesDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamDetailC, "Detail C",
+		juce::NormalisableRange<float> (kDetailMin, kDetailMax, 0.001f),
+		kDetailDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamInstabilityC, "Instability C",
 		juce::NormalisableRange<float> (kInstabilityMin, kInstabilityMax, 0.001f),
@@ -695,6 +707,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pHpSlopeA = parameters.getRawParameterValue (kParamHpSlopeA);
 	pLpSlopeA = parameters.getRawParameterValue (kParamLpSlopeA);
 	pSeriesA = parameters.getRawParameterValue (kParamSeriesA);
+	pDetailA = parameters.getRawParameterValue (kParamDetailA);
 	pInstabilityA    = parameters.getRawParameterValue (kParamInstabilityA);
 	pPanA    = parameters.getRawParameterValue (kParamPanA);
 	pFredA   = parameters.getRawParameterValue (kParamFredA);
@@ -709,6 +722,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pHpSlopeB = parameters.getRawParameterValue (kParamHpSlopeB);
 	pLpSlopeB = parameters.getRawParameterValue (kParamLpSlopeB);
 	pSeriesB = parameters.getRawParameterValue (kParamSeriesB);
+	pDetailB = parameters.getRawParameterValue (kParamDetailB);
 	pInstabilityB    = parameters.getRawParameterValue (kParamInstabilityB);
 	pPanB    = parameters.getRawParameterValue (kParamPanB);
 	pFredB   = parameters.getRawParameterValue (kParamFredB);
@@ -746,6 +760,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pHpSlopeC  = parameters.getRawParameterValue (kParamHpSlopeC);
 	pLpSlopeC  = parameters.getRawParameterValue (kParamLpSlopeC);
 	pSeriesC   = parameters.getRawParameterValue (kParamSeriesC);
+	pDetailC   = parameters.getRawParameterValue (kParamDetailC);
 	pInstabilityC      = parameters.getRawParameterValue (kParamInstabilityC);
 	pPanC      = parameters.getRawParameterValue (kParamPanC);
 	pFredC     = parameters.getRawParameterValue (kParamFredC);

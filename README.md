@@ -87,6 +87,10 @@ Model-dependent dynamics control:
 - **PEAK**: pre-clip transient shaving in `CLIPPER`
 - **DYN**: generic fallback label when no model-specific dynamics name applies
 
+#### Detail (0-100%)
+
+Per-loader detail control exposed for the upcoming model-specific detail stage. In this UI/state phase it is stored and automated, but intentionally not routed to DSP yet.
+
 #### Instability (0-100%)
 
 Analog-style tolerance / drift control. Adds deterministic per-instance spread, slow thermal movement, and very subtle smoothed micro-irregularity on gain/shape response without turning into obvious modulation.
