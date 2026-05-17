@@ -58,6 +58,43 @@ namespace
 		     + " Hz";
 	}
 
+	juce::String formatFilterPromptFrequency (float hz)
+	{
+		if (hz >= 1000.0f)
+			return juce::String (hz, 2);
+		if (hz >= 100.0f)
+			return juce::String (hz, 1);
+		return juce::String (hz, 2);
+	}
+
+	juce::String formatSatDelayMsNumberForUi (double ms)
+	{
+		const double safeMs = juce::jmax (0.0, ms);
+
+		if (safeMs >= 1000.0)
+			return juce::String (safeMs / 1000.0, 2);
+		if (safeMs >= 100.0)
+			return juce::String (safeMs, 1);
+		return juce::String (safeMs, 2);
+	}
+
+	juce::String formatSatDelayMsForUi (double ms)
+	{
+		const double safeMs = juce::jmax (0.0, ms);
+		return formatSatDelayMsNumberForUi (safeMs) + (safeMs >= 1000.0 ? " s" : " ms");
+	}
+
+	juce::String formatTimeMsForPromptValue (double ms)
+	{
+		const double safeMs = juce::jmax (0.0, ms);
+
+		if (safeMs >= 100.0)
+			return juce::String (safeMs, 1);
+		if (safeMs >= 1.0)
+			return juce::String (safeMs, 2);
+		return juce::String (safeMs, 3);
+	}
+
 	constexpr int satTypeModelToVisibleComboId (int modelIndex) noexcept
 	{
 		switch (modelIndex)
@@ -502,10 +539,10 @@ juce::String SATTRAudioProcessorEditor::BarSlider::getTextFromValue (double v)
 			return juce::String (static_cast<int> (std::round (v))) + "x";
 
 		case Type::Instability:
-			return juce::String (v * 100.0, 1) + "%";
+			return juce::String (juce::roundToInt (v * 100.0)) + "%";
 
 		case Type::Delay:
-			return juce::String (v, 3) + " ms";
+			return formatSatDelayMsForUi (v);
 
 		case Type::Pan:
 		{
@@ -521,7 +558,16 @@ juce::String SATTRAudioProcessorEditor::BarSlider::getTextFromValue (double v)
 		case Type::Pos:
 		case Type::Mix:
 		case Type::GlobalMix:
-			return juce::String (v * 100.0, 1) + "%";
+			return juce::String (juce::roundToInt (v * 100.0)) + "%";
+
+		case Type::SatDrive:
+		case Type::SatGirth:
+		case Type::SatMod:
+		case Type::SatSag:
+			return juce::String (juce::roundToInt (v * 100.0)) + "%";
+
+		case Type::SatBias:
+			return juce::String (juce::roundToInt (v * 100.0)) + "%";
 
 		default:
 			break;
@@ -610,12 +656,12 @@ void SATTRAudioProcessorEditor::FilterBarComponent::updateTooltipForTarget (Drag
 	if (target == HP)
 	{
 		const int hz = juce::roundToInt (hpFreq_);
-		setTooltip ("HP: " + juce::String (hz) + " Hz");
+		setTooltip ("HP " + juce::String (hz) + " Hz");
 	}
 	else if (target == LP)
 	{
 		const int hz = juce::roundToInt (lpFreq_);
-		setTooltip ("LP: " + juce::String (hz) + " Hz");
+		setTooltip ("LP " + juce::String (hz) + " Hz");
 	}
 	else
 	{
@@ -821,9 +867,11 @@ void SATTRAudioProcessorEditor::DualMixBarComponent::updateTooltipForTarget (Dra
 	const float dB = (level <= 0.0001f) ? -100.0f : 20.0f * std::log10 (level);
 	const juce::String label = (target == DRY) ? "DRY" : "WET";
 	if (dB <= -100.0f)
-		setTooltip (label + ": -INF dB");
+		setTooltip (label + " -INF dB");
+	else if (std::abs (dB) < 0.05f)
+		setTooltip (label + " 0.0 dB");
 	else
-		setTooltip (label + ": " + juce::String (dB, 1) + " dB");
+		setTooltip (label + " " + juce::String (dB, 1) + " dB");
 }
 
 void SATTRAudioProcessorEditor::DualMixBarComponent::updateFromProcessor()
@@ -1895,7 +1943,7 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 			g.drawText ("LIM", limArea, juce::Justification::centred);
 
 			const float limDb = (float) limThresholdSlider.getValue();
-			juce::String limTxt = (limDb <= -35.9f) ? "-36 dB" : juce::String (limDb, 1) + " dB";
+			juce::String limTxt = (limDb <= -35.9f) ? "-36.0 dB" : juce::String (limDb, 1) + " dB";
 			const auto valArea = juce::Rectangle<int> (limBounds.getRight() + 4, limBounds.getY(), 66, limBounds.getHeight());
 			g.drawText (limTxt, valArea, juce::Justification::centredLeft);
 		}
@@ -2837,10 +2885,19 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 		fmts[14].label = reactLabels[loader];
 
 		auto refs = getLoaderRefs (loader);
+		const bool loaderEnabled = refs.enableBtn.getToggleState();
+		const bool cleanModel = (getSelectedSatTypeModelIndex (refs.satType) == static_cast<int> (SatEngine::Model::Clean));
 		juce::Slider* loaderSliders[kNumCachedParams] = {
 			&refs.hp, &refs.lp, &refs.in, &refs.out, &refs.tilt, &refs.series,
 			&refs.pan, &refs.fred, &refs.pos, &refs.mix,
 			&refs.satDrive, &refs.satGirth, &refs.satMod, &refs.satBias, &refs.satSag, &refs.instability, &refs.delay
+		};
+
+		auto setLabelOnly = [] (CachedParamText& text, const char* label)
+		{
+			text.full = label;
+			text.short_ = label;
+			text.intOnly = label;
 		};
 
 		for (int p = 0; p < kNumCachedParams; ++p)
@@ -2901,11 +2958,18 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 					break;
 				}
 				case 8: // Delay ms (decimal)
-					ct.full    = juce::String (val, 3) + " ms " + fmt.label;
-					ct.short_  = juce::String (val, 3) + " ms";
-					ct.intOnly = juce::String (val, 3);
+				{
+					const auto timeText = formatSatDelayMsForUi (val);
+					ct.full    = timeText + " " + fmt.label;
+					ct.short_  = timeText;
+					ct.intOnly = formatSatDelayMsNumberForUi (val);
 					break;
+				}
 			}
+
+			const bool satParameterIrrelevant = cleanModel && (p == 5 || (p >= 10 && p <= 15));
+			if (! loaderEnabled || satParameterIrrelevant)
+				setLabelOnly (ct, fmt.label);
 		}
 	}
 
@@ -2918,7 +2982,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 		if (dB <= -100.0f)
 			cachedMixIntOnly = "-INF";
 		else if (std::abs (dB) < 0.05f)
-			cachedMixIntOnly = "0 dB";
+			cachedMixIntOnly = "0.0 dB";
 		else
 			cachedMixIntOnly = juce::String (dB, 1) + " dB";
 	}
@@ -2939,7 +3003,7 @@ juce::String SATTRAudioProcessorEditor::getMixText() const
 		const float level = isDry ? dualMixBar_.getDryLevel() : dualMixBar_.getWetLevel();
 		const float dB = (level <= 0.0001f) ? -100.0f : 20.0f * std::log10 (level);
 		if (dB <= -100.0f) return "-INF dB";
-		if (std::abs (dB) < 0.05f) return "0 dB";
+		if (std::abs (dB) < 0.05f) return "0.0 dB";
 		return juce::String (dB, 1) + " dB";
 	}
 	const int pct = juce::roundToInt (globalMixSlider.getValue() * 100.0);
@@ -2954,7 +3018,7 @@ juce::String SATTRAudioProcessorEditor::getMixTextShort() const
 		const float level = isDry ? dualMixBar_.getDryLevel() : dualMixBar_.getWetLevel();
 		const float dB = (level <= 0.0001f) ? -100.0f : 20.0f * std::log10 (level);
 		if (dB <= -100.0f) return "-INF";
-		if (std::abs (dB) < 0.05f) return "0 dB";
+		if (std::abs (dB) < 0.05f) return "0.0 dB";
 		return juce::String (dB, 1) + " dB";
 	}
 	const int pct = juce::roundToInt (globalMixSlider.getValue() * 100.0);
@@ -3136,6 +3200,9 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	const bool isSatPct   = (isSatDrive || isSatGirth || isSatMod || isSatSag);
 	const bool isSatBiPct = isSatBias;
 
+	if (isSeries)
+		return;
+
 	auto getSatPromptLabel = [this, &s, stype]() -> juce::String
 	{
 		int loaderIndex = -1;
@@ -3195,21 +3262,20 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	const juce::String satLabel = getSatPromptLabel();
 
 	if (isHpLp)             { suffix = " Hz";          suffixShort = " Hz"; }
-	else if (isIn)          { suffix = " dB INPUT";    suffixShort = " dB"; }
-	else if (isOut)         { suffix = " dB OUTPUT";   suffixShort = " dB"; }
+	else if (isIn)          { suffix = " dB INPUT";    suffixShort = " dB IN"; }
+	else if (isOut)         { suffix = " dB OUTPUT";   suffixShort = " dB OUT"; }
 	else if (isLimThresh)   { suffix = " dB LIM";      suffixShort = " dB LIM"; }
-	else if (isTilt)        { suffix = " dB TILT"; suffixShort = " dB"; }
-	else if (isSeries)      { suffix = "x SERIES";     suffixShort = "x"; }
-	else if (isInstability)         { suffix = " % INST";       suffixShort = " %"; }
+	else if (isTilt)        { suffix = " dB TILT";     suffixShort = " dB TILT"; }
+	else if (isInstability) { suffix = " % INST";      suffixShort = " % INST"; }
 	else if (isDelay)       { suffix = " ms";          suffixShort = " ms"; }
 	else if (isPan)         { suffix = " % PAN";       suffixShort = " %"; }
-	else if (isFred)        { suffix = " % ANGLE";    suffixShort = " %"; }
-	else if (isPos)         { suffix = " % DIST";     suffixShort = " %"; }
-	else if (isMix)         { suffix = " % MIX";       suffixShort = " %"; }
+	else if (isFred)        { suffix = " % ANGLE";     suffixShort = " % ANGLE"; }
+	else if (isPos)         { suffix = " % DIST";      suffixShort = " % DIST"; }
+	else if (isMix)         { suffix = " % MIX";       suffixShort = " % MIX"; }
 	else if (isSatPct || isSatBiPct)
 	{
 		suffix = " % " + satLabel;
-		suffixShort = " %";
+		suffixShort = suffix;
 	}
 
 	const juce::String suffixText      = suffix.trimStart();
@@ -3221,25 +3287,23 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	// -- Initial display value --
 	juce::String currentDisplay;
 	if (isHpLp)
-		currentDisplay = juce::String (s.getValue(), 3);
+		currentDisplay = formatFilterPromptFrequency ((float) s.getValue());
 	else if (isIn || isOut || isLimThresh)
 		currentDisplay = juce::String (s.getValue(), 1);
 	else if (isTilt)
-		currentDisplay = juce::String (s.getValue(), 2);
-	else if (isSeries)
-		currentDisplay = juce::String (static_cast<int> (std::round (s.getValue())));
+		currentDisplay = juce::String (s.getValue(), 1);
 	else if (isInstability)
-		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 1);
+		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 2);
 	else if (isDelay)
-		currentDisplay = juce::String (juce::jlimit (0.0, (double) SATTRAudioProcessor::kDelayMax, s.getValue()), 3);
+		currentDisplay = formatTimeMsForPromptValue (juce::jlimit (0.0, (double) SATTRAudioProcessor::kDelayMax, s.getValue()));
 	else if (isPan)
 		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 0);
 	else if (isSatBias)
-		currentDisplay = juce::String (juce::jlimit (-100.0, 100.0, s.getValue() * 100.0), 1);
+		currentDisplay = juce::String (juce::jlimit (-100.0, 100.0, s.getValue() * 100.0), 2);
 	else if (isSatPct)
-		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 1);
+		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 2);
 	else if (isFred || isPos || isMix)
-		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 1);
+		currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 2);
 	else
 		currentDisplay = s.getTextFromValue (s.getValue());
 
@@ -3274,15 +3338,14 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		else if (isIn)           worstCaseText = "-144.0";
 		else if (isOut)          worstCaseText = "-144.0";
 		else if (isLimThresh)    worstCaseText = "-36.0";
-		else if (isTilt)         worstCaseText = "-6.00";
-		else if (isSeries)       worstCaseText = "6";
-		else if (isInstability)          worstCaseText = "100.0";
+		else if (isTilt)         worstCaseText = "-6.0";
+		else if (isInstability)  worstCaseText = "100.00";
 		else if (isDelay)        worstCaseText = "5.000";
 		else if (isPan)          worstCaseText = "100";
-		else if (isSatBias)      worstCaseText = "-100.0";
-		else if (isSatPct)       worstCaseText = "100.0";
-		else if (isFred||isPos)  worstCaseText = "100.0";
-		else if (isMix)          worstCaseText = "100.0";
+		else if (isSatBias)      worstCaseText = "-100.00";
+		else if (isSatPct)       worstCaseText = "100.00";
+		else if (isFred||isPos)  worstCaseText = "100.00";
+		else if (isMix)          worstCaseText = "100.00";
 		else                     worstCaseText = "999.99";
 
 		const int maxInputTextW = juce::jmax (1, stringWidth (f, worstCaseText));
@@ -3354,7 +3417,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		if (isHpLp)
 		{
 			minVal = 20.0;   maxVal = 20000.0;
-			maxDecs = 0;     maxLen = 5;     // "20000"
+			maxDecs = 2;     maxLen = 8;     // "20000.00"
 		}
 		else if (isIn)
 		{
@@ -3377,17 +3440,12 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		else if (isTilt)
 		{
 			minVal = -6.0;   maxVal = 6.0;
-			maxDecs = 2;     maxLen = 5;     // "-6.00"
-		}
-		else if (isSeries)
-		{
-			minVal = 1.0;    maxVal = 6.0;
-			maxDecs = 0;     maxLen = 1;     // "6"
+			maxDecs = 1;     maxLen = 4;     // "-6.0"
 		}
 		else if (isInstability)
 		{
 			minVal = 0.0;    maxVal = 100.0;
-			maxDecs = 1;     maxLen = 5;     // "100.0"
+			maxDecs = 2;     maxLen = 6;     // "100.00"
 		}
 		else if (isDelay)
 		{
@@ -3403,17 +3461,17 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		else if (isFred || isPos || isMix)
 		{
 			minVal = 0.0;    maxVal = 100.0;
-			maxDecs = 1;     maxLen = 5;     // "100.0"
+			maxDecs = 2;     maxLen = 6;     // "100.00"
 		}
 		else if (isSatBias)
 		{
 			minVal = -100.0; maxVal = 100.0;
-			maxDecs = 1;     maxLen = 6;     // "-100.0"
+			maxDecs = 2;     maxLen = 7;     // "-100.00"
 		}
 		else if (isSatPct)
 		{
 			minVal = 0.0;    maxVal = 100.0;
-			maxDecs = 1;     maxLen = 5;     // "100.0"
+			maxDecs = 2;     maxLen = 6;     // "100.00"
 		}
 
 		te->setInputFilter (new NumericInputFilter (minVal, maxVal, maxLen, maxDecs), true);
@@ -3536,6 +3594,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 			                                  st == BarSlider::Type::SatDrive || st == BarSlider::Type::SatGirth ||
 			                                  st == BarSlider::Type::SatMod   || st == BarSlider::Type::SatBias  ||
 			                                  st == BarSlider::Type::SatSag   ||
+			                                  st == BarSlider::Type::Instability ||
 			                                  st == BarSlider::Type::GlobalMix);
 
 			if (needsPercentConvert)
@@ -3940,12 +3999,12 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	};
 
 	// HP section
-	aw->addTextEditor ("hpFreq", juce::String (juce::roundToInt (hpFreq)), juce::String());
+	aw->addTextEditor ("hpFreq", formatFilterPromptFrequency (hpFreq), juce::String());
 	auto* hpBar = new PromptBar (scheme, freqToNorm (hpFreq), freqToNorm (SATTRAudioProcessor::kFilterHpFreqDefault));
 	aw->addAndMakeVisible (hpBar);
 
 	// LP section
-	aw->addTextEditor ("lpFreq", juce::String (juce::roundToInt (lpFreq)), juce::String());
+	aw->addTextEditor ("lpFreq", formatFilterPromptFrequency (lpFreq), juce::String());
 	auto* lpBar = new PromptBar (scheme, freqToNorm (lpFreq), freqToNorm (SATTRAudioProcessor::kFilterLpFreqDefault));
 	aw->addAndMakeVisible (lpBar);
 
@@ -4016,8 +4075,8 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 
 		auto* hpTe = aw->getTextEditor ("hpFreq");
 		auto* lpTe = aw->getTextEditor ("lpFreq");
-		float hpF = hpTe ? juce::jlimit (20.0f, 20000.0f, (float) hpTe->getText().getIntValue()) : 20.0f;
-		float lpF = lpTe ? juce::jlimit (20.0f, 20000.0f, (float) lpTe->getText().getIntValue()) : 20000.0f;
+		float hpF = hpTe ? juce::jlimit (20.0f, 20000.0f, (float) hpTe->getText().getFloatValue()) : 20.0f;
+		float lpF = lpTe ? juce::jlimit (20.0f, 20000.0f, (float) lpTe->getText().getFloatValue()) : 20000.0f;
 		if (hpF > lpF) { const float mid = (hpF + lpF) * 0.5f; hpF = mid; lpF = mid; }
 		if (hpTe) setP (hpFreqIdStr, hpF);
 		if (lpTe) setP (lpFreqIdStr, lpF);
@@ -4090,7 +4149,7 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 
 		if (auto* te = aw->getTextEditor (editorId))
 		{
-			te->setText (juce::String (juce::roundToInt (normToFreq (v01))), juce::sendNotification);
+			te->setText (formatFilterPromptFrequency (normToFreq (v01)), juce::sendNotification);
 			te->selectAll();
 		}
 		*syncing = false;
@@ -4104,12 +4163,12 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	{
 		if (*syncing || te == nullptr || bar == nullptr) return;
 		*syncing = true;
-		float freq = juce::jlimit (20.0f, 20000.0f, (float) te->getText().getIntValue());
+		float freq = juce::jlimit (20.0f, 20000.0f, (float) te->getText().getFloatValue());
 		auto* otherTe = aw->getTextEditor (isHp ? "lpFreq" : "hpFreq");
-		const float otherFreq = otherTe ? juce::jlimit (20.0f, 20000.0f, (float) otherTe->getText().getIntValue()) : (isHp ? 20000.0f : 20.0f);
+		const float otherFreq = otherTe ? juce::jlimit (20.0f, 20000.0f, (float) otherTe->getText().getFloatValue()) : (isHp ? 20000.0f : 20.0f);
 		if (isHp) freq = juce::jmin (freq, otherFreq);
 		else      freq = juce::jmax (freq, otherFreq);
-		te->setText (juce::String (juce::roundToInt (freq)), juce::dontSendNotification);
+		te->setText (formatFilterPromptFrequency (freq), juce::dontSendNotification);
 		bar->value01 = freqToNorm (freq);
 		bar->repaint();
 		*syncing = false;
