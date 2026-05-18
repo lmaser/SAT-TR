@@ -627,6 +627,7 @@ private:
 			applyComboScheme (r.modeIn);
 			applyComboScheme (r.modeOut);
 			applyComboScheme (r.sumBus);
+			applyComboScheme (r.filterPos);
 			applyComboScheme (r.satType);
 			r.filterBar.setScheme (activeScheme);
 		}
