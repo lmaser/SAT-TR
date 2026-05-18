@@ -1,18 +1,19 @@
 # SAT-TR DETAIL DSP Plan
 
-Estado: DSP implementado en `Clipper`, `Diode`, `Transistor`, `Tape` y `Tube`; pendiente de tuning perceptivo final y README.
+Estado: DSP implementado en `Clipper`, `Diode`, `Transistor`, `Tape` y `Tube`; README actualizado; pendiente de tuning perceptivo final.
 
 ## Objetivo
 
 `DETAIL` debe actuar como un control de preservacion de detalle en saturacion/clipping:
 
 - `0%`: salida identica al estado actual del algoritmo.
-- `100%`: maxima preservacion de detalle en zonas que el saturador aplasta.
+- `50%`: maxima preservacion calibrada en zonas que el saturador aplasta.
+- `100%`: maxima preservacion calibrada mas enfasis de aire dentro de la sidechain.
 - No debe generar audio sin entrada.
 - No debe sustituir a `INSTABILITY`; `DETAIL` es un mecanismo dependiente de clipping/transitorios, no drift analogico.
 - Debe ejecutarse por loader y respetar series, oversampling, mono/stereo y `RAW`.
 
-La referencia conceptual mas cercana es Newfangled Saturate: su documentacion describe `DETAIL PRESERVATION` como un algoritmo que preserva detalle fino dentro de las secciones clippeadas, con `0%` como clipper normal y `100%` como preservacion completa. La tecnica de Au5 lo aproxima con una ruta de delta/foldback filtrada en agudos y usada para ducking/ring-mod sidechain.
+La referencia conceptual mas cercana es Newfangled Saturate: su documentacion describe `DETAIL PRESERVATION` como un algoritmo que preserva detalle fino dentro de las secciones clippeadas, con `0%` como clipper normal y `100%` como preservacion completa. En SAT-TR ese comportamiento calibrado queda cubierto de `0-50%`, y el tramo `50-100%` se reserva para revelar aire/textura. La tecnica de Au5 lo aproxima con una ruta de delta/foldback filtrada en agudos y usada para ducking/ring-mod sidechain.
 
 ## Referencias
 
@@ -94,28 +95,31 @@ SatEngine::processBlock (...,
                          ...);
 ```
 
-Orden elegido: `react`, `detail`, `instability`, porque en la UI `DETAIL` va antes de `INSTABILITY` y conceptualmente queda entre dinamica propia del modelo y variacion analogica.
+Orden elegido: `react`, `series`, `detail`, `instability` en la UI. `DETAIL`
+actua despues del stack interno de `SERIES`, asi que debe aparecer debajo de
+`SERIES` para reflejar el flujo real.
 
 ### 2. Estado DSP
 
-Anadir estado dentro de `SatEngine::State`, per-series y per-channel:
+Anadir estado dentro de `SatEngine::State`, post-series y per-channel:
 
 ```cpp
 struct DetailState
 {
-    float hp1 = 0.0f;
-    float hp2 = 0.0f;
+    float hpZ1 = 0.0f;
+    float hpZ2 = 0.0f;
     float env = 0.0f;
     float lastReduction = 0.0f;
 };
 
-DetailState detail[kMaxSeries][2];
+DetailState detail[2];
 ```
 
 Motivos:
 
 - Per-channel evita corrupcion L/R.
-- Per-series mantiene coherencia con la cadena interna del loader.
+- Post-series evita que pases posteriores de `SERIES` vuelvan a emborronar el
+  detalle ya preservado.
 - Estado pequeno, coste bajo.
 - Reset junto al resto de estados cuando cambia modelo.
 
@@ -150,29 +154,33 @@ slope = 12 dB/oct
 
 Implementacion:
 
-- Preferible: filtro TPT/SVF high-pass de 2o orden si queremos respuesta mas controlada.
-- Alternativa simple y barata: dos one-poles high-pass cascados.
+- Activo: biquad high-pass Butterworth de 2o orden (`Q = 0.7071`).
+- Es mas cercano al HP 12 dB/oct de un EQ nativo que dos one-poles cascados.
 - No usar filtro dinamico al principio; evita nuevas discontinuidades.
 
-Decision propuesta: empezar fijo a `2500 Hz`, 12 dB/oct, en dominio oversampled si OS esta activo.
+Decision activa: `2500 Hz`, 12 dB/oct, en dominio oversampled si OS esta activo.
 
 ### 5. Limitador interno del delta
 
 La ruta de delta no debe disparar picos ni convertir `DETAIL` en exciter agresivo.
 
 ```text
-detailDrive = detail^1.35
-deltaLimited = softLimit(hpDelta * detailGain)
+parallelClip = hardclip(stageInput, thresholdFromRawDrive)
+deltaLimited = limit(HP12(stageInput - parallelClip), ceiling)
 ```
 
-Mapeo inicial:
+Mapeo activo:
 
 ```text
-detailGain = 0.0 .. 1.5
-ceiling = 0.12 .. 0.35 relativo al core
+ceiling = 0.57
+preserveAmount = min(DETAIL * 2, 1)
+side = abs(deltaLimited) * preserveAmount
 ```
 
-El techo debe depender de `DETAIL`, no de `DRIVE` directamente. El detector ya depende de cuanto clippea la senal.
+El ceiling es literal y la intensidad de sidechain llega al 100% cuando
+`DETAIL` alcanza el 50%. A partir de ahi no se incrementa el duck para evitar
+perdidas de loudness o carve dinamico excesivo. El umbral del hardclip paralelo
+depende del `DRIVE` crudo suavizado, no del drive curvado por modelo.
 
 ### 6. Aplicacion al core: duck RMSC/Compactor
 
@@ -181,20 +189,46 @@ delta como audio. El delta HP actua como sidechain de amplitud y reduce la
 magnitud del core saturado:
 
 ```text
-side = abs(softLimit(HP12(clipDelta)))
-env  = attack rapido, release ~1 ms
-reduction = clamp(env * depth, 0, abs(core) * maxReduction)
+parallelClip = hardclip(stageInput, thresholdFromRawDrive)
+preserveAmount = min(DETAIL * 2, 1)
+side = abs(limit(HP12(stageInput - parallelClip), ceiling)) * preserveAmount
+env  = peak, attack ~0.05 ms, release 0 ms
+reduction = min(env, abs(core))
 out = sign(core) * (abs(core) - reduction)
 ```
 
 Motivos:
 
 - No hay audio ex nihilo: si `core` es cero, la salida sigue siendo cero.
-- Evita que `DETAIL` se convierta en exciter HF.
+- Evita que el tramo RMSC de `DETAIL` se convierta en exciter HF o generador aditivo.
 - Es mas fiel a la idea "sidechain amplitude subtractor" que una correccion firmada.
 - El release corto evita zipper/crackle sin convertirlo en compresion lenta.
 
-### 7. Relacion con RAW
+### 7. Tramo superior: enfasis de sidechain
+
+Para que `DETAIL` tenga un extremo creativo sin sobredimensionar el duck
+RMSC/Compactor ni subir el volumen del core, el tramo `50-100%` mantiene la
+preservacion al 100% y mezcla un high shelf amplio dentro de la sidechain
+filtrada:
+
+```text
+airAmount = smoothStep01((DETAIL - 0.5) * 2)
+sideSource = lerp(HP12(delta), Shelf12(HP12(delta)), airAmount)
+```
+
+Implementacion activa:
+
+- Shelf maximo fijo a `+18 dB` en la ruta de sidechain.
+- Frecuencia base `2000 Hz`.
+- Pendiente suave tipo high shelf/tilt, no EQ quirurgica.
+- Estado per-channel dentro de `DetailState`.
+- El shelf procesa el residual HP mientras `DETAIL` esta activo y se mezcla
+  solo por encima del 50%, antes del ceiling y del detector.
+
+Motivo: el tramo alto debe hacer que el detector reaccione mas a los agudos
+clippeados, no actuar como boost post-core.
+
+### 8. Relacion con RAW
 
 Recomendacion inicial:
 
@@ -203,7 +237,7 @@ Recomendacion inicial:
 
 Motivo: `RAW` debe mostrar el caracter crudo del modelo, y `DETAIL` es parte del modelo si el usuario lo activa. Si perceptualmente se vuelve confuso, se puede decidir que `RAW` ignore `DETAIL`, pero no seria mi primera opcion.
 
-### 8. Relacion con CLEAN
+### 9. Relacion con CLEAN
 
 `Clean` debe seguir haciendo return temprano. `DETAIL` no debe actuar en `Clean`.
 
@@ -217,35 +251,36 @@ PluginProcessor::processLoader()
   -> filtros/chaos/pre si procede
   -> SatEngine::processBlock()
        -> smoothing parametros
-       -> series
-       -> pre-emphasis
-       -> react/sag
-       -> processFoo()
-       -> safety soft clip
-       -> girth
-       -> de-emphasis
-       -> DC blocker
-       -> trim/final limiter
+       -> series:
+          -> pre-emphasis
+          -> react/sag
+          -> processFoo()
+          -> safety soft clip
+          -> girth
+          -> de-emphasis
+          -> DC blocker
+          -> trim/final limiter
+       -> DETAIL post-series
   -> filtros/post/delay/limit/out
 ```
 
 Lugar recomendado:
 
 ```text
-Despues de processFoo()
-Antes de GIRTH
-Antes de de-emphasis
-Antes del DC blocker
+Despues de completar todos los pases de SERIES
+Antes de volver a la ruta loader-level de PluginProcessor
 ```
 
 Razon:
 
-- Usa el resultado real del core.
-- No mete detalle despues del DC blocker/final limiter.
-- Permite que de-emphasis y DC blocker limpien cualquier residuo.
+- Usa el resultado real del black box completo, no solo de un pase interno.
+- Evita que una etapa posterior de SERIES vuelva a aplastar el efecto.
+- Mantiene el mecanismo dentro de SatEngine, antes de filtros/delay/limit del loader.
 - Evita alterar las etapas loader-level fuera del scope.
 
-Para modelos con tap claro (`Clipper`, `Diode`, `Transistor`), se puede calcular el delta dentro de `processFoo()` y devolver metadatos. Si queremos evitar cambiar demasiadas firmas, primera implementacion puede usar un helper post-core con `xBeforeCore` y `xAfterCore`, aunque esto es menos exacto.
+La ruta activa no usa taps parciales por modelo. El delta sale de una rama
+hardclip comun alimentada por la entrada del black box completo, y se aplica
+una sola vez al resultado final de `SERIES`.
 
 ## Fases de implementacion
 
@@ -304,12 +339,13 @@ Criterio: `Tube SAG` sigue siendo el fenomeno dominante; `DETAIL` solo recupera 
 - Ajustar profundidad de reduccion y release del duck.
 - Actualizar README solo cuando el DSP este activo y validado.
 
-Estado parcial: el helper comun ya usa reduccion de magnitud RMSC-like con release perceptivo corto; el detector usa tau ~0.33 ms, aprox 1 ms hasta 95% de recuperacion. Esto reemplaza la primera prueba de correccion firmada, que era menos fiel a Compactor/RMSC y podia sentirse demasiado sutil o ambiguamente aditiva.
+Estado parcial: el helper comun ya usa reduccion de magnitud RMSC-like con detector peak rapido. La sidechain usa un ceiling literal, no saturacion `tanh`, y el detector se calibra cerca del ajuste del video: ataque ~0.05 ms y release/correccion instantaneos. La ley de duck es sidechain-ring pura: `DETAIL` escala el sidechain hasta el 50% y la reduccion resta esa amplitud, sin makeup ni cap porcentual adicional. La sidechain no recibe ganancia extra antes del limitador: se calibra a 1x para evitar que `DETAIL` reduzca margen dinamico mas alla de la amplitud real del residual filtrado. El tramo 50-100% no boostea el core: mezcla un shelf de hasta +18 dB en la sidechain antes del ceiling.
 
 ## Pruebas obligatorias
 
 - `DETAIL 0%`: null test contra version anterior.
-- `DETAIL 100%`: no overs peligrosos antes/despues del limiter.
+- `DETAIL 50%`: equivalente al motor de preservacion completo.
+- `DETAIL 100%`: no overs peligrosos antes/despues del limiter; sidechain shelf perceptible pero estable.
 - Entrada silencio: salida silencio.
 - Mono/stereo: sin phasing ni diferencias no deseadas.
 - Series `1..4`: determinismo y sin acumulacion explosiva.
@@ -331,11 +367,23 @@ Estado parcial: el helper comun ya usa reduccion de magnitud RMSC-like con relea
 Implementar `DETAIL` como "high-passed clipped-residual preservation":
 
 ```text
-detailSignal = HP12(clipDelta)
-detailSignal = softLimit(detailSignal)
-side = abs(detailSignal)
-reduction = clamp(sideEnvelope * depth, 0, abs(core) * maxReduction)
+parallelClip = hardclip(stageInput, thresholdFromRawDrive)
+detailSignal = HP12(stageInput - parallelClip)
+detailSignal = limit(detailSignal, ceiling)
+preserveAmount = min(DETAIL * 2, 1)
+side = abs(detailSignal) * preserveAmount
+reduction = min(sideEnvelope, abs(core))
 out = sign(core) * (abs(core) - reduction)
 ```
 
-Conservador, sample-accurate, dependiente de clipping real, sin audio ex nihilo, y con `DETAIL 0%` como bypass exacto.
+La ruta activa usa un delta comun por etapa para todos los modelos: una rama
+hardclip paralela genera `stageInput - parallelClip`, y ese residual alimenta
+la sidechain. El threshold de esa rama depende del `DRIVE` crudo suavizado, no
+del drive curvado por modelo, para que `DETAIL` sea comun entre algoritmos. Esto
+evita que `DETAIL` dependa de residuales internos parciales o escalados por
+algoritmo (`Tube`, `Tape`, etc.). Conservador, sample-accurate, dependiente de
+clipping real, sin audio ex nihilo, y con `DETAIL 0%` como bypass exacto.
+
+Revision activa: `DETAIL` ahora usa rango doble. De 0 a 50% recorre el motor
+RMSC completo; de 50 a 100% mantiene esa preservacion al maximo y mezcla un
+shelf en la sidechain hasta +18 dB antes del ceiling.

@@ -87,17 +87,25 @@ Model-dependent dynamics control:
 - **PEAK**: pre-clip transient shaving in `CLIPPER`
 - **DYN**: generic fallback label when no model-specific dynamics name applies
 
+#### SERIES (1-4)
+
+Number of cascaded saturation passes for the active loader. Each pass runs the model again through its own series state for denser stacking.
+
 #### Detail (0-100%)
 
-Per-loader detail control exposed for the upcoming model-specific detail stage. In this UI/state phase it is stored and automated, but intentionally not routed to DSP yet.
+Per-loader clipped-detail preservation. It derives a high-passed residual from
+a parallel hard-clip reference and uses it as a fast sidechain-ring style
+reduction path, helping fine high-frequency detail survive heavy saturation.
+`0%` is bypass. `50%` reaches the full calibrated preservation engine. From
+`50%` to `100%`, preservation stays capped and a broad +18 dB high shelf is
+applied inside the sidechain residual path, making the reducer react more to
+clipped-air texture without boosting the audio core directly. It is active in
+the saturation models after the internal `SERIES` stack and remains inactive in
+`CLEAN`.
 
 #### Instability (0-100%)
 
 Analog-style tolerance / drift control. Adds deterministic per-instance spread, slow thermal movement, and very subtle smoothed micro-irregularity on gain/shape response without turning into obvious modulation.
-
-#### SERIES (1-4)
-
-Number of cascaded saturation passes for the active loader. Each pass runs the model again through its own series state for denser stacking.
 
 #### RAW
 
@@ -266,6 +274,7 @@ Practical note:
 - **Series Processing**: up to 4 internal passes per loader.
 - **Dynamics**: model-specific dynamics blocks rather than one universal behavior (`SAG`, `COMP`, `PEAK` depend on algorithm).
 - **Tube SAG**: reactive supply/sag behavior with short strike tracking plus longer bloom memory for time-dependent recovery.
+- **Detail**: high-passed clipped-residual sidechain path for detail-preserving saturation, with extra sidechain air emphasis above 50%, shared by the saturation models.
 - **Instability**: deterministic spread plus slow drift, with subtle smoothed micro-irregularity on gain/shape response at higher settings.
 - **Oversampling**: global `x1` to `x16`, with latency reported to the host.
 - **Filters**: per-loader HP/LP plus tilt filtering with pre/post routing options.
@@ -292,6 +301,7 @@ Practical note:
 ### v1.4
 
 - Refined model-specific dynamics, including Tube SAG bloom/recovery and COMP behavior in compression-based models.
+- Added `DETAIL` clipped-detail preservation for the saturation models.
 - Refined `Instability` behavior with deterministic analog spread, slow drift, and subtle smoothed gain/shape micro-irregularity.
 - Added/maintained consistent -INF to +24 dB gain fader behavior with 0 dB centered.
 - Optimized global/per-loader dry-wet mix paths and stable delay processing without changing the intended audio behavior.

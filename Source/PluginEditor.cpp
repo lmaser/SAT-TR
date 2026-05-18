@@ -2401,7 +2401,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	}
 	else
 	{
-		// -- Collapsed main view: SatType combo + sat sliders + DTL + SERIES + INST + delay --
+		// -- Collapsed main view: SatType combo + sat sliders + SERIES + DTL + INST + delay --
 
 		// SatType combo (same height as sliders) + RAW checkbox
 		auto& satTypeCmb = pick (satTypeComboA, satTypeComboB, satTypeComboC);
@@ -2449,13 +2449,13 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		detail.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
-		detail.setVisible (true);
+		series.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
+		series.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
-		series.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
-		series.setVisible (true);
+		detail.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
+		detail.setVisible (true);
 		contentArea.removeFromTop (gap);
 
 		sliderRow = contentArea.removeFromTop (sliderH);
@@ -2539,7 +2539,7 @@ void SATTRAudioProcessorEditor::updateSatControlsEnabledState (int loaderIndex)
 	const float satAlpha = satInteractive ? 1.0f : 0.35f;
 
 	juce::Component* satControls[] = {
-		&r.satDrive, &r.satGirth, &r.satMod, &r.satBias, &r.satSag, &r.detail, &r.series, &r.instability, &r.raw
+		&r.satDrive, &r.satGirth, &r.satMod, &r.satBias, &r.satSag, &r.series, &r.detail, &r.instability, &r.raw
 	};
 
 	for (auto* c : satControls)
