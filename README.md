@@ -105,7 +105,7 @@ the saturation models after the internal `SERIES` stack and remains inactive in
 
 #### Instability (0-100%)
 
-Analog-style tolerance / drift control. Adds deterministic per-instance spread, slow thermal movement, and very subtle smoothed micro-irregularity on gain/shape response without turning into obvious modulation.
+Analog-style tolerance / drift control. Adds deterministic per-instance spread, slow thermal movement, and smoothed micro-irregularity on gain, bias, shape, and channel asymmetry. Lower settings stay subtle; higher settings increase the instability ceiling for a more clearly unstable analog unit without turning into tempo-style modulation.
 
 #### RAW
 
@@ -275,7 +275,7 @@ Practical note:
 - **Dynamics**: model-specific dynamics blocks rather than one universal behavior (`SAG`, `COMP`, `PEAK` depend on algorithm).
 - **Tube SAG**: reactive supply/sag behavior with short strike tracking plus longer bloom memory for time-dependent recovery.
 - **Detail**: high-passed clipped-residual sidechain path for detail-preserving saturation, with extra sidechain air emphasis above 50%, shared by the saturation models.
-- **Instability**: deterministic spread plus slow drift, with subtle smoothed micro-irregularity on gain/shape response at higher settings.
+- **Instability**: deterministic component spread plus slow drift, with smoothed gain/bias/shape/asymmetry micro-irregularity and a stronger calibrated ceiling at high settings.
 - **Oversampling**: global `x1` to `x16`, with latency reported to the host.
 - **Filters**: per-loader HP/LP plus tilt filtering with pre/post routing options.
 - **Alignment**: synthetic probe analysis used to estimate per-loader compensation delay and invert state.
@@ -302,7 +302,7 @@ Practical note:
 
 - Refined model-specific dynamics, including Tube SAG bloom/recovery and COMP behavior in compression-based models.
 - Added `DETAIL` clipped-detail preservation for the saturation models.
-- Refined `Instability` behavior with deterministic analog spread, slow drift, and subtle smoothed gain/shape micro-irregularity.
+- Refined `Instability` behavior with deterministic analog spread, slow drift, smoothed gain/bias/shape/asymmetry micro-irregularity, and a stronger calibrated high-range ceiling.
 - Added/maintained consistent -INF to +24 dB gain fader behavior with 0 dB centered.
 - Optimized global/per-loader dry-wet mix paths and stable delay processing without changing the intended audio behavior.
 - Optimized Tube bloom memory updates for lower CPU during SAG-heavy use.

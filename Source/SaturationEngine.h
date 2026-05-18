@@ -3410,11 +3410,13 @@ inline void processBlock (State& state,
             // and much smaller than the fixed component tolerance.
             state.instability.gainSH.advance  (rate * 2.10f, 1.0f, sampleRate);
             state.instability.shapeSH.advance (rate * 2.80f, 1.0f, sampleRate);
+            constexpr float kInstabilityShOnset = 0.15f;
+            constexpr float kInstabilityShMaxWeight = 0.10f;
             const float shTarget = detail::smoothStep01 (
-                detail::clampF ((instabilityAmount - 0.20f) / 0.80f, 0.0f, 1.0f));
+                detail::clampF ((instabilityAmount - kInstabilityShOnset) / (1.0f - kInstabilityShOnset), 0.0f, 1.0f));
             state.instability.shMix += (shTarget - state.instability.shMix)
                                    * detail::onePoleCoeff (5.0f, sampleRate);
-            const float shWeight = state.instability.shMix * 0.08f;
+            const float shWeight = state.instability.shMix * kInstabilityShMaxWeight;
             const float oscWeight = 1.0f - shWeight;
             const float gainDynamic  = state.instability.gainDrift.dynamic  * oscWeight
                                      + state.instability.gainSH.output      * shWeight;
@@ -3422,10 +3424,16 @@ inline void processBlock (State& state,
             const float shapeDynamic = state.instability.shapeDrift.dynamic * oscWeight
                                      + state.instability.shapeSH.output     * shWeight;
             const float asymDynamic  = state.instability.asymDrift.dynamic;
-            const float gainInstability  = (state.instability.gainDrift.staticTol  * 0.70f + gainDynamic  * 0.30f) * instabilityAmount;
-            const float biasInstability  = (state.instability.biasDrift.staticTol  * 0.70f + biasDynamic  * 0.30f) * instabilityAmount;
-            const float shapeInstability = (state.instability.shapeDrift.staticTol * 0.70f + shapeDynamic * 0.30f) * instabilityAmount;
-            const float asymInstability  = (state.instability.asymDrift.staticTol  * 0.70f + asymDynamic  * 0.30f) * instabilityAmount;
+            constexpr float kInstabilityDynamicBase = 0.30f;
+            constexpr float kInstabilityDynamicLift = 0.12f;
+            const float dynamicBlend = detail::smoothStep01 (
+                detail::clampF ((instabilityAmount - 0.15f) / 0.85f, 0.0f, 1.0f));
+            const float dynamicWeight = kInstabilityDynamicBase + kInstabilityDynamicLift * dynamicBlend;
+            const float staticWeight = 1.0f - dynamicWeight;
+            const float gainInstability  = (state.instability.gainDrift.staticTol  * staticWeight + gainDynamic  * dynamicWeight) * instabilityAmount;
+            const float biasInstability  = (state.instability.biasDrift.staticTol  * staticWeight + biasDynamic  * dynamicWeight) * instabilityAmount;
+            const float shapeInstability = (state.instability.shapeDrift.staticTol * staticWeight + shapeDynamic * dynamicWeight) * instabilityAmount;
+            const float asymInstability  = (state.instability.asymDrift.staticTol  * staticWeight + asymDynamic  * dynamicWeight) * instabilityAmount;
 
             const float wanderNorm = detail::smoothStep01 (
                 detail::clampF ((instabilityAmount - 0.70f) / 0.30f, 0.0f, 1.0f));
@@ -3437,13 +3445,17 @@ inline void processBlock (State& state,
                 state.instability.shapeWander.advance (wanderRate * 1.37f, wanderDepth, sampleRate);
             }
 
-            // Output already incorporates instability scaling (depth) -- no double-scaling
-            driveMod = 1.0f + gainInstability  * 0.08f;  // +/-8% gain (tube gm + resistor dividers)
-            biasMod  =        biasInstability  * 0.04f;  // +/-4% bias (cathode R + grid leak)
-            shapeMod =        shapeInstability * 0.02f;  // +/-2% shape (plate Rp instability)
-            asymMod  =        asymInstability  * 0.025f; // +/-2.5% L/R (matched pair mismatch)
-            driveMod += state.instability.driveWander.output * 0.015f;      // high-instability +/-1.5% drive wander
-            shapeMod += state.instability.shapeWander.output * 0.005f;      // high-instability +/-0.5% shape wander
+            const float ceilingScale = 1.0f + instabilityAmount;
+
+            // Output already incorporates instability scaling (depth) -- no double-scaling.
+            // Scale the whole range uniformly so INST remains subtle at low values
+            // but reaches a clearly unstable unit at 100%.
+            driveMod = 1.0f + gainInstability  * (0.08f  * ceilingScale); // +/-8..16% gain (tube gm + resistor dividers)
+            biasMod  =        biasInstability  * (0.04f  * ceilingScale); // +/-4..8% bias (cathode R + grid leak)
+            shapeMod =        shapeInstability * (0.02f  * ceilingScale); // +/-2..4% shape (plate Rp instability)
+            asymMod  =        asymInstability  * (0.025f * ceilingScale); // +/-2.5..5% L/R (matched pair mismatch)
+            driveMod += state.instability.driveWander.output * (0.015f * ceilingScale); // high-instability +/-1.5..3%
+            shapeMod += state.instability.shapeWander.output * (0.005f * ceilingScale); // high-instability +/-0.5..1%
         }
         else
         {
