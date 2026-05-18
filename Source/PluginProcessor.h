@@ -61,6 +61,9 @@ public:
 	static constexpr const char* kParamExpKneeA     = "exp_knee_a";
 	static constexpr const char* kParamExpAtkA      = "exp_atk_a";
 	static constexpr const char* kParamExpRelA      = "exp_rel_a";
+	static constexpr const char* kParamExpScHpA     = "exp_sc_hp_a";
+	static constexpr const char* kParamExpScLpA     = "exp_sc_lp_a";
+	static constexpr const char* kParamExpScGainA   = "exp_sc_gain_a";
 
 	// ----------------------------------------------------------------
 	//  Parameter IDs - Loader B
@@ -109,6 +112,9 @@ public:
 	static constexpr const char* kParamExpKneeB     = "exp_knee_b";
 	static constexpr const char* kParamExpAtkB      = "exp_atk_b";
 	static constexpr const char* kParamExpRelB      = "exp_rel_b";
+	static constexpr const char* kParamExpScHpB     = "exp_sc_hp_b";
+	static constexpr const char* kParamExpScLpB     = "exp_sc_lp_b";
+	static constexpr const char* kParamExpScGainB   = "exp_sc_gain_b";
 
 	// ----------------------------------------------------------------
 	//  Parameter IDs - Loader C
@@ -157,6 +163,9 @@ public:
 	static constexpr const char* kParamExpKneeC     = "exp_knee_c";
 	static constexpr const char* kParamExpAtkC      = "exp_atk_c";
 	static constexpr const char* kParamExpRelC      = "exp_rel_c";
+	static constexpr const char* kParamExpScHpC     = "exp_sc_hp_c";
+	static constexpr const char* kParamExpScLpC     = "exp_sc_lp_c";
+	static constexpr const char* kParamExpScGainC   = "exp_sc_gain_c";
 
 	// ----------------------------------------------------------------
 	//  Global Parameters
@@ -336,6 +345,13 @@ public:
 	static constexpr float kExpRelMin                = 5.0f;   // ms
 	static constexpr float kExpRelMax                = 2000.0f;// ms
 	static constexpr float kExpRelDefault            = 50.0f;  // ms
+	static constexpr float kExpScFreqMin             = kFilterFreqMin;
+	static constexpr float kExpScFreqMax             = kFilterFreqMax;
+	static constexpr float kExpScHpDefault           = kFilterFreqMin;
+	static constexpr float kExpScLpDefault           = kFilterFreqMax;
+	static constexpr float kExpScGainMin             = kGainFloorDb;
+	static constexpr float kExpScGainMax             = kGainMaxDb;
+	static constexpr float kExpScGainDefault         = kGainDefaultDb;
 
 	static constexpr float kFredMin                 = 0.0f;
 	static constexpr float kFredMax                 = 1.0f;
@@ -596,6 +612,22 @@ public:
 		// Expander envelope follower state (stereo-linked)
 		float expLinkedEnv = 0.0f;
 
+		struct ExpSidechainBiquadState
+		{
+			float z1[2] = { 0.0f, 0.0f };
+			float z2[2] = { 0.0f, 0.0f };
+
+			void reset() noexcept
+			{
+				z1[0] = z1[1] = 0.0f;
+				z2[0] = z2[1] = 0.0f;
+			}
+		};
+
+		ExpSidechainBiquadState expScHpState;
+		ExpSidechainBiquadState expScLpState;
+		float expScLastGain = 1.0f;
+
 		// Delay line for phase alignment (max ~0.5s)
 		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> delayLine { 96000 };
 		juce::SmoothedValue<float> smoothedDelay { 0.0f };
@@ -762,6 +794,9 @@ private:
 	std::atomic<float>* pExpKneeA   = nullptr;
 	std::atomic<float>* pExpAtkA    = nullptr;
 	std::atomic<float>* pExpRelA    = nullptr;
+	std::atomic<float>* pExpScHpA   = nullptr;
+	std::atomic<float>* pExpScLpA   = nullptr;
+	std::atomic<float>* pExpScGainA = nullptr;
 	std::atomic<float>* pExpB       = nullptr;
 	std::atomic<float>* pExpOrderB  = nullptr;
 	std::atomic<float>* pExpRatioB  = nullptr;
@@ -769,6 +804,9 @@ private:
 	std::atomic<float>* pExpKneeB   = nullptr;
 	std::atomic<float>* pExpAtkB    = nullptr;
 	std::atomic<float>* pExpRelB    = nullptr;
+	std::atomic<float>* pExpScHpB   = nullptr;
+	std::atomic<float>* pExpScLpB   = nullptr;
+	std::atomic<float>* pExpScGainB = nullptr;
 	std::atomic<float>* pExpC       = nullptr;
 	std::atomic<float>* pExpOrderC  = nullptr;
 	std::atomic<float>* pExpRatioC  = nullptr;
@@ -776,6 +814,9 @@ private:
 	std::atomic<float>* pExpKneeC   = nullptr;
 	std::atomic<float>* pExpAtkC    = nullptr;
 	std::atomic<float>* pExpRelC    = nullptr;
+	std::atomic<float>* pExpScHpC   = nullptr;
+	std::atomic<float>* pExpScLpC   = nullptr;
+	std::atomic<float>* pExpScGainC = nullptr;
 
 	// Oversampling (pre-allocated for all factors, per-loader)
 	// [loaderIdx][factorIdx] where factorIdx: 0=x2, 1=x4, 2=x8, 3=x16

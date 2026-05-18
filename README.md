@@ -161,6 +161,8 @@ Per-loader expander accessible from the `EXP` button. Parameters:
 - **KNEE** (`0.0` to `12.0 dB`): softens the transition around threshold; `0.0 dB` keeps the original hard-knee behavior
 - **ATK** (`0.00` to `100.00 ms`): envelope attack time
 - **REL** (`5.00` to `2000.00 ms`): envelope release time
+- **SIDECHAIN GAIN** (`-INF` to `+24.0 dB`): internal detector level trim; it only changes the expander detector signal, not the audio path
+- **SIDECHAIN HP/LP** (`20 Hz` to `20 kHz`): internal detector band-pass range for frequency-selective expansion
 
 ### Chaos
 
