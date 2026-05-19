@@ -44,6 +44,15 @@ private:
 	void openMixSendPrompt();
 	void applyLabelTextColour (juce::Label& label, juce::Colour colour);
 	void layoutLoaderSection (juce::Rectangle<int> area, int loaderIndex);
+	static int getCompactTargetWidthForLoaderCount (int loaderCount) noexcept;
+	static int getMaxVisibleLoaderCountForWidth (int width) noexcept;
+	void clearCompactRailAreas() noexcept;
+	void setVisibleLoaderCount (int loaderCount, bool requestResize);
+	void setFirstVisibleLoaderIndex (int loaderIndex);
+	void setFooterExpanded (bool shouldBeExpanded);
+	void hideLoaderSection (int loaderIndex);
+	void hideFooterControls();
+	void layoutFooterControls (juce::Rectangle<int> area);
 	void updateLoaderEnabledState (int loaderIndex);
 	void updateSatControlsEnabledState (int loaderIndex);
 	void syncSatTypeComboSelection (int loaderIndex);
@@ -548,6 +557,17 @@ private:
 	juce::Rectangle<int> cachedToggleBarAreaA_;
 	juce::Rectangle<int> cachedToggleBarAreaB_;
 	juce::Rectangle<int> cachedToggleBarAreaC_;
+
+	// Loader/footer compaction state. Phase 1 keeps this inert; later phases
+	// will use it to switch between 1/2/3 visible loaders and footer focus.
+	int visibleLoaderCount_ = 3;
+	int firstVisibleLoaderIndex_ = 0;
+	bool footerExpanded_ = false;
+	juce::Rectangle<int> cachedLeftLoaderRailArea_;
+	juce::Rectangle<int> cachedRightLoaderRailArea_;
+	juce::Rectangle<int> cachedFooterRailArea_;
+	juce::Rectangle<int> cachedFooterPanelArea_;
+	juce::Rectangle<int> cachedFooterTitleArea_;
 
 	// ══════════════════════════════════════════════════════════════
 	//  UI Components — Global
