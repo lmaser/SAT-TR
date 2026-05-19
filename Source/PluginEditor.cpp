@@ -2974,7 +2974,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 	ParamFmt fmts[kNumCachedParams] = {
 		{0,"HP"}, {0,"LP"}, {1,"IN"}, {1,"OUT"}, {5,"TILT"}, {7,"SERIES"},
 		{4,"PAN"}, {3,"ANGLE"}, {3,"DIST"}, {3,"MIX"},
-		{3,"DRIVE"}, {3,"GIRTH"}, {3,"MOD"}, {6,"BIAS"}, {3,"DYN"}, {3,"DETAIL","DTL"}, {3,"INST"}, {8,"DELAY"}
+		{3,"DRIVE"}, {3,"GIRTH"}, {3,"MOD"}, {6,"BIAS"}, {3,"DYN"}, {3,"DETAIL","DTL"}, {3,"INST"}, {8,"DELAY","DLY"}
 	};
 
 	for (int loader = 0; loader < 3; ++loader)
@@ -3064,7 +3064,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 				{
 					const auto timeText = formatSatDelayMsForUi (val);
 					ct.full    = timeText + " " + fmt.label;
-					ct.short_  = timeText;
+					ct.short_  = timeText + " " + (fmt.shortLabel != nullptr ? fmt.shortLabel : fmt.label);
 					ct.intOnly = formatSatDelayMsNumberForUi (val);
 					break;
 				}
@@ -3387,7 +3387,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	else if (isTilt)        { suffix = " dB TILT";     suffixShort = " dB TILT"; }
 	else if (isDetail)      { suffix = " % DETAIL";    suffixShort = " % DTL"; }
 	else if (isInstability) { suffix = " % INST";      suffixShort = " % INST"; }
-	else if (isDelay)       { suffix = " ms DELAY";    suffixShort = " ms DLY"; }
+	else if (isDelay)       { suffix = " ms";          suffixShort = " ms"; }
 	else if (isPan)         { suffix = " % PAN";       suffixShort = " % PAN"; }
 	else if (isFred)        { suffix = " % ANGLE";     suffixShort = " % ANGLE"; }
 	else if (isPos)         { suffix = " % DIST";      suffixShort = " % DIST"; }
