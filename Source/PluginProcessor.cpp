@@ -52,13 +52,39 @@ namespace
 		float a2 = 0.0f;
 	};
 
-	inline BiquadCoefficients makeDetectorHighPass (float frequency, float sampleRate) noexcept
+	inline BiquadCoefficients makeDetectorFirstOrderHighPass (float frequency, float sampleRate) noexcept
+	{
+		const float freq = juce::jlimit (20.0f, sampleRate * 0.45f, frequency);
+		const float k = std::tan (juce::MathConstants<float>::pi * freq / sampleRate);
+		const float norm = 1.0f / (1.0f + k);
+
+		BiquadCoefficients c;
+		c.b0 = norm;
+		c.b1 = -norm;
+		c.a1 = (k - 1.0f) * norm;
+		return c;
+	}
+
+	inline BiquadCoefficients makeDetectorFirstOrderLowPass (float frequency, float sampleRate) noexcept
+	{
+		const float freq = juce::jlimit (20.0f, sampleRate * 0.45f, frequency);
+		const float k = std::tan (juce::MathConstants<float>::pi * freq / sampleRate);
+		const float norm = 1.0f / (1.0f + k);
+
+		BiquadCoefficients c;
+		c.b0 = k * norm;
+		c.b1 = c.b0;
+		c.a1 = (k - 1.0f) * norm;
+		return c;
+	}
+
+	inline BiquadCoefficients makeDetectorHighPass (float frequency, float sampleRate, float q) noexcept
 	{
 		const float freq = juce::jlimit (20.0f, sampleRate * 0.45f, frequency);
 		const float omega = juce::MathConstants<float>::twoPi * freq / sampleRate;
 		const float sinOmega = std::sin (omega);
 		const float cosOmega = std::cos (omega);
-		const float alpha = sinOmega / (2.0f * SATTRAudioProcessor::kSqrt2Over2);
+		const float alpha = sinOmega / (2.0f * q);
 		const float invA0 = 1.0f / (1.0f + alpha);
 
 		BiquadCoefficients c;
@@ -70,13 +96,13 @@ namespace
 		return c;
 	}
 
-	inline BiquadCoefficients makeDetectorLowPass (float frequency, float sampleRate) noexcept
+	inline BiquadCoefficients makeDetectorLowPass (float frequency, float sampleRate, float q) noexcept
 	{
 		const float freq = juce::jlimit (20.0f, sampleRate * 0.45f, frequency);
 		const float omega = juce::MathConstants<float>::twoPi * freq / sampleRate;
 		const float sinOmega = std::sin (omega);
 		const float cosOmega = std::cos (omega);
-		const float alpha = sinOmega / (2.0f * SATTRAudioProcessor::kSqrt2Over2);
+		const float alpha = sinOmega / (2.0f * q);
 		const float invA0 = 1.0f / (1.0f + alpha);
 
 		BiquadCoefficients c;
@@ -86,6 +112,28 @@ namespace
 		c.a1 = (-2.0f * cosOmega) * invA0;
 		c.a2 = (1.0f - alpha) * invA0;
 		return c;
+	}
+
+	inline BiquadCoefficients makeDetectorHighPassForSlope (float frequency, float sampleRate, int slope, bool secondStage) noexcept
+	{
+		if (slope <= 0)
+			return secondStage ? BiquadCoefficients {} : makeDetectorFirstOrderHighPass (frequency, sampleRate);
+
+		const float q = (slope >= 2)
+		              ? (secondStage ? SATTRAudioProcessor::kBW4_Q2 : SATTRAudioProcessor::kBW4_Q1)
+		              : SATTRAudioProcessor::kSqrt2Over2;
+		return makeDetectorHighPass (frequency, sampleRate, q);
+	}
+
+	inline BiquadCoefficients makeDetectorLowPassForSlope (float frequency, float sampleRate, int slope, bool secondStage) noexcept
+	{
+		if (slope <= 0)
+			return secondStage ? BiquadCoefficients {} : makeDetectorFirstOrderLowPass (frequency, sampleRate);
+
+		const float q = (slope >= 2)
+		              ? (secondStage ? SATTRAudioProcessor::kBW4_Q2 : SATTRAudioProcessor::kBW4_Q1)
+		              : SATTRAudioProcessor::kSqrt2Over2;
+		return makeDetectorLowPass (frequency, sampleRate, q);
 	}
 
 	inline float processDetectorBiquad (float x,
@@ -355,6 +403,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScLpA, "Exp SC LP A",
 		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 1.0f, 0.3f), kExpScLpDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamExpScHpOnA, "Exp SC HP On A", kExpScHpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamExpScLpOnA, "Exp SC LP On A", kExpScLpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamExpScHpSlopeA, "Exp SC HP Slope A",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kExpScHpSlopeDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamExpScLpSlopeA, "Exp SC LP Slope A",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kExpScLpSlopeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScGainA, "Exp SC Gain A", makeGainFaderRange(), kExpScGainDefault));
 
@@ -495,6 +555,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScLpB, "Exp SC LP B",
 		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 1.0f, 0.3f), kExpScLpDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamExpScHpOnB, "Exp SC HP On B", kExpScHpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamExpScLpOnB, "Exp SC LP On B", kExpScLpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamExpScHpSlopeB, "Exp SC HP Slope B",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kExpScHpSlopeDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamExpScLpSlopeB, "Exp SC LP Slope B",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kExpScLpSlopeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScGainB, "Exp SC Gain B", makeGainFaderRange(), kExpScGainDefault));
 
@@ -635,6 +707,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScLpC, "Exp SC LP C",
 		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 1.0f, 0.3f), kExpScLpDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamExpScHpOnC, "Exp SC HP On C", kExpScHpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamExpScLpOnC, "Exp SC LP On C", kExpScLpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamExpScHpSlopeC, "Exp SC HP Slope C",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kExpScHpSlopeDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamExpScLpSlopeC, "Exp SC LP Slope C",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kExpScLpSlopeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScGainC, "Exp SC Gain C", makeGainFaderRange(), kExpScGainDefault));
 
@@ -906,6 +990,10 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pExpRelA    = parameters.getRawParameterValue (kParamExpRelA);
 	pExpScHpA   = parameters.getRawParameterValue (kParamExpScHpA);
 	pExpScLpA   = parameters.getRawParameterValue (kParamExpScLpA);
+	pExpScHpOnA = parameters.getRawParameterValue (kParamExpScHpOnA);
+	pExpScLpOnA = parameters.getRawParameterValue (kParamExpScLpOnA);
+	pExpScHpSlopeA = parameters.getRawParameterValue (kParamExpScHpSlopeA);
+	pExpScLpSlopeA = parameters.getRawParameterValue (kParamExpScLpSlopeA);
 	pExpScGainA = parameters.getRawParameterValue (kParamExpScGainA);
 	pExpB       = parameters.getRawParameterValue (kParamExpB);
 	pExpOrderB  = parameters.getRawParameterValue (kParamExpOrderB);
@@ -916,6 +1004,10 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pExpRelB    = parameters.getRawParameterValue (kParamExpRelB);
 	pExpScHpB   = parameters.getRawParameterValue (kParamExpScHpB);
 	pExpScLpB   = parameters.getRawParameterValue (kParamExpScLpB);
+	pExpScHpOnB = parameters.getRawParameterValue (kParamExpScHpOnB);
+	pExpScLpOnB = parameters.getRawParameterValue (kParamExpScLpOnB);
+	pExpScHpSlopeB = parameters.getRawParameterValue (kParamExpScHpSlopeB);
+	pExpScLpSlopeB = parameters.getRawParameterValue (kParamExpScLpSlopeB);
 	pExpScGainB = parameters.getRawParameterValue (kParamExpScGainB);
 	pExpC       = parameters.getRawParameterValue (kParamExpC);
 	pExpOrderC  = parameters.getRawParameterValue (kParamExpOrderC);
@@ -926,6 +1018,10 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pExpRelC    = parameters.getRawParameterValue (kParamExpRelC);
 	pExpScHpC   = parameters.getRawParameterValue (kParamExpScHpC);
 	pExpScLpC   = parameters.getRawParameterValue (kParamExpScLpC);
+	pExpScHpOnC = parameters.getRawParameterValue (kParamExpScHpOnC);
+	pExpScLpOnC = parameters.getRawParameterValue (kParamExpScLpOnC);
+	pExpScHpSlopeC = parameters.getRawParameterValue (kParamExpScHpSlopeC);
+	pExpScLpSlopeC = parameters.getRawParameterValue (kParamExpScLpSlopeC);
 	pExpScGainC = parameters.getRawParameterValue (kParamExpScGainC);
 
 	lastInputGain_ = gainFaderDecibelsToGain (loadRelaxed (pInput, 0.0f));
@@ -1033,7 +1129,9 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 		states[i]->chaosFilterAmtSmoothed = chaosFilterAmtPtrs[i]->load();
 		states[i]->chaosFilterSpdSmoothed = juce::jlimit (kChaosSpdMin, kChaosSpdMax, chaosFilterSpdPtrs[i]->load());
 		states[i]->expScHpState.reset();
+		states[i]->expScHpState2.reset();
 		states[i]->expScLpState.reset();
+		states[i]->expScLpState2.reset();
 		states[i]->expScLastGain = gainFaderDecibelsToGain (loadRelaxed (expScGainPtrs[i], kExpScGainDefault));
 		states[i]->satState.reset();
 	}
@@ -2181,6 +2279,12 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	const float expRelMs   = loadRelaxed     (pick (pExpRelA,    pExpRelB,    pExpRelC));
 	const float expScHpHz  = loadRelaxed     (pick (pExpScHpA,   pExpScHpB,   pExpScHpC),   kExpScHpDefault);
 	const float expScLpHz  = loadRelaxed     (pick (pExpScLpA,   pExpScLpB,   pExpScLpC),   kExpScLpDefault);
+	const bool  expScHpOn  = loadRelaxedBool (pick (pExpScHpOnA, pExpScHpOnB, pExpScHpOnC), kExpScHpOnDefault);
+	const bool  expScLpOn  = loadRelaxedBool (pick (pExpScLpOnA, pExpScLpOnB, pExpScLpOnC), kExpScLpOnDefault);
+	const int   expScHpSlope = juce::jlimit (kFilterSlopeMin, kFilterSlopeMax,
+	                                         loadRelaxedInt (pick (pExpScHpSlopeA, pExpScHpSlopeB, pExpScHpSlopeC), kExpScHpSlopeDefault));
+	const int   expScLpSlope = juce::jlimit (kFilterSlopeMin, kFilterSlopeMax,
+	                                         loadRelaxedInt (pick (pExpScLpSlopeA, pExpScLpSlopeB, pExpScLpSlopeC), kExpScLpSlopeDefault));
 	const float expScGainDb = loadRelaxed    (pick (pExpScGainA, pExpScGainB, pExpScGainC), kExpScGainDefault);
 	const auto model = static_cast<SatEngine::Model> (
 		juce::jlimit (0, (int) SatEngine::Model::NumModels - 1, satType));
@@ -2460,14 +2564,30 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 		if (detectorHpHz >= detectorLpHz)
 			detectorHpHz = juce::jmax (kExpScFreqMin, detectorLpHz * 0.95f);
 
-		const bool useDetectorHp = expScHpHz > kExpScHpDefault + 0.5f;
-		const bool useDetectorLp = expScLpHz < kExpScLpDefault - 0.5f;
-		const BiquadCoefficients detectorHp = useDetectorHp ? makeDetectorHighPass (detectorHpHz, sr) : BiquadCoefficients {};
-		const BiquadCoefficients detectorLp = useDetectorLp ? makeDetectorLowPass (detectorLpHz, sr) : BiquadCoefficients {};
+		const bool useDetectorHp = expScHpOn;
+		const bool useDetectorLp = expScLpOn;
+		const BiquadCoefficients detectorHp = useDetectorHp ? makeDetectorHighPassForSlope (detectorHpHz, sr, expScHpSlope, false) : BiquadCoefficients {};
+		const BiquadCoefficients detectorHp2 = (useDetectorHp && expScHpSlope >= 2) ? makeDetectorHighPassForSlope (detectorHpHz, sr, expScHpSlope, true) : BiquadCoefficients {};
+		const BiquadCoefficients detectorLp = useDetectorLp ? makeDetectorLowPassForSlope (detectorLpHz, sr, expScLpSlope, false) : BiquadCoefficients {};
+		const BiquadCoefficients detectorLp2 = (useDetectorLp && expScLpSlope >= 2) ? makeDetectorLowPassForSlope (detectorLpHz, sr, expScLpSlope, true) : BiquadCoefficients {};
 		if (!useDetectorHp)
+		{
 			state.expScHpState.reset();
+			state.expScHpState2.reset();
+		}
+		else if (expScHpSlope < 2)
+		{
+			state.expScHpState2.reset();
+		}
 		if (!useDetectorLp)
+		{
 			state.expScLpState.reset();
+			state.expScLpState2.reset();
+		}
+		else if (expScLpSlope < 2)
+		{
+			state.expScLpState2.reset();
+		}
 
 		const float detectorGainTarget = gainFaderDecibelsToGain (juce::jlimit (kExpScGainMin, kExpScGainMax, expScGainDb));
 		float detectorGain = state.expScLastGain;
@@ -2486,9 +2606,17 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			{
 				float detectorSample = channelData[ch][i];
 				if (useDetectorHp)
+				{
 					detectorSample = processDetectorBiquad (detectorSample, state.expScHpState, detectorHp, ch);
+					if (expScHpSlope >= 2)
+						detectorSample = processDetectorBiquad (detectorSample, state.expScHpState2, detectorHp2, ch);
+				}
 				if (useDetectorLp)
+				{
 					detectorSample = processDetectorBiquad (detectorSample, state.expScLpState, detectorLp, ch);
+					if (expScLpSlope >= 2)
+						detectorSample = processDetectorBiquad (detectorSample, state.expScLpState2, detectorLp2, ch);
+				}
 				peak = juce::jmax (peak, std::abs (detectorSample * detectorGain));
 			}
 			detectorGain += detectorGainStep;

@@ -105,6 +105,14 @@ namespace
 		return juce::String (safeMs, 3);
 	}
 
+	constexpr int kFooterMixValueWidthPx = 56;
+	constexpr int kFooterDbValueWidthPx = 66;
+
+	juce::Rectangle<int> makeFooterValueArea (const juce::Rectangle<int>& barBounds, int valueWidthPx)
+	{
+		return { barBounds.getRight() + 4, barBounds.getY(), valueWidthPx, barBounds.getHeight() };
+	}
+
 	constexpr int satTypeModelToVisibleComboId (int modelIndex) noexcept
 	{
 		switch (modelIndex)
@@ -167,15 +175,32 @@ namespace
 		return juce::String (expRatioInternalToDisplay (internalRatio), decimals);
 	}
 
+	juce::String filterSlopeToText (int slope)
+	{
+		if (slope <= 0) return "6dB";
+		if (slope == 1) return "12dB";
+		return "24dB";
+	}
+
+	juce::String formatExpScBandTooltip (const char* name, bool enabled, float hz, int slope)
+	{
+		return juce::String (name) + " "
+		     + (enabled ? (formatFrequencyWithUnitForPrompt (hz) + " " + filterSlopeToText (slope))
+		                : juce::String ("OFF"));
+	}
+
 	juce::String formatExpTooltip (bool post, float ratio, float thresholdDb,
-	                               float scHpHz, float scLpHz, float scGainDb)
+	                               float scHpHz, float scLpHz,
+	                               bool scHpOn, bool scLpOn,
+	                               int scHpSlope, int scLpSlope,
+	                               float scGainDb)
 	{
 		return juce::String (post ? "POST" : "PRE")
 		     + " | 1:" + formatExpRatioDisplay (ratio)
 		     + " | " + juce::String (thresholdDb, 1) + " dB"
-		     + " | SC " + formatFrequencyWithUnitForPrompt (scHpHz)
-		     + "-" + formatFrequencyWithUnitForPrompt (scLpHz)
-		     + " | " + formatGainFaderDb (scGainDb);
+		     + " | SC " + formatGainFaderDb (scGainDb)
+		     + " | " + formatExpScBandTooltip ("HP", scHpOn, scHpHz, scHpSlope)
+		     + " | " + formatExpScBandTooltip ("LP", scLpOn, scLpHz, scLpSlope);
 	}
 
 	struct PopupSwatchButton final : public juce::TextButton
@@ -1468,6 +1493,18 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 		const auto& scLpParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScLpA
 		                        : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScLpB
 		                                           : SATTRAudioProcessor::kParamExpScLpC;
+		const auto& scHpOnParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScHpOnA
+		                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScHpOnB
+		                                             : SATTRAudioProcessor::kParamExpScHpOnC;
+		const auto& scLpOnParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScLpOnA
+		                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScLpOnB
+		                                             : SATTRAudioProcessor::kParamExpScLpOnC;
+		const auto& scHpSlopeParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScHpSlopeA
+		                             : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScHpSlopeB
+		                                                : SATTRAudioProcessor::kParamExpScHpSlopeC;
+		const auto& scLpSlopeParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScLpSlopeA
+		                             : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScLpSlopeB
+		                                                : SATTRAudioProcessor::kParamExpScLpSlopeC;
 		const auto& scGainParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScGainA
 		                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScGainB
 		                                             : SATTRAudioProcessor::kParamExpScGainC;
@@ -1476,12 +1513,23 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 		const float savedThresh = audioProcessor.getValueTreeState().getRawParameterValue (threshParamId)->load();
 		const float savedScHp = audioProcessor.getValueTreeState().getRawParameterValue (scHpParamId)->load();
 		const float savedScLp = audioProcessor.getValueTreeState().getRawParameterValue (scLpParamId)->load();
+		const bool savedScHpOn = audioProcessor.getValueTreeState().getRawParameterValue (scHpOnParamId)->load() >= 0.5f;
+		const bool savedScLpOn = audioProcessor.getValueTreeState().getRawParameterValue (scLpOnParamId)->load() >= 0.5f;
+		const int savedScHpSlope = juce::jlimit (SATTRAudioProcessor::kFilterSlopeMin,
+		                                         SATTRAudioProcessor::kFilterSlopeMax,
+		                                         (int) std::lround (audioProcessor.getValueTreeState().getRawParameterValue (scHpSlopeParamId)->load()));
+		const int savedScLpSlope = juce::jlimit (SATTRAudioProcessor::kFilterSlopeMin,
+		                                         SATTRAudioProcessor::kFilterSlopeMax,
+		                                         (int) std::lround (audioProcessor.getValueTreeState().getRawParameterValue (scLpSlopeParamId)->load()));
 		const float savedScGain = audioProcessor.getValueTreeState().getRawParameterValue (scGainParamId)->load();
 		r.expDisp.setText ("", juce::dontSendNotification);
 		r.expDisp.setInterceptsMouseClicks (true, false);
 		r.expDisp.addMouseListener (this, false);
 		r.expDisp.setTooltip (formatExpTooltip (savedOrder, savedRatio, savedThresh,
-		                                        savedScHp, savedScLp, savedScGain));
+		                                        savedScHp, savedScLp,
+		                                        savedScHpOn, savedScLpOn,
+		                                        savedScHpSlope, savedScLpSlope,
+		                                        savedScGain));
 		r.expDisp.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
 		r.expDisp.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
 		r.expDisp.setOpaque (false);
@@ -1948,7 +1996,7 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 			g.drawText ("MIX", mixArea, juce::Justification::centred);
 
 			const int gMixPct = juce::roundToInt (globalMixSlider.getValue() * 100.0);
-			const auto valArea = juce::Rectangle<int> (mixBounds.getRight() + 4, mixBounds.getY(), 56, mixBounds.getHeight());
+			const auto valArea = makeFooterValueArea (mixBounds, kFooterMixValueWidthPx);
 			g.drawText (juce::String (gMixPct) + "%", valArea, juce::Justification::centredLeft);
 		}
 		else if (dualMixBar_.isVisible())
@@ -1957,7 +2005,7 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 			const auto mixArea = mixBounds.withHeight (16).translated (0, -18);
 			g.drawText ("MIX", mixArea, juce::Justification::centred);
 
-			const auto valArea = juce::Rectangle<int> (mixBounds.getRight() + 4, mixBounds.getY(), 56, mixBounds.getHeight());
+			const auto valArea = makeFooterValueArea (mixBounds, kFooterMixValueWidthPx);
 			g.drawText (cachedMixIntOnly, valArea, juce::Justification::centredLeft);
 		}
 
@@ -1970,7 +2018,7 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 
 			const float gOutDb = (float) globalOutputSlider.getValue();
 			juce::String outTxt = formatGainFaderDb (gOutDb);
-			const auto valArea = juce::Rectangle<int> (outBounds.getRight() + 4, outBounds.getY(), 66, outBounds.getHeight());
+			const auto valArea = makeFooterValueArea (outBounds, kFooterDbValueWidthPx);
 			g.drawText (outTxt, valArea, juce::Justification::centredLeft);
 		}
 
@@ -1983,7 +2031,7 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 
 			const float limDb = (float) limThresholdSlider.getValue();
 			juce::String limTxt = (limDb <= -35.9f) ? "-36.0 dB" : juce::String (limDb, 1) + " dB";
-			const auto valArea = juce::Rectangle<int> (limBounds.getRight() + 4, limBounds.getY(), 66, limBounds.getHeight());
+			const auto valArea = makeFooterValueArea (limBounds, kFooterDbValueWidthPx);
 			g.drawText (limTxt, valArea, juce::Justification::centredLeft);
 		}
 
@@ -2802,6 +2850,13 @@ void SATTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 	// Right-click on value area opens numeric entry popup
 	if (e.mods.isPopupMenu())
 	{
+		if (dualMixBar_.isVisible()
+			&& makeFooterValueArea (dualMixBar_.getBounds(), kFooterMixValueWidthPx).contains (p))
+		{
+			openMixSendPrompt();
+			return;
+		}
+
 		if (auto* slider = getSliderForValueAreaPoint (p))
 		{
 			openNumericEntryPopupForSlider (*slider);
@@ -3105,6 +3160,18 @@ juce::Slider* SATTRAudioProcessorEditor::getSliderForValueAreaPoint (juce::Point
 			return &r.mix;
 	}
 
+	if (globalMixSlider.isVisible()
+		&& makeFooterValueArea (globalMixSlider.getBounds(), kFooterMixValueWidthPx).contains (p))
+		return &globalMixSlider;
+
+	if (globalOutputSlider.isVisible()
+		&& makeFooterValueArea (globalOutputSlider.getBounds(), kFooterDbValueWidthPx).contains (p))
+		return &globalOutputSlider;
+
+	if (limThresholdSlider.isVisible()
+		&& makeFooterValueArea (limThresholdSlider.getBounds(), kFooterDbValueWidthPx).contains (p))
+		return &limThresholdSlider;
+
 	return nullptr;
 }
 
@@ -3228,7 +3295,9 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	auto* bar = dynamic_cast<BarSlider*> (&s);
 	const auto stype = bar ? bar->getType() : BarSlider::Type::Unknown;
 
-	const bool isHpLp  = (stype == BarSlider::Type::HpFreq || stype == BarSlider::Type::LpFreq);
+	const bool isHp    = (stype == BarSlider::Type::HpFreq);
+	const bool isLp    = (stype == BarSlider::Type::LpFreq);
+	const bool isHpLp  = (isHp || isLp);
 	const bool isIn    = (stype == BarSlider::Type::Input);
 	const bool isOut   = (stype == BarSlider::Type::Output || stype == BarSlider::Type::GlobalOutput);
 	const bool isLimThresh = (stype == BarSlider::Type::LimThreshold);
@@ -3310,15 +3379,16 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 
 	const juce::String satLabel = getSatPromptLabel();
 
-	if (isHpLp)             { suffix = " Hz";          suffixShort = " Hz"; }
+	if (isHp)               { suffix = " Hz HP";       suffixShort = " Hz HP"; }
+	else if (isLp)          { suffix = " Hz LP";       suffixShort = " Hz LP"; }
 	else if (isIn)          { suffix = " dB INPUT";    suffixShort = " dB IN"; }
 	else if (isOut)         { suffix = " dB OUTPUT";   suffixShort = " dB OUT"; }
 	else if (isLimThresh)   { suffix = " dB LIM";      suffixShort = " dB LIM"; }
 	else if (isTilt)        { suffix = " dB TILT";     suffixShort = " dB TILT"; }
 	else if (isDetail)      { suffix = " % DETAIL";    suffixShort = " % DTL"; }
 	else if (isInstability) { suffix = " % INST";      suffixShort = " % INST"; }
-	else if (isDelay)       { suffix = " ms";          suffixShort = " ms"; }
-	else if (isPan)         { suffix = " % PAN";       suffixShort = " %"; }
+	else if (isDelay)       { suffix = " ms DELAY";    suffixShort = " ms DLY"; }
+	else if (isPan)         { suffix = " % PAN";       suffixShort = " % PAN"; }
 	else if (isFred)        { suffix = " % ANGLE";     suffixShort = " % ANGLE"; }
 	else if (isPos)         { suffix = " % DIST";      suffixShort = " % DIST"; }
 	else if (isMix)         { suffix = " % MIX";       suffixShort = " % MIX"; }
@@ -4870,6 +4940,8 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	lnf.setScheme (activeScheme);
 	const auto scheme = activeScheme;
 
+	setPromptOverlayActive (true);
+
 	const auto& orderParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpOrderA
 	                         : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpOrderB
 	                                            : SATTRAudioProcessor::kParamExpOrderC;
@@ -4894,28 +4966,47 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	const auto& scLpParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScLpA
 	                        : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScLpB
 	                                           : SATTRAudioProcessor::kParamExpScLpC;
+	const auto& scHpOnParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScHpOnA
+	                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScHpOnB
+	                                             : SATTRAudioProcessor::kParamExpScHpOnC;
+	const auto& scLpOnParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScLpOnA
+	                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScLpOnB
+	                                             : SATTRAudioProcessor::kParamExpScLpOnC;
+	const auto& scHpSlopeParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScHpSlopeA
+	                             : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScHpSlopeB
+	                                                : SATTRAudioProcessor::kParamExpScHpSlopeC;
+	const auto& scLpSlopeParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScLpSlopeA
+	                             : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScLpSlopeB
+	                                                : SATTRAudioProcessor::kParamExpScLpSlopeC;
 	const auto& scGainParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScGainA
 	                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScGainB
 	                                             : SATTRAudioProcessor::kParamExpScGainC;
 
-	const bool  currentOrder  = audioProcessor.getValueTreeState().getRawParameterValue (orderParamId)->load() >= 0.5f;
-	const float currentRatio  = audioProcessor.getValueTreeState().getRawParameterValue (ratioParamId)->load();
+	const bool currentOrder = audioProcessor.getValueTreeState().getRawParameterValue (orderParamId)->load() >= 0.5f;
+	const float currentRatio = audioProcessor.getValueTreeState().getRawParameterValue (ratioParamId)->load();
 	const float currentThresh = audioProcessor.getValueTreeState().getRawParameterValue (threshParamId)->load();
-	const float currentKnee   = audioProcessor.getValueTreeState().getRawParameterValue (kneeParamId)->load();
-	const float currentAtk    = audioProcessor.getValueTreeState().getRawParameterValue (atkParamId)->load();
-	const float currentRel    = audioProcessor.getValueTreeState().getRawParameterValue (relParamId)->load();
-	const float currentScHp   = audioProcessor.getValueTreeState().getRawParameterValue (scHpParamId)->load();
-	const float currentScLp   = audioProcessor.getValueTreeState().getRawParameterValue (scLpParamId)->load();
+	const float currentKnee = audioProcessor.getValueTreeState().getRawParameterValue (kneeParamId)->load();
+	const float currentAtk = audioProcessor.getValueTreeState().getRawParameterValue (atkParamId)->load();
+	const float currentRel = audioProcessor.getValueTreeState().getRawParameterValue (relParamId)->load();
+	const float currentScHp = audioProcessor.getValueTreeState().getRawParameterValue (scHpParamId)->load();
+	const float currentScLp = audioProcessor.getValueTreeState().getRawParameterValue (scLpParamId)->load();
+	const bool currentScHpOn = audioProcessor.getValueTreeState().getRawParameterValue (scHpOnParamId)->load() >= 0.5f;
+	const bool currentScLpOn = audioProcessor.getValueTreeState().getRawParameterValue (scLpOnParamId)->load() >= 0.5f;
+	const int currentScHpSlope = juce::jlimit (SATTRAudioProcessor::kFilterSlopeMin,
+	                                           SATTRAudioProcessor::kFilterSlopeMax,
+	                                           (int) std::lround (audioProcessor.getValueTreeState().getRawParameterValue (scHpSlopeParamId)->load()));
+	const int currentScLpSlope = juce::jlimit (SATTRAudioProcessor::kFilterSlopeMin,
+	                                           SATTRAudioProcessor::kFilterSlopeMax,
+	                                           (int) std::lround (audioProcessor.getValueTreeState().getRawParameterValue (scLpSlopeParamId)->load()));
 	const float currentScGain = audioProcessor.getValueTreeState().getRawParameterValue (scGainParamId)->load();
 
 	auto* aw = new juce::AlertWindow ("", "", juce::AlertWindow::NoIcon);
 	aw->setLookAndFeel (&lnf);
 
-	// -- Inline bar component --
 	struct PromptBar : public juce::Component
 	{
 		TRScheme colours;
-		float value      = 0.5f;
+		float value = 0.5f;
 		float defaultVal = 0.5f;
 		std::function<void (float)> onValueChanged;
 
@@ -4958,96 +5049,6 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		}
 	};
 
-	struct PromptRangeBar : public juce::Component
-	{
-		TRScheme colours;
-		float lowValue     = 0.0f;
-		float highValue    = 1.0f;
-		float defaultLow   = 0.0f;
-		float defaultHigh  = 1.0f;
-		std::function<void (float)> onLowValueChanged;
-		std::function<void (float)> onHighValueChanged;
-
-		PromptRangeBar (const TRScheme& s, float low01, float high01, float defLow01, float defHigh01)
-			: colours (s),
-			  lowValue (juce::jlimit (0.0f, 1.0f, juce::jmin (low01, high01))),
-			  highValue (juce::jlimit (0.0f, 1.0f, juce::jmax (low01, high01))),
-			  defaultLow (defLow01),
-			  defaultHigh (defHigh01) {}
-
-		void paint (juce::Graphics& g) override
-		{
-			const auto r = getLocalBounds().toFloat();
-			g.setColour (colours.outline);
-			g.drawRect (r, 4.0f);
-			const float pad = 7.0f;
-			auto inner = r.reduced (pad);
-			g.setColour (colours.bg);
-			g.fillRect (inner);
-
-			const float lowX = inner.getX() + inner.getWidth() * lowValue;
-			const float highX = inner.getX() + inner.getWidth() * highValue;
-			g.setColour (colours.fg);
-			g.fillRect (juce::Rectangle<float> (lowX, inner.getY(), juce::jmax (1.0f, highX - lowX), inner.getHeight()));
-			g.setColour (colours.outline);
-			g.fillRect (juce::Rectangle<float> (lowX - 2.0f, inner.getY(), 4.0f, inner.getHeight()));
-			g.fillRect (juce::Rectangle<float> (highX - 2.0f, inner.getY(), 4.0f, inner.getHeight()));
-		}
-
-		void mouseDown (const juce::MouseEvent& e) override
-		{
-			const float v = mouseToValue (e);
-			dragHigh = std::abs (v - highValue) < std::abs (v - lowValue);
-			setDraggedValue (v);
-		}
-
-		void mouseDrag (const juce::MouseEvent& e) override { setDraggedValue (mouseToValue (e)); }
-		void mouseDoubleClick (const juce::MouseEvent&) override { setValues (defaultLow, defaultHigh); }
-
-		void setValues (float low01, float high01)
-		{
-			const float low = juce::jlimit (0.0f, 1.0f, juce::jmin (low01, high01));
-			const float high = juce::jlimit (0.0f, 1.0f, juce::jmax (low01, high01));
-			lowValue = low;
-			highValue = high;
-			repaint();
-			if (onLowValueChanged) onLowValueChanged (lowValue);
-			if (onHighValueChanged) onHighValueChanged (highValue);
-		}
-
-		void setLowValue (float low01)
-		{
-			lowValue = juce::jlimit (0.0f, highValue, low01);
-			repaint();
-			if (onLowValueChanged) onLowValueChanged (lowValue);
-		}
-
-		void setHighValue (float high01)
-		{
-			highValue = juce::jlimit (lowValue, 1.0f, high01);
-			repaint();
-			if (onHighValueChanged) onHighValueChanged (highValue);
-		}
-
-	private:
-		bool dragHigh = false;
-
-		float mouseToValue (const juce::MouseEvent& e) const
-		{
-			const float pad = 7.0f;
-			const float innerW = (float) getWidth() - pad * 2.0f;
-			return innerW > 0.0f ? juce::jlimit (0.0f, 1.0f, ((float) e.x - pad) / innerW) : 0.0f;
-		}
-
-		void setDraggedValue (float v01)
-		{
-			if (dragHigh)
-				setHighValue (v01);
-			else
-				setLowValue (v01);
-		}
-	};
-
 	struct ResetLabel : public juce::Label
 	{
 		PromptBar* pairedBar = nullptr;
@@ -5060,11 +5061,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	const auto& f = kBoldFont40();
 
-	// -- Scrollable body container --
 	auto* bodyContent = new juce::Component();
 	bodyContent->setComponentID ("expBody");
 
-	// -- "ORDER:" legend + PRE/POST clickable toggle --
 	auto* orderLegend = new juce::Label ("", "ORDER:");
 	orderLegend->setJustificationType (juce::Justification::centredRight);
 	applyLabelTextColour (*orderLegend, scheme.text);
@@ -5079,26 +5078,25 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	orderLabel->setInterceptsMouseClicks (true, false);
 	bodyContent->addAndMakeVisible (orderLabel);
 
-	// -- TextEditors (added to aw so getTextEditor works, but re-parented to body) --
 	aw->addTextEditor ("thresh", juce::String (currentThresh, 1), juce::String());
-	aw->addTextEditor ("ratio",  formatExpRatioDisplay (currentRatio), juce::String());
-	aw->addTextEditor ("knee",   juce::String (currentKnee, 1), juce::String());
-	aw->addTextEditor ("atk",    juce::String (currentAtk, 2), juce::String());
-	aw->addTextEditor ("rel",    juce::String (currentRel, 2), juce::String());
+	aw->addTextEditor ("ratio", formatExpRatioDisplay (currentRatio), juce::String());
+	aw->addTextEditor ("knee", juce::String (currentKnee, 1), juce::String());
+	aw->addTextEditor ("atk", juce::String (currentAtk, 2), juce::String());
+	aw->addTextEditor ("rel", juce::String (currentRel, 2), juce::String());
 	aw->addTextEditor ("scGain", juce::String (currentScGain, 1), juce::String());
+	aw->addTextEditor ("scHp", juce::String (currentScHp, 2), juce::String());
+	aw->addTextEditor ("scLp", juce::String (currentScLp, 2), juce::String());
 
-	// Re-parent text editors into body
-	for (auto* edId : { "thresh", "ratio", "knee", "atk", "rel", "scGain" })
+	for (auto* edId : { "thresh", "ratio", "knee", "atk", "rel", "scGain", "scHp", "scLp" })
 		if (auto* te = aw->getTextEditor (edId))
 			bodyContent->addChildComponent (te);
 
-	// Suffix/unit labels
-	ResetLabel* ratioSuffix  = nullptr;  juce::Label* ratioUnit  = nullptr;
-	ResetLabel* threshSuffix = nullptr;  juce::Label* threshUnit = nullptr;
-	ResetLabel* kneeSuffix   = nullptr;  juce::Label* kneeUnit   = nullptr;
-	ResetLabel* atkSuffix    = nullptr;  juce::Label* atkUnit    = nullptr;
-	ResetLabel* relSuffix    = nullptr;  juce::Label* relUnit    = nullptr;
-	ResetLabel* scGainSuffix = nullptr;  juce::Label* scGainUnit = nullptr;
+	ResetLabel* ratioSuffix = nullptr; juce::Label* ratioUnit = nullptr;
+	ResetLabel* threshSuffix = nullptr; juce::Label* threshUnit = nullptr;
+	ResetLabel* kneeSuffix = nullptr; juce::Label* kneeUnit = nullptr;
+	ResetLabel* atkSuffix = nullptr; juce::Label* atkUnit = nullptr;
+	ResetLabel* relSuffix = nullptr; juce::Label* relUnit = nullptr;
+	ResetLabel* scGainSuffix = nullptr; juce::Label* scGainUnit = nullptr;
 
 	auto setupField = [&] (const char* editorId, const juce::String& suffixText,
 	                       const juce::String& unitText,
@@ -5141,11 +5139,25 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	};
 
 	setupField ("thresh", "THRESH", "dB", threshSuffix, threshUnit);
-	setupField ("ratio",  "RATIO 1",  ":", ratioSuffix,  ratioUnit);
-	setupField ("knee",   "KNEE",   "dB", kneeSuffix,   kneeUnit);
-	setupField ("atk",    "ATK",    "ms", atkSuffix,    atkUnit);
-	setupField ("rel",    "REL",    "ms", relSuffix,    relUnit);
-	setupField ("scGain", "GAIN",   "dB", scGainSuffix, scGainUnit);
+	setupField ("ratio", "RATIO 1", ":", ratioSuffix, ratioUnit);
+	setupField ("knee", "KNEE", "dB", kneeSuffix, kneeUnit);
+	setupField ("atk", "ATK", "ms", atkSuffix, atkUnit);
+	setupField ("rel", "REL", "ms", relSuffix, relUnit);
+	setupField ("scGain", "GAIN", "dB", scGainSuffix, scGainUnit);
+
+	for (auto* editorId : { "scHp", "scLp" })
+	{
+		if (auto* te = aw->getTextEditor (editorId))
+		{
+			te->setFont (f);
+			te->applyFontToAllText (f);
+			te->setInputRestrictions (8, "0123456789.");
+			auto r = te->getBounds();
+			r.setHeight ((int) (f.getHeight() * kPromptEditorHeightScale) + kPromptEditorHeightPadPx);
+			te->setBounds (r);
+			te->setVisible (true);
+		}
+	}
 
 	auto* sidechainLabel = new juce::Label ("", "SIDECHAIN");
 	sidechainLabel->setJustificationType (juce::Justification::centred);
@@ -5154,19 +5166,50 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	sidechainLabel->setFont (f);
 	bodyContent->addAndMakeVisible (sidechainLabel);
 
-	auto* scRangeLabel = new juce::Label ("", "");
-	scRangeLabel->setJustificationType (juce::Justification::centred);
-	applyLabelTextColour (*scRangeLabel, scheme.text);
-	scRangeLabel->setBorderSize (juce::BorderSize<int> (0));
-	scRangeLabel->setFont (f);
-	bodyContent->addAndMakeVisible (scRangeLabel);
+	auto* scFilterLabel = new juce::Label ("", "FILTER");
+	scFilterLabel->setJustificationType (juce::Justification::centred);
+	applyLabelTextColour (*scFilterLabel, scheme.text);
+	scFilterLabel->setBorderSize (juce::BorderSize<int> (0));
+	scFilterLabel->setFont (f);
+	bodyContent->addAndMakeVisible (scFilterLabel);
 
-	// -- Bars --
+	auto* scHpToggle = new juce::ToggleButton ("");
+	scHpToggle->setToggleState (currentScHpOn, juce::dontSendNotification);
+	scHpToggle->setLookAndFeel (&lnf);
+	bodyContent->addAndMakeVisible (scHpToggle);
+
+	auto* scLpToggle = new juce::ToggleButton ("");
+	scLpToggle->setToggleState (currentScLpOn, juce::dontSendNotification);
+	scLpToggle->setLookAndFeel (&lnf);
+	bodyContent->addAndMakeVisible (scLpToggle);
+
+	auto makePromptLabel = [&] (const juce::String& text, juce::Justification justification)
+	{
+		auto* label = new juce::Label ("", text);
+		label->setJustificationType (justification);
+		applyLabelTextColour (*label, scheme.text);
+		label->setBorderSize (juce::BorderSize<int> (0));
+		label->setFont (f);
+		bodyContent->addAndMakeVisible (label);
+		return label;
+	};
+
+	auto* scHpNameLabel = makePromptLabel ("HP", juce::Justification::centredLeft);
+	auto* scLpNameLabel = makePromptLabel ("LP", juce::Justification::centredLeft);
+	auto* scHpUnitLabel = makePromptLabel ("Hz", juce::Justification::centredLeft);
+	auto* scLpUnitLabel = makePromptLabel ("Hz", juce::Justification::centredLeft);
+	auto* scHpSlopeLabel = makePromptLabel (filterSlopeToText (currentScHpSlope), juce::Justification::centredRight);
+	auto* scLpSlopeLabel = makePromptLabel (filterSlopeToText (currentScLpSlope), juce::Justification::centredRight);
+	scHpNameLabel->setInterceptsMouseClicks (true, false);
+	scLpNameLabel->setInterceptsMouseClicks (true, false);
+	scHpSlopeLabel->setInterceptsMouseClicks (true, false);
+	scLpSlopeLabel->setInterceptsMouseClicks (true, false);
+
 	const float threshNorm = (currentThresh - SATTRAudioProcessor::kExpThreshMin)
 	                       / (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin);
-	const float ratioNorm  = expRatioDisplayToNorm (currentRatio);
-	const float kneeNorm   = (currentKnee - SATTRAudioProcessor::kExpKneeMin)
-	                       / (SATTRAudioProcessor::kExpKneeMax - SATTRAudioProcessor::kExpKneeMin);
+	const float ratioNorm = expRatioDisplayToNorm (currentRatio);
+	const float kneeNorm = (currentKnee - SATTRAudioProcessor::kExpKneeMin)
+	                     / (SATTRAudioProcessor::kExpKneeMax - SATTRAudioProcessor::kExpKneeMin);
 
 	auto atkNormRange = juce::NormalisableRange<float> (SATTRAudioProcessor::kExpAtkMin, SATTRAudioProcessor::kExpAtkMax, 0.01f, 0.3f);
 	auto relNormRange = juce::NormalisableRange<float> (SATTRAudioProcessor::kExpRelMin, SATTRAudioProcessor::kExpRelMax, 0.01f, 0.3f);
@@ -5194,42 +5237,36 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	const float scHpNorm = freqToNorm (currentScHp);
 	const float scLpNorm = freqToNorm (currentScLp);
 	const float scGainNorm = scGainNormRange.convertTo0to1 (currentScGain);
+	auto scHpSlopeState = std::make_shared<int> (currentScHpSlope);
+	auto scLpSlopeState = std::make_shared<int> (currentScLpSlope);
 
 	auto* threshBar = new PromptBar (scheme, threshNorm, 1.0f);
-	auto* ratioBar  = new PromptBar (scheme, ratioNorm, expRatioDisplayToNorm (SATTRAudioProcessor::kExpRatioDefault));
-	auto* kneeBar   = new PromptBar (scheme, kneeNorm,   0.0f);
-	auto* atkBar    = new PromptBar (scheme, atkNorm, atkNormRange.convertTo0to1 (SATTRAudioProcessor::kExpAtkDefault));
-	auto* relBar    = new PromptBar (scheme, relNorm, relNormRange.convertTo0to1 (SATTRAudioProcessor::kExpRelDefault));
-	auto* scRangeBar = new PromptRangeBar (scheme, scHpNorm, scLpNorm,
-	                                       freqToNorm (SATTRAudioProcessor::kExpScHpDefault),
-	                                       freqToNorm (SATTRAudioProcessor::kExpScLpDefault));
+	auto* ratioBar = new PromptBar (scheme, ratioNorm, expRatioDisplayToNorm (SATTRAudioProcessor::kExpRatioDefault));
+	auto* kneeBar = new PromptBar (scheme, kneeNorm, 0.0f);
+	auto* atkBar = new PromptBar (scheme, atkNorm, atkNormRange.convertTo0to1 (SATTRAudioProcessor::kExpAtkDefault));
+	auto* relBar = new PromptBar (scheme, relNorm, relNormRange.convertTo0to1 (SATTRAudioProcessor::kExpRelDefault));
 	auto* scGainBar = new PromptBar (scheme, scGainNorm, scGainNormRange.convertTo0to1 (SATTRAudioProcessor::kExpScGainDefault));
-	auto updateScRangeLabel = [scRangeLabel, scRangeBar, normToFreq]()
-	{
-		scRangeLabel->setText ("HP " + formatFrequencyWithUnitForPrompt (normToFreq (scRangeBar->lowValue))
-		                     + " | LP " + formatFrequencyWithUnitForPrompt (normToFreq (scRangeBar->highValue)),
-		                       juce::dontSendNotification);
-	};
-	updateScRangeLabel();
+	auto* scHpBar = new PromptBar (scheme, scHpNorm, freqToNorm (SATTRAudioProcessor::kExpScHpDefault));
+	auto* scLpBar = new PromptBar (scheme, scLpNorm, freqToNorm (SATTRAudioProcessor::kExpScLpDefault));
 	bodyContent->addAndMakeVisible (threshBar);
 	bodyContent->addAndMakeVisible (ratioBar);
 	bodyContent->addAndMakeVisible (kneeBar);
 	bodyContent->addAndMakeVisible (atkBar);
 	bodyContent->addAndMakeVisible (relBar);
-	bodyContent->addAndMakeVisible (scRangeBar);
 	bodyContent->addAndMakeVisible (scGainBar);
+	bodyContent->addAndMakeVisible (scHpBar);
+	bodyContent->addAndMakeVisible (scLpBar);
 
 	if (threshSuffix != nullptr) threshSuffix->pairedBar = threshBar;
-	if (ratioSuffix  != nullptr) ratioSuffix->pairedBar  = ratioBar;
-	if (kneeSuffix   != nullptr) kneeSuffix->pairedBar   = kneeBar;
-	if (atkSuffix    != nullptr) atkSuffix->pairedBar    = atkBar;
-	if (relSuffix    != nullptr) relSuffix->pairedBar    = relBar;
+	if (ratioSuffix != nullptr) ratioSuffix->pairedBar = ratioBar;
+	if (kneeSuffix != nullptr) kneeSuffix->pairedBar = kneeBar;
+	if (atkSuffix != nullptr) atkSuffix->pairedBar = atkBar;
+	if (relSuffix != nullptr) relSuffix->pairedBar = relBar;
 	if (scGainSuffix != nullptr) scGainSuffix->pairedBar = scGainBar;
 
-	// -- Viewport wrapping the body --
 	auto* viewport = new juce::Viewport();
 	viewport->setComponentID ("expViewport");
-	viewport->setViewedComponent (bodyContent, true); // bodyContent owned by viewport
+	viewport->setViewedComponent (bodyContent, true);
 	viewport->setScrollBarsShown (true, false);
 	viewport->setScrollBarThickness (8);
 	viewport->setLookAndFeel (&lnf);
@@ -5247,12 +5284,14 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		int formatDecimals = 0;
 	};
 
-	const EnvPromptNumericSpec threshSpec { true,  2, 1, SATTRAudioProcessor::kExpThreshMin, SATTRAudioProcessor::kExpThreshMax, 1 };
-	const EnvPromptNumericSpec ratioSpec  { false, 2, 1, SATTRAudioProcessor::kExpRatioMin,  SATTRAudioProcessor::kExpRatioMax,  1 };
-	const EnvPromptNumericSpec kneeSpec   { false, 2, 1, SATTRAudioProcessor::kExpKneeMin,   SATTRAudioProcessor::kExpKneeMax,   1 };
-	const EnvPromptNumericSpec atkSpec    { false, 3, 2, SATTRAudioProcessor::kExpAtkMin,    SATTRAudioProcessor::kExpAtkMax,   2 };
-	const EnvPromptNumericSpec relSpec    { false, 4, 2, SATTRAudioProcessor::kExpRelMin,    SATTRAudioProcessor::kExpRelMax,   2 };
-	const EnvPromptNumericSpec scGainSpec { true,  3, 1, SATTRAudioProcessor::kExpScGainMin, SATTRAudioProcessor::kExpScGainMax, 1 };
+	const EnvPromptNumericSpec threshSpec { true, 2, 1, SATTRAudioProcessor::kExpThreshMin, SATTRAudioProcessor::kExpThreshMax, 1 };
+	const EnvPromptNumericSpec ratioSpec { false, 2, 1, SATTRAudioProcessor::kExpRatioMin, SATTRAudioProcessor::kExpRatioMax, 1 };
+	const EnvPromptNumericSpec kneeSpec { false, 2, 1, SATTRAudioProcessor::kExpKneeMin, SATTRAudioProcessor::kExpKneeMax, 1 };
+	const EnvPromptNumericSpec atkSpec { false, 3, 2, SATTRAudioProcessor::kExpAtkMin, SATTRAudioProcessor::kExpAtkMax, 2 };
+	const EnvPromptNumericSpec relSpec { false, 4, 2, SATTRAudioProcessor::kExpRelMin, SATTRAudioProcessor::kExpRelMax, 2 };
+	const EnvPromptNumericSpec scGainSpec { true, 3, 1, SATTRAudioProcessor::kExpScGainMin, SATTRAudioProcessor::kExpScGainMax, 1 };
+	const EnvPromptNumericSpec scHpSpec { false, 5, 2, SATTRAudioProcessor::kExpScFreqMin, SATTRAudioProcessor::kExpScFreqMax, 2 };
+	const EnvPromptNumericSpec scLpSpec { false, 5, 2, SATTRAudioProcessor::kExpScFreqMin, SATTRAudioProcessor::kExpScFreqMax, 2 };
 
 	auto sanitiseEnvPromptText = [] (juce::String text, const EnvPromptNumericSpec& spec,
 	                                 bool& incompleteOut) -> juce::String
@@ -5275,11 +5314,11 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 					fraction += ch;
 				}
 			}
-			else if (ch == '-' && spec.allowNegative && sign.isEmpty() && integer.isEmpty() && !sawDot && fraction.isEmpty())
+			else if (ch == '-' && spec.allowNegative && sign.isEmpty() && integer.isEmpty() && ! sawDot && fraction.isEmpty())
 			{
 				sign = "-";
 			}
-			else if (ch == '.' && !sawDot && spec.maxFractionDigits > 0)
+			else if (ch == '.' && ! sawDot && spec.maxFractionDigits > 0)
 			{
 				sawDot = true;
 			}
@@ -5319,16 +5358,19 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	};
 
 	auto* threshApvts = audioProcessor.getValueTreeState().getParameter (threshParamId);
-	auto* ratioApvts  = audioProcessor.getValueTreeState().getParameter (ratioParamId);
-	auto* kneeApvts   = audioProcessor.getValueTreeState().getParameter (kneeParamId);
-	auto* orderApvts  = audioProcessor.getValueTreeState().getParameter (orderParamId);
-	auto* atkApvts    = audioProcessor.getValueTreeState().getParameter (atkParamId);
-	auto* relApvts    = audioProcessor.getValueTreeState().getParameter (relParamId);
-	auto* scHpApvts   = audioProcessor.getValueTreeState().getParameter (scHpParamId);
-	auto* scLpApvts   = audioProcessor.getValueTreeState().getParameter (scLpParamId);
+	auto* ratioApvts = audioProcessor.getValueTreeState().getParameter (ratioParamId);
+	auto* kneeApvts = audioProcessor.getValueTreeState().getParameter (kneeParamId);
+	auto* orderApvts = audioProcessor.getValueTreeState().getParameter (orderParamId);
+	auto* atkApvts = audioProcessor.getValueTreeState().getParameter (atkParamId);
+	auto* relApvts = audioProcessor.getValueTreeState().getParameter (relParamId);
+	auto* scHpApvts = audioProcessor.getValueTreeState().getParameter (scHpParamId);
+	auto* scLpApvts = audioProcessor.getValueTreeState().getParameter (scLpParamId);
+	auto* scHpOnApvts = audioProcessor.getValueTreeState().getParameter (scHpOnParamId);
+	auto* scLpOnApvts = audioProcessor.getValueTreeState().getParameter (scLpOnParamId);
+	auto* scHpSlopeApvts = audioProcessor.getValueTreeState().getParameter (scHpSlopeParamId);
+	auto* scLpSlopeApvts = audioProcessor.getValueTreeState().getParameter (scLpSlopeParamId);
 	auto* scGainApvts = audioProcessor.getValueTreeState().getParameter (scGainParamId);
 
-	// -- Order toggle via click --
 	auto orderState = std::make_shared<bool> (currentOrder);
 	struct OrderClickHandler : public juce::MouseListener
 	{
@@ -5348,14 +5390,74 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	orderHandler->param = orderApvts;
 	orderLabel->addMouseListener (orderHandler, false);
 
-	// -- Bar -> text + APVTS --
+	struct ToggleLabelForwarder : public juce::MouseListener
+	{
+		juce::ToggleButton* toggle = nullptr;
+		void mouseDown (const juce::MouseEvent&) override
+		{
+			if (toggle != nullptr)
+			{
+				toggle->setToggleState (! toggle->getToggleState(), juce::dontSendNotification);
+				if (toggle->onClick)
+					toggle->onClick();
+			}
+		}
+	};
+
+	auto* scHpToggleHandler = new ToggleLabelForwarder();
+	scHpToggleHandler->toggle = scHpToggle;
+	scHpNameLabel->addMouseListener (scHpToggleHandler, false);
+
+	auto* scLpToggleHandler = new ToggleLabelForwarder();
+	scLpToggleHandler->toggle = scLpToggle;
+	scLpNameLabel->addMouseListener (scLpToggleHandler, false);
+
+	auto pushScToggle = [] (juce::RangedAudioParameter* param, bool enabled)
+	{
+		if (param != nullptr)
+			param->setValueNotifyingHost (enabled ? 1.0f : 0.0f);
+	};
+
+	scHpToggle->onClick = [scHpToggle, scHpOnApvts, pushScToggle] { pushScToggle (scHpOnApvts, scHpToggle->getToggleState()); };
+	scLpToggle->onClick = [scLpToggle, scLpOnApvts, pushScToggle] { pushScToggle (scLpOnApvts, scLpToggle->getToggleState()); };
+
+	struct SlopeClickHandler : public juce::MouseListener
+	{
+		std::shared_ptr<int> state;
+		juce::Label* label = nullptr;
+		juce::RangedAudioParameter* param = nullptr;
+		void mouseDown (const juce::MouseEvent&) override
+		{
+			*state = (*state + 1) % 3;
+			if (label != nullptr)
+				label->setText (filterSlopeToText (*state), juce::dontSendNotification);
+			if (param != nullptr)
+				param->setValueNotifyingHost (param->convertTo0to1 ((float) *state));
+		}
+	};
+
+	auto* scHpSlopeHandler = new SlopeClickHandler();
+	scHpSlopeHandler->state = scHpSlopeState;
+	scHpSlopeHandler->label = scHpSlopeLabel;
+	scHpSlopeHandler->param = scHpSlopeApvts;
+	scHpSlopeLabel->addMouseListener (scHpSlopeHandler, false);
+
+	auto* scLpSlopeHandler = new SlopeClickHandler();
+	scLpSlopeHandler->state = scLpSlopeState;
+	scLpSlopeHandler->label = scLpSlopeLabel;
+	scLpSlopeHandler->param = scLpSlopeApvts;
+	scLpSlopeLabel->addMouseListener (scLpSlopeHandler, false);
+
 	ratioBar->onValueChanged = [aw, syncing, ratioApvts] (float v01)
 	{
 		if (*syncing) return;
 		*syncing = true;
 		const float ratio = expRatioNormToDisplay (v01);
 		if (auto* te = aw->getTextEditor ("ratio"))
-		{ te->setText (formatExpRatioDisplay (ratio), juce::sendNotification); te->selectAll(); }
+		{
+			te->setText (formatExpRatioDisplay (ratio), juce::sendNotification);
+			te->selectAll();
+		}
 		if (ratioApvts) ratioApvts->setValueNotifyingHost (ratioApvts->convertTo0to1 (ratio));
 		*syncing = false;
 	};
@@ -5367,7 +5469,10 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		const float thresh = SATTRAudioProcessor::kExpThreshMin
 		                   + v01 * (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin);
 		if (auto* te = aw->getTextEditor ("thresh"))
-		{ te->setText (juce::String (thresh, 1), juce::sendNotification); te->selectAll(); }
+		{
+			te->setText (juce::String (thresh, 1), juce::sendNotification);
+			te->selectAll();
+		}
 		if (threshApvts) threshApvts->setValueNotifyingHost (threshApvts->convertTo0to1 (thresh));
 		*syncing = false;
 	};
@@ -5379,7 +5484,10 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		const float knee = SATTRAudioProcessor::kExpKneeMin
 		                 + v01 * (SATTRAudioProcessor::kExpKneeMax - SATTRAudioProcessor::kExpKneeMin);
 		if (auto* te = aw->getTextEditor ("knee"))
-		{ te->setText (juce::String (knee, 1), juce::sendNotification); te->selectAll(); }
+		{
+			te->setText (juce::String (knee, 1), juce::sendNotification);
+			te->selectAll();
+		}
 		if (kneeApvts) kneeApvts->setValueNotifyingHost (kneeApvts->convertTo0to1 (knee));
 		*syncing = false;
 	};
@@ -5390,7 +5498,10 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		*syncing = true;
 		const float val = atkNormRange.convertFrom0to1 (v01);
 		if (auto* te = aw->getTextEditor ("atk"))
-		{ te->setText (juce::String (val, 2), juce::sendNotification); te->selectAll(); }
+		{
+			te->setText (juce::String (val, 2), juce::sendNotification);
+			te->selectAll();
+		}
 		if (atkApvts) atkApvts->setValueNotifyingHost (atkApvts->convertTo0to1 (val));
 		*syncing = false;
 	};
@@ -5401,28 +5512,45 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		*syncing = true;
 		const float val = relNormRange.convertFrom0to1 (v01);
 		if (auto* te = aw->getTextEditor ("rel"))
-		{ te->setText (juce::String (val, 2), juce::sendNotification); te->selectAll(); }
+		{
+			te->setText (juce::String (val, 2), juce::sendNotification);
+			te->selectAll();
+		}
 		if (relApvts) relApvts->setValueNotifyingHost (relApvts->convertTo0to1 (val));
 		*syncing = false;
 	};
 
-	scRangeBar->onLowValueChanged = [syncing, scHpApvts, normToFreq, updateScRangeLabel] (float v01) mutable
+	scHpBar->onValueChanged = [aw, syncing, scHpApvts, normToFreq, scHpBar, scLpBar] (float v01) mutable
 	{
 		if (*syncing) return;
 		*syncing = true;
+		v01 = juce::jmin (v01, scLpBar->value);
+		scHpBar->value = v01;
+		scHpBar->repaint();
 		const float val = normToFreq (v01);
+		if (auto* te = aw->getTextEditor ("scHp"))
+		{
+			te->setText (juce::String (val, 2), juce::sendNotification);
+			te->selectAll();
+		}
 		if (scHpApvts) scHpApvts->setValueNotifyingHost (scHpApvts->convertTo0to1 (val));
-		updateScRangeLabel();
 		*syncing = false;
 	};
 
-	scRangeBar->onHighValueChanged = [syncing, scLpApvts, normToFreq, updateScRangeLabel] (float v01) mutable
+	scLpBar->onValueChanged = [aw, syncing, scLpApvts, normToFreq, scHpBar, scLpBar] (float v01) mutable
 	{
 		if (*syncing) return;
 		*syncing = true;
+		v01 = juce::jmax (v01, scHpBar->value);
+		scLpBar->value = v01;
+		scLpBar->repaint();
 		const float val = normToFreq (v01);
+		if (auto* te = aw->getTextEditor ("scLp"))
+		{
+			te->setText (juce::String (val, 2), juce::sendNotification);
+			te->selectAll();
+		}
 		if (scLpApvts) scLpApvts->setValueNotifyingHost (scLpApvts->convertTo0to1 (val));
-		updateScRangeLabel();
 		*syncing = false;
 	};
 
@@ -5432,43 +5560,48 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		*syncing = true;
 		const float val = scGainNormRange.convertFrom0to1 (v01);
 		if (auto* te = aw->getTextEditor ("scGain"))
-		{ te->setText (juce::String (val, 1), juce::sendNotification); te->selectAll(); }
+		{
+			te->setText (juce::String (val, 1), juce::sendNotification);
+			te->selectAll();
+		}
 		if (scGainApvts) scGainApvts->setValueNotifyingHost (scGainApvts->convertTo0to1 (val));
 		*syncing = false;
 	};
 
-	// -- Layout: positions body content inside viewport --
 	auto layoutBody = [aw, viewport, bodyContent,
 	                   orderLegend, orderLabel,
-	                   sidechainLabel, scRangeLabel,
+	                   sidechainLabel, scFilterLabel,
+	                   scHpToggle, scLpToggle,
+	                   scHpNameLabel, scLpNameLabel,
+	                   scHpUnitLabel, scLpUnitLabel,
+	                   scHpSlopeLabel, scLpSlopeLabel,
 	                   threshSuffix, ratioSuffix, kneeSuffix, atkSuffix, relSuffix, scGainSuffix,
 	                   threshUnit, ratioUnit, kneeUnit, atkUnit, relUnit, scGainUnit,
-	                   threshBar, ratioBar, kneeBar, atkBar, relBar, scRangeBar, scGainBar] ()
+	                   threshBar, ratioBar, kneeBar, atkBar, relBar, scGainBar, scHpBar, scLpBar] ()
 	{
 		auto* threshTe = aw->getTextEditor ("thresh");
-		auto* ratioTe  = aw->getTextEditor ("ratio");
-		auto* kneeTe   = aw->getTextEditor ("knee");
-		auto* atkTe    = aw->getTextEditor ("atk");
-		auto* relTe    = aw->getTextEditor ("rel");
+		auto* ratioTe = aw->getTextEditor ("ratio");
+		auto* kneeTe = aw->getTextEditor ("knee");
+		auto* atkTe = aw->getTextEditor ("atk");
+		auto* relTe = aw->getTextEditor ("rel");
 		auto* scGainTe = aw->getTextEditor ("scGain");
-		if (!threshTe || !ratioTe || !kneeTe || !atkTe || !relTe || !scGainTe) return;
+		auto* scHpTe = aw->getTextEditor ("scHp");
+		auto* scLpTe = aw->getTextEditor ("scLp");
+		if (! threshTe || ! ratioTe || ! kneeTe || ! atkTe || ! relTe || ! scGainTe || ! scHpTe || ! scLpTe) return;
 
-		// Position viewport between top padding and buttons
 		layoutAlertWindowButtons (*aw);
 		const int vpTop = kPromptBodyTopPad;
 		const int vpBot = getAlertButtonsTop (*aw) - kPromptBodyBottomPad;
-		const int vpH   = juce::jmax (40, vpBot - vpTop);
-		const int vpX   = kPromptInnerMargin;
-		const int vpW   = juce::jmax (60, aw->getWidth() - kPromptInnerMargin * 2);
+		const int vpH = juce::jmax (40, vpBot - vpTop);
+		const int vpX = kPromptInnerMargin;
+		const int vpW = juce::jmax (60, aw->getWidth() - kPromptInnerMargin * 2);
 		viewport->setBounds (vpX, vpTop, vpW, vpH);
 
-		// Metrics for body content (coordinates relative to bodyContent, not aw)
-		const int rowH    = threshTe->getHeight();
-		const int barH    = juce::jmax (8, rowH / 3);
-		const int scRangeBarH = juce::jmax (barH + 6, rowH / 2);
-		const int barGap  = juce::jmax (2, rowH / 8);
+		const int rowH = threshTe->getHeight();
+		const int barH = juce::jmax (8, rowH / 3);
+		const int barGap = juce::jmax (2, rowH / 8);
 		const int rowTotal = rowH + barGap + barH;
-		const int gap     = juce::jmax (3, rowH / 5);
+		const int gap = juce::jmax (3, rowH / 5);
 		constexpr int kBodyInsetX = 5;
 		const int contentW = vpW;
 		const int scrollReserve = viewport->getScrollBarThickness() + 8;
@@ -5480,15 +5613,20 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 		const int barX = contentLeft;
 		const int barW = innerW;
+		const auto scFilterFont = scHpTe->getFont();
+		const int scRowH = scHpTe->getHeight();
+		const int scBarH = juce::jmax (10, scRowH / 2);
+		const int scBarGap = juce::jmax (2, scRowH / 6);
+		const int scRowTotal = scRowH + scBarGap + scBarH;
 		const int threshEditorW = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpThreshMin, 1)),
 		                                                             stringWidth (font, juce::String (SATTRAudioProcessor::kExpThreshMax, 1))) + 16);
-		const int ratioEditorW  = juce::jlimit (36, 180, juce::jmax (stringWidth (font, formatExpRatioDisplay (SATTRAudioProcessor::kExpRatioMin)),
-		                                                             stringWidth (font, formatExpRatioDisplay (SATTRAudioProcessor::kExpRatioMax))) + 24);
-		const int kneeEditorW   = juce::jlimit (24, 160, stringWidth (font, juce::String (SATTRAudioProcessor::kExpKneeMax, 1)) + 16);
-		const int atkEditorW    = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpAtkMin, 2)),
-		                                                             stringWidth (font, juce::String (SATTRAudioProcessor::kExpAtkMax, 2))) + 16);
-		const int relEditorW    = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpRelMin, 2)),
-		                                                             stringWidth (font, juce::String (SATTRAudioProcessor::kExpRelMax, 2))) + 16);
+		const int ratioEditorW = juce::jlimit (36, 180, juce::jmax (stringWidth (font, formatExpRatioDisplay (SATTRAudioProcessor::kExpRatioMin)),
+		                                                            stringWidth (font, formatExpRatioDisplay (SATTRAudioProcessor::kExpRatioMax))) + 24);
+		const int kneeEditorW = juce::jlimit (24, 160, stringWidth (font, juce::String (SATTRAudioProcessor::kExpKneeMax, 1)) + 16);
+		const int atkEditorW = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpAtkMin, 2)),
+		                                                          stringWidth (font, juce::String (SATTRAudioProcessor::kExpAtkMax, 2))) + 16);
+		const int relEditorW = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpRelMin, 2)),
+		                                                          stringWidth (font, juce::String (SATTRAudioProcessor::kExpRelMax, 2))) + 16);
 		const int scGainEditorW = juce::jlimit (24, 160, juce::jmax (stringWidth (font, juce::String (SATTRAudioProcessor::kExpScGainMin, 1)),
 		                                                             stringWidth (font, juce::String (SATTRAudioProcessor::kExpScGainMax, 1))) + 16);
 		const int labelGap = juce::jmax (spaceW, 12);
@@ -5496,12 +5634,11 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 		int y = 0;
 
-		// ORDER: legend + value (centered pair)
 		{
 			const int legendW = stringWidth (font, "ORDER:") + 4;
-			const int valueW  = stringWidth (font, "POST") + 8;
-			const int pairW   = legendW + spaceW + valueW;
-			const int pairX   = contentLeft + juce::jmax (0, (innerW - pairW) / 2);
+			const int valueW = stringWidth (font, "POST") + 8;
+			const int pairW = legendW + spaceW + valueW;
+			const int pairX = contentLeft + juce::jmax (0, (innerW - pairW) / 2);
 			orderLegend->setBounds (pairX, y, legendW, rowH);
 			orderLabel->setBounds (pairX + legendW + spaceW, y, valueW, rowH);
 		}
@@ -5510,10 +5647,10 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		auto placeRow = [&] (juce::TextEditor* te, juce::Label* suffix,
 		                     juce::Label* unitLabel, PromptBar* bar, int rowY, int editorW)
 		{
-			if (!te || !suffix || !bar) return;
+			if (! te || ! suffix || ! bar) return;
 
 			const int labelW = stringWidth (suffix->getFont(), suffix->getText()) + 2;
-			const int unitW  = (unitLabel != nullptr) ? stringWidth (font, unitLabel->getText()) + 2 : 0;
+			const int unitW = (unitLabel != nullptr) ? stringWidth (font, unitLabel->getText()) + 2 : 0;
 			const bool isRatioRow = (te == ratioTe && unitLabel == ratioUnit);
 
 			if (isRatioRow)
@@ -5547,7 +5684,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 				const int teX = blockLeft + labelW + labelGap;
 				te->setBounds (teX, rowY, editorW, rowH);
 
-				if (unitLabel)
+				if (unitLabel != nullptr)
 				{
 					unitLabel->setJustificationType (juce::Justification::centredLeft);
 					unitLabel->setBounds (teX + editorW + unitGapPx, rowY, unitW, rowH);
@@ -5557,19 +5694,62 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			bar->setBounds (barX, rowY + rowH + barGap, barW, barH);
 		};
 
-		auto placeScRangeRow = [&] (int rowY) -> int
+		auto placeScFilterRow = [&] (juce::ToggleButton* toggle,
+		                             juce::Label* name,
+		                             juce::TextEditor* te,
+		                             juce::Label* unit,
+		                             juce::Label* slope,
+		                             PromptBar* bar,
+		                             int rowY) -> int
 		{
-			scRangeLabel->setBounds (contentLeft, rowY, innerW, rowH);
-			const int barY = rowY + rowH + barGap;
-			scRangeBar->setBounds (barX, barY, barW, scRangeBarH);
-			return rowH + barGap + scRangeBarH;
+			constexpr int toggleSide = 26;
+			constexpr int toggleVisualInsetLeft = 2;
+			constexpr int tglGap = 4;
+			const int toggleVisualSide = juce::jlimit (14,
+			                                           juce::jmax (14, toggleSide - 2),
+			                                           (int) std::lround ((double) toggleSide * 0.65));
+			const int labelOffset = toggleVisualInsetLeft + toggleVisualSide + tglGap;
+
+			name->setFont (scFilterFont);
+			unit->setFont (scFilterFont);
+			slope->setFont (scFilterFont);
+
+			toggle->setBounds (barX, rowY + (scRowH - toggleSide) / 2, toggleSide, toggleSide);
+
+			const int nameX = barX + labelOffset;
+			const int nameW = stringWidth (scFilterFont, "LP") + 2;
+			name->setBounds (nameX, rowY, nameW, scRowH);
+
+			const int slopeW = stringWidth (scFilterFont, "24dB") + 4;
+			const int slopeX = contentRight - slopeW;
+			slope->setBounds (slopeX, rowY, slopeW, scRowH);
+
+			const int midL = nameX + nameW;
+			const int midR = slopeX;
+			const int midW = midR - midL;
+
+			const int unitW = stringWidth (scFilterFont, "Hz") + 2;
+			const int textW = juce::jmax (1, stringWidth (scFilterFont, te->getText()));
+			constexpr int kEditorPad = 6;
+			constexpr int hzGap = 2;
+			const int desiredEditorW = textW + kEditorPad * 2;
+			const int maxEditorW = juce::jmax (1, midW - hzGap - unitW);
+			const int editorW = juce::jmin (desiredEditorW, maxEditorW);
+			const int groupW = editorW + hzGap + unitW;
+			const int groupX = juce::jlimit (midL, juce::jmax (midL, midR - groupW), midL + juce::jmax (0, (midW - groupW) / 2));
+
+			te->setBounds (groupX, rowY, editorW, scRowH);
+			unit->setBounds (groupX + editorW + hzGap, rowY, unitW, scRowH);
+			bar->setBounds (barX, rowY + scRowH + scBarGap, barW, scBarH);
+
+			return scRowTotal;
 		};
 
 		placeRow (threshTe, threshSuffix, threshUnit, threshBar, y, threshEditorW);
 		y += rowTotal + gap;
-		placeRow (ratioTe,  ratioSuffix,  ratioUnit,  ratioBar,  y, ratioEditorW);
+		placeRow (ratioTe, ratioSuffix, ratioUnit, ratioBar, y, ratioEditorW);
 		y += rowTotal + gap;
-		placeRow (kneeTe,   kneeSuffix,   kneeUnit,   kneeBar,   y, kneeEditorW);
+		placeRow (kneeTe, kneeSuffix, kneeUnit, kneeBar, y, kneeEditorW);
 		y += rowTotal + gap;
 		placeRow (atkTe, atkSuffix, atkUnit, atkBar, y, atkEditorW);
 		y += rowTotal + gap;
@@ -5582,16 +5762,20 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		placeRow (scGainTe, scGainSuffix, scGainUnit, scGainBar, y, scGainEditorW);
 		y += rowTotal + gap;
 
-		y += placeScRangeRow (y);
+		scFilterLabel->setBounds (contentLeft, y, innerW, rowH);
+		y += rowH + gap;
+
+		y += placeScFilterRow (scHpToggle, scHpNameLabel, scHpTe, scHpUnitLabel, scHpSlopeLabel, scHpBar, y);
+		y += gap;
+		y += placeScFilterRow (scLpToggle, scLpNameLabel, scLpTe, scLpUnitLabel, scLpSlopeLabel, scLpBar, y);
 		y += juce::jmax (gap * 2, rowH / 2);
 
 		bodyContent->setSize (contentW, y);
 	};
 
-	// -- Text -> bar + APVTS --
 	auto textToBarRatio = [syncing, ratioApvts] (float raw, PromptBar* bar)
 	{
-		if (*syncing || !bar) return;
+		if (*syncing || ! bar) return;
 		const float internalRatio = expRatioDisplayToInternal (raw);
 		bar->value = expRatioDisplayToNorm (internalRatio);
 		if (ratioApvts) ratioApvts->setValueNotifyingHost (ratioApvts->convertTo0to1 (internalRatio));
@@ -5600,7 +5784,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	auto textToBarThresh = [syncing, threshApvts] (float raw, PromptBar* bar)
 	{
-		if (*syncing || !bar) return;
+		if (*syncing || ! bar) return;
 		bar->value = (raw - SATTRAudioProcessor::kExpThreshMin) / (SATTRAudioProcessor::kExpThreshMax - SATTRAudioProcessor::kExpThreshMin);
 		if (threshApvts) threshApvts->setValueNotifyingHost (threshApvts->convertTo0to1 (raw));
 		bar->repaint();
@@ -5608,7 +5792,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	auto textToBarKnee = [syncing, kneeApvts] (float raw, PromptBar* bar)
 	{
-		if (*syncing || !bar) return;
+		if (*syncing || ! bar) return;
 		bar->value = (raw - SATTRAudioProcessor::kExpKneeMin) / (SATTRAudioProcessor::kExpKneeMax - SATTRAudioProcessor::kExpKneeMin);
 		if (kneeApvts) kneeApvts->setValueNotifyingHost (kneeApvts->convertTo0to1 (raw));
 		bar->repaint();
@@ -5616,7 +5800,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	auto textToBarAtk = [syncing, atkApvts, atkNormRange] (float raw, PromptBar* bar)
 	{
-		if (*syncing || !bar) return;
+		if (*syncing || ! bar) return;
 		bar->value = atkNormRange.convertTo0to1 (raw);
 		if (atkApvts) atkApvts->setValueNotifyingHost (atkApvts->convertTo0to1 (raw));
 		bar->repaint();
@@ -5624,7 +5808,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	auto textToBarRel = [syncing, relApvts, relNormRange] (float raw, PromptBar* bar)
 	{
-		if (*syncing || !bar) return;
+		if (*syncing || ! bar) return;
 		bar->value = relNormRange.convertTo0to1 (raw);
 		if (relApvts) relApvts->setValueNotifyingHost (relApvts->convertTo0to1 (raw));
 		bar->repaint();
@@ -5632,9 +5816,25 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	auto textToBarScGain = [syncing, scGainApvts, scGainNormRange] (float raw, PromptBar* bar)
 	{
-		if (*syncing || !bar) return;
+		if (*syncing || ! bar) return;
 		bar->value = scGainNormRange.convertTo0to1 (raw);
 		if (scGainApvts) scGainApvts->setValueNotifyingHost (scGainApvts->convertTo0to1 (raw));
+		bar->repaint();
+	};
+
+	auto textToBarScHp = [syncing, scHpApvts, freqToNorm] (float raw, PromptBar* bar)
+	{
+		if (*syncing || ! bar) return;
+		bar->value = freqToNorm (raw);
+		if (scHpApvts) scHpApvts->setValueNotifyingHost (scHpApvts->convertTo0to1 (raw));
+		bar->repaint();
+	};
+
+	auto textToBarScLp = [syncing, scLpApvts, freqToNorm] (float raw, PromptBar* bar)
+	{
+		if (*syncing || ! bar) return;
+		bar->value = freqToNorm (raw);
+		if (scLpApvts) scLpApvts->setValueNotifyingHost (scLpApvts->convertTo0to1 (raw));
 		bar->repaint();
 	};
 
@@ -5668,6 +5868,48 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		layoutBody();
 	};
 
+	auto handleScFreqText = [syncing, layoutBody, sanitiseEnvPromptText, parseEnvPromptValue,
+	                         scHpSpec, scLpSpec, textToBarScHp, textToBarScLp,
+	                         aw, scHpBar, scLpBar] (bool isHp) mutable
+	{
+		auto* te = aw->getTextEditor (isHp ? "scHp" : "scLp");
+		auto* otherTe = aw->getTextEditor (isHp ? "scLp" : "scHp");
+		auto* bar = isHp ? scHpBar : scLpBar;
+		const auto& spec = isHp ? scHpSpec : scLpSpec;
+		if (*syncing || te == nullptr || bar == nullptr)
+			return;
+
+		const auto original = te->getText();
+		bool incomplete = false;
+		const auto sanitised = sanitiseEnvPromptText (original, spec, incomplete);
+		if (sanitised != original)
+		{
+			*syncing = true;
+			te->setText (sanitised, juce::dontSendNotification);
+			*syncing = false;
+		}
+
+		auto parseText = sanitised;
+		if (parseText.endsWithChar ('.'))
+			parseText = parseText.dropLastCharacters (1);
+
+		if (! incomplete && parseText.isNotEmpty())
+		{
+			float raw = juce::jlimit (spec.minValue, spec.maxValue, (float) parseText.getDoubleValue());
+			const float other = parseEnvPromptValue (otherTe, isHp ? scLpSpec : scHpSpec,
+			                                        isHp ? SATTRAudioProcessor::kExpScLpDefault
+			                                             : SATTRAudioProcessor::kExpScHpDefault);
+			raw = isHp ? juce::jmin (raw, other) : juce::jmax (raw, other);
+			te->setText (juce::String (raw, spec.formatDecimals), juce::dontSendNotification);
+			if (isHp)
+				textToBarScHp (raw, bar);
+			else
+				textToBarScLp (raw, bar);
+		}
+
+		layoutBody();
+	};
+
 	if (auto* te = aw->getTextEditor ("thresh"))
 		te->onTextChange = [te, threshBar, threshSpec, handleEnvPromptText, textToBarThresh] () mutable
 		{ handleEnvPromptText (te, threshBar, threshSpec, textToBarThresh); };
@@ -5686,6 +5928,10 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	if (auto* te = aw->getTextEditor ("scGain"))
 		te->onTextChange = [te, scGainBar, scGainSpec, handleEnvPromptText, textToBarScGain] () mutable
 		{ handleEnvPromptText (te, scGainBar, scGainSpec, textToBarScGain); };
+	if (auto* te = aw->getTextEditor ("scHp"))
+		te->onTextChange = [handleScFreqText] () mutable { handleScFreqText (true); };
+	if (auto* te = aw->getTextEditor ("scLp"))
+		te->onTextChange = [handleScFreqText] () mutable { handleScFreqText (false); };
 
 	aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
 	aw->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -5694,12 +5940,15 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	layoutBody();
 
 	const auto& kExpFont = kBoldFont40();
+	const juce::Font kExpFilterFont (juce::FontOptions (34.0f).withStyle ("Bold"));
 	preparePromptTextEditor (*aw, "thresh", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
-	preparePromptTextEditor (*aw, "ratio",  scheme.bg, scheme.text, scheme.fg, kExpFont, false);
-	preparePromptTextEditor (*aw, "knee",   scheme.bg, scheme.text, scheme.fg, kExpFont, false);
-	preparePromptTextEditor (*aw, "atk",    scheme.bg, scheme.text, scheme.fg, kExpFont, false);
-	preparePromptTextEditor (*aw, "rel",    scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+	preparePromptTextEditor (*aw, "ratio", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+	preparePromptTextEditor (*aw, "knee", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+	preparePromptTextEditor (*aw, "atk", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+	preparePromptTextEditor (*aw, "rel", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
 	preparePromptTextEditor (*aw, "scGain", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+	preparePromptTextEditor (*aw, "scHp", scheme.bg, scheme.text, scheme.fg, kExpFilterFont, false);
+	preparePromptTextEditor (*aw, "scLp", scheme.bg, scheme.text, scheme.fg, kExpFilterFont, false);
 	layoutBody();
 
 	styleAlertButtons (*aw, lnf);
@@ -5722,14 +5971,15 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		bringPromptWindowToFront (*aw);
 	}
 
-	// Final styling pass
 	{
 		preparePromptTextEditor (*aw, "thresh", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
-		preparePromptTextEditor (*aw, "ratio",  scheme.bg, scheme.text, scheme.fg, kExpFont, false);
-		preparePromptTextEditor (*aw, "knee",   scheme.bg, scheme.text, scheme.fg, kExpFont, false);
-		preparePromptTextEditor (*aw, "atk",    scheme.bg, scheme.text, scheme.fg, kExpFont, false);
-		preparePromptTextEditor (*aw, "rel",    scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+		preparePromptTextEditor (*aw, "ratio", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+		preparePromptTextEditor (*aw, "knee", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+		preparePromptTextEditor (*aw, "atk", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+		preparePromptTextEditor (*aw, "rel", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
 		preparePromptTextEditor (*aw, "scGain", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
+		preparePromptTextEditor (*aw, "scHp", scheme.bg, scheme.text, scheme.fg, kExpFilterFont, false);
+		preparePromptTextEditor (*aw, "scLp", scheme.bg, scheme.text, scheme.fg, kExpFilterFont, false);
 		layoutBody();
 
 		auto syncFonts = [&] (ResetLabel* suffix, juce::Label* unit, const char* edId)
@@ -5742,12 +5992,17 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 				}
 		};
 		syncFonts (threshSuffix, threshUnit, "thresh");
-		syncFonts (ratioSuffix,  ratioUnit,  "ratio");
-		syncFonts (kneeSuffix,   kneeUnit,   "knee");
-		syncFonts (atkSuffix,    atkUnit,    "atk");
-		syncFonts (relSuffix,    relUnit,    "rel");
+		syncFonts (ratioSuffix, ratioUnit, "ratio");
+		syncFonts (kneeSuffix, kneeUnit, "knee");
+		syncFonts (atkSuffix, atkUnit, "atk");
+		syncFonts (relSuffix, relUnit, "rel");
 		syncFonts (scGainSuffix, scGainUnit, "scGain");
-		scRangeLabel->setFont (kExpFont);
+		for (auto* label : { scFilterLabel })
+			if (label != nullptr)
+				label->setFont (kExpFont);
+		for (auto* label : { scHpNameLabel, scLpNameLabel, scHpUnitLabel, scLpUnitLabel, scHpSlopeLabel, scLpSlopeLabel })
+			if (label != nullptr)
+				label->setFont (kExpFilterFont);
 		layoutBody();
 
 		juce::Component::SafePointer<juce::AlertWindow> safeAw (aw);
@@ -5761,17 +6016,17 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 	aw->enterModalState (true,
 		juce::ModalCallbackFunction::create (
-			[safeThis, aw, orderState, threshBar, ratioBar, kneeBar, atkBar, relBar, scRangeBar, scGainBar,
+			[safeThis, aw, orderState, threshBar, ratioBar, kneeBar, atkBar, relBar, scGainBar, scHpBar, scLpBar,
+			 scHpToggle, scLpToggle, scHpSlopeState, scLpSlopeState,
 			 parseEnvPromptValue, threshSpec, ratioSpec, kneeSpec, atkSpec, relSpec, scGainSpec, normToFreq,
-			 orderLegend, orderLabel,
-			 sidechainLabel, scRangeLabel,
-			 threshSuffix, ratioSuffix, kneeSuffix, atkSuffix, relSuffix, scGainSuffix,
-			 threshUnit, ratioUnit, kneeUnit, atkUnit, relUnit, scGainUnit,
-			 viewport,
-			 orderHandler,
+			 viewport, orderHandler, scHpToggleHandler, scLpToggleHandler, scHpSlopeHandler, scLpSlopeHandler,
 			 savedOrder = currentOrder, savedThresh = currentThresh, savedRatio = currentRatio, savedKnee = currentKnee,
-			 savedAtk = currentAtk, savedRel = currentRel, savedScHp = currentScHp, savedScLp = currentScLp, savedScGain = currentScGain,
-			 orderParamId, threshParamId, ratioParamId, kneeParamId, atkParamId, relParamId, scHpParamId, scLpParamId, scGainParamId,
+			 savedAtk = currentAtk, savedRel = currentRel, savedScHp = currentScHp, savedScLp = currentScLp,
+			 savedScHpOn = currentScHpOn, savedScLpOn = currentScLpOn,
+			 savedScHpSlope = currentScHpSlope, savedScLpSlope = currentScLpSlope,
+			 savedScGain = currentScGain,
+			 orderParamId, threshParamId, ratioParamId, kneeParamId, atkParamId, relParamId,
+			 scHpParamId, scLpParamId, scHpOnParamId, scLpOnParamId, scHpSlopeParamId, scLpSlopeParamId, scGainParamId,
 			 loaderIndex] (int result) mutable
 		{
 			std::unique_ptr<juce::AlertWindow> killer (aw);
@@ -5781,15 +6036,17 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 			if (safeThis == nullptr)
 			{
-				// bodyContent (+ its children) is owned by viewport via setViewedComponent(,true)
 				delete viewport;
 				delete orderHandler;
+				delete scHpToggleHandler;
+				delete scLpToggleHandler;
+				delete scHpSlopeHandler;
+				delete scLpSlopeHandler;
 				return;
 			}
 
 			if (result != 1)
 			{
-				// CANCEL: revert
 				auto& vts = safeThis->audioProcessor.getValueTreeState();
 				if (auto* p = vts.getParameter (orderParamId))
 					p->setValueNotifyingHost (savedOrder ? 1.0f : 0.0f);
@@ -5807,6 +6064,14 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 					p->setValueNotifyingHost (p->convertTo0to1 (savedScHp));
 				if (auto* p = vts.getParameter (scLpParamId))
 					p->setValueNotifyingHost (p->convertTo0to1 (savedScLp));
+				if (auto* p = vts.getParameter (scHpOnParamId))
+					p->setValueNotifyingHost (savedScHpOn ? 1.0f : 0.0f);
+				if (auto* p = vts.getParameter (scLpOnParamId))
+					p->setValueNotifyingHost (savedScLpOn ? 1.0f : 0.0f);
+				if (auto* p = vts.getParameter (scHpSlopeParamId))
+					p->setValueNotifyingHost (p->convertTo0to1 ((float) savedScHpSlope));
+				if (auto* p = vts.getParameter (scLpSlopeParamId))
+					p->setValueNotifyingHost (p->convertTo0to1 ((float) savedScLpSlope));
 				if (auto* p = vts.getParameter (scGainParamId))
 					p->setValueNotifyingHost (p->convertTo0to1 (savedScGain));
 			}
@@ -5818,8 +6083,16 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 				const float newKnee   = parseEnvPromptValue (aw->getTextEditor ("knee"),   kneeSpec,   savedKnee);
 				const float newAtk    = parseEnvPromptValue (aw->getTextEditor ("atk"),    atkSpec,    savedAtk);
 				const float newRel    = parseEnvPromptValue (aw->getTextEditor ("rel"),    relSpec,    savedRel);
-				float newScHp         = normToFreq (scRangeBar->lowValue);
-				float newScLp         = normToFreq (scRangeBar->highValue);
+				float newScHp         = normToFreq (scHpBar->value);
+				float newScLp         = normToFreq (scLpBar->value);
+				const bool newScHpOn  = scHpToggle->getToggleState();
+				const bool newScLpOn  = scLpToggle->getToggleState();
+				const int newScHpSlope = juce::jlimit (SATTRAudioProcessor::kFilterSlopeMin,
+				                                       SATTRAudioProcessor::kFilterSlopeMax,
+				                                       *scHpSlopeState);
+				const int newScLpSlope = juce::jlimit (SATTRAudioProcessor::kFilterSlopeMin,
+				                                       SATTRAudioProcessor::kFilterSlopeMax,
+				                                       *scLpSlopeState);
 				const float newScGain = parseEnvPromptValue (aw->getTextEditor ("scGain"), scGainSpec, savedScGain);
 				if (newScHp > newScLp)
 					std::swap (newScHp, newScLp);
@@ -5838,10 +6111,19 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 					p->setValueNotifyingHost (p->convertTo0to1 (newScHp));
 				if (auto* p = vts.getParameter (scLpParamId))
 					p->setValueNotifyingHost (p->convertTo0to1 (newScLp));
+				if (auto* p = vts.getParameter (scHpOnParamId))
+					p->setValueNotifyingHost (newScHpOn ? 1.0f : 0.0f);
+				if (auto* p = vts.getParameter (scLpOnParamId))
+					p->setValueNotifyingHost (newScLpOn ? 1.0f : 0.0f);
+				if (auto* p = vts.getParameter (scHpSlopeParamId))
+					p->setValueNotifyingHost (p->convertTo0to1 ((float) newScHpSlope));
+				if (auto* p = vts.getParameter (scLpSlopeParamId))
+					p->setValueNotifyingHost (p->convertTo0to1 ((float) newScLpSlope));
 				if (auto* p = vts.getParameter (scGainParamId))
 					p->setValueNotifyingHost (p->convertTo0to1 (newScGain));
 
-				auto tip = formatExpTooltip (*orderState, newRatio, newThresh, newScHp, newScLp, newScGain);
+				auto tip = formatExpTooltip (*orderState, newRatio, newThresh, newScHp, newScLp,
+				                            newScHpOn, newScLpOn, newScHpSlope, newScLpSlope, newScGain);
 				if (newKnee > 0.05f)
 					tip += " | K " + juce::String (newKnee, 1) + " dB";
 				auto& disp = loaderIndex == 0 ? safeThis->expDisplayA
@@ -5849,13 +6131,19 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 				disp.setTooltip (tip);
 			}
 
-			// bodyContent (+ bars, labels, presets) owned by viewport
 			delete viewport;
 			delete orderHandler;
+			delete scHpToggleHandler;
+			delete scLpToggleHandler;
+			delete scHpSlopeHandler;
+			delete scLpSlopeHandler;
 		}),
 		false);
 }
 
+//==============================================================================
+//  Info Prompt
+//==============================================================================
 void SATTRAudioProcessorEditor::openInfoPopup()
 {
 	lnf.setScheme (activeScheme);

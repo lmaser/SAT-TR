@@ -162,7 +162,7 @@ Per-loader expander accessible from the `EXP` button. Parameters:
 - **ATK** (`0.00` to `100.00 ms`): envelope attack time
 - **REL** (`5.00` to `2000.00 ms`): envelope release time
 - **SIDECHAIN GAIN** (`-INF` to `+24.0 dB`): internal detector level trim; it only changes the expander detector signal, not the audio path
-- **SIDECHAIN HP/LP** (`20 Hz` to `20 kHz`): internal detector band-pass range for frequency-selective expansion
+- **SIDECHAIN HP/LP** (`20 Hz` to `20 kHz`): optional internal detector filters for frequency-selective expansion. Each band can be enabled independently and set to `6 dB`, `12 dB`, or `24 dB` per octave
 
 ### Chaos
 

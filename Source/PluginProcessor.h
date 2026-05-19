@@ -63,6 +63,10 @@ public:
 	static constexpr const char* kParamExpRelA      = "exp_rel_a";
 	static constexpr const char* kParamExpScHpA     = "exp_sc_hp_a";
 	static constexpr const char* kParamExpScLpA     = "exp_sc_lp_a";
+	static constexpr const char* kParamExpScHpOnA   = "exp_sc_hp_on_a";
+	static constexpr const char* kParamExpScLpOnA   = "exp_sc_lp_on_a";
+	static constexpr const char* kParamExpScHpSlopeA = "exp_sc_hp_slope_a";
+	static constexpr const char* kParamExpScLpSlopeA = "exp_sc_lp_slope_a";
 	static constexpr const char* kParamExpScGainA   = "exp_sc_gain_a";
 
 	// ----------------------------------------------------------------
@@ -114,6 +118,10 @@ public:
 	static constexpr const char* kParamExpRelB      = "exp_rel_b";
 	static constexpr const char* kParamExpScHpB     = "exp_sc_hp_b";
 	static constexpr const char* kParamExpScLpB     = "exp_sc_lp_b";
+	static constexpr const char* kParamExpScHpOnB   = "exp_sc_hp_on_b";
+	static constexpr const char* kParamExpScLpOnB   = "exp_sc_lp_on_b";
+	static constexpr const char* kParamExpScHpSlopeB = "exp_sc_hp_slope_b";
+	static constexpr const char* kParamExpScLpSlopeB = "exp_sc_lp_slope_b";
 	static constexpr const char* kParamExpScGainB   = "exp_sc_gain_b";
 
 	// ----------------------------------------------------------------
@@ -165,6 +173,10 @@ public:
 	static constexpr const char* kParamExpRelC      = "exp_rel_c";
 	static constexpr const char* kParamExpScHpC     = "exp_sc_hp_c";
 	static constexpr const char* kParamExpScLpC     = "exp_sc_lp_c";
+	static constexpr const char* kParamExpScHpOnC   = "exp_sc_hp_on_c";
+	static constexpr const char* kParamExpScLpOnC   = "exp_sc_lp_on_c";
+	static constexpr const char* kParamExpScHpSlopeC = "exp_sc_hp_slope_c";
+	static constexpr const char* kParamExpScLpSlopeC = "exp_sc_lp_slope_c";
 	static constexpr const char* kParamExpScGainC   = "exp_sc_gain_c";
 
 	// ----------------------------------------------------------------
@@ -349,6 +361,10 @@ public:
 	static constexpr float kExpScFreqMax             = kFilterFreqMax;
 	static constexpr float kExpScHpDefault           = kFilterFreqMin;
 	static constexpr float kExpScLpDefault           = kFilterFreqMax;
+	static constexpr bool  kExpScHpOnDefault         = true;
+	static constexpr bool  kExpScLpOnDefault         = true;
+	static constexpr int   kExpScHpSlopeDefault      = kFilterSlopeDefault;
+	static constexpr int   kExpScLpSlopeDefault      = kFilterSlopeDefault;
 	static constexpr float kExpScGainMin             = kGainFloorDb;
 	static constexpr float kExpScGainMax             = kGainMaxDb;
 	static constexpr float kExpScGainDefault         = kGainDefaultDb;
@@ -625,7 +641,9 @@ public:
 		};
 
 		ExpSidechainBiquadState expScHpState;
+		ExpSidechainBiquadState expScHpState2;
 		ExpSidechainBiquadState expScLpState;
+		ExpSidechainBiquadState expScLpState2;
 		float expScLastGain = 1.0f;
 
 		// Delay line for phase alignment (max ~0.5s)
@@ -796,6 +814,10 @@ private:
 	std::atomic<float>* pExpRelA    = nullptr;
 	std::atomic<float>* pExpScHpA   = nullptr;
 	std::atomic<float>* pExpScLpA   = nullptr;
+	std::atomic<float>* pExpScHpOnA = nullptr;
+	std::atomic<float>* pExpScLpOnA = nullptr;
+	std::atomic<float>* pExpScHpSlopeA = nullptr;
+	std::atomic<float>* pExpScLpSlopeA = nullptr;
 	std::atomic<float>* pExpScGainA = nullptr;
 	std::atomic<float>* pExpB       = nullptr;
 	std::atomic<float>* pExpOrderB  = nullptr;
@@ -806,6 +828,10 @@ private:
 	std::atomic<float>* pExpRelB    = nullptr;
 	std::atomic<float>* pExpScHpB   = nullptr;
 	std::atomic<float>* pExpScLpB   = nullptr;
+	std::atomic<float>* pExpScHpOnB = nullptr;
+	std::atomic<float>* pExpScLpOnB = nullptr;
+	std::atomic<float>* pExpScHpSlopeB = nullptr;
+	std::atomic<float>* pExpScLpSlopeB = nullptr;
 	std::atomic<float>* pExpScGainB = nullptr;
 	std::atomic<float>* pExpC       = nullptr;
 	std::atomic<float>* pExpOrderC  = nullptr;
@@ -816,6 +842,10 @@ private:
 	std::atomic<float>* pExpRelC    = nullptr;
 	std::atomic<float>* pExpScHpC   = nullptr;
 	std::atomic<float>* pExpScLpC   = nullptr;
+	std::atomic<float>* pExpScHpOnC = nullptr;
+	std::atomic<float>* pExpScLpOnC = nullptr;
+	std::atomic<float>* pExpScHpSlopeC = nullptr;
+	std::atomic<float>* pExpScLpSlopeC = nullptr;
 	std::atomic<float>* pExpScGainC = nullptr;
 
 	// Oversampling (pre-allocated for all factors, per-loader)
