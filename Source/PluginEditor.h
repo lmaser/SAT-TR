@@ -563,6 +563,8 @@ private:
 	int visibleLoaderCount_ = 3;
 	int firstVisibleLoaderIndex_ = 0;
 	bool footerExpanded_ = false;
+	bool applyingCompactResize_ = false;
+	int cachedHeaderTitleX_ = 16;
 	juce::Rectangle<int> cachedLeftLoaderRailArea_;
 	juce::Rectangle<int> cachedRightLoaderRailArea_;
 	juce::Rectangle<int> cachedFooterRailArea_;
@@ -660,6 +662,14 @@ private:
 		applyComboScheme (invPolCombo);
 		applyComboScheme (invStrCombo);
 		dualMixBar_.setScheme (activeScheme);
+
+		if (tooltipWindow != nullptr)
+		{
+			tooltipWindow->setColour (juce::TooltipWindow::backgroundColourId, activeScheme.bg);
+			tooltipWindow->setColour (juce::TooltipWindow::textColourId,       activeScheme.text);
+			tooltipWindow->setColour (juce::TooltipWindow::outlineColourId,    activeScheme.outline);
+			tooltipWindow->setLookAndFeel (&lnf);
+		}
 	}
 
 	// ══════════════════════════════════════════════════════════════

@@ -21,9 +21,11 @@ SAT-TR uses a text-based UI with horizontal bar sliders. Most core controls stay
 - **Toggle buttons**: Click to enable/disable (`RAW`, `INV`, `EXP`, `CHAOS D`, `CHAOS F`).
 - **Combo boxes**: Click to choose routing, mode, algorithm, oversampling, normalization, and limiter placement.
 - **Collapsible IO section**: Click the toggle bar (triangle) to show/hide per-loader I/O controls. State persists across sessions.
+- **Bottom global section**: Click the bottom toggle bar to switch between loader controls and the global control page. The global page keeps the same left content axis as the loader view.
 - **Filter bar**: Click to open the HP/LP filter configuration prompt.
 - **EXP button**: Left-click enables/disables the expander. Right-click opens the expander prompt.
 - **CHAOS buttons**: Left-click enables/disables the target. Right-click opens the amount/speed prompt for delay or filter chaos.
+- **Tooltips**: Toggle tooltips use an opaque palette-background panel with palette text/outline, so `EXP`, `CHAOS D`, and `CHAOS F` match the rest of the TR Series.
 - **ALIGN button**: Momentary trigger. Auto-sets per-loader delay compensation and invert state from synthetic probe analysis.
 - **Gear icon** (top-right): Opens the info popup with version, credits, and the Graphics prompt.
 - **Graphics popup**: Toggles graphic FX and switches between default/custom colour palettes.

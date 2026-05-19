@@ -193,32 +193,17 @@ namespace
 		return juce::String (expRatioInternalToDisplay (internalRatio), decimals);
 	}
 
+	juce::String formatExpTooltip (bool post, float ratio)
+	{
+		return juce::String (post ? "POST" : "PRE")
+		     + " | 1:" + formatExpRatioDisplay (ratio);
+	}
+
 	juce::String filterSlopeToText (int slope)
 	{
 		if (slope <= 0) return "6dB";
 		if (slope == 1) return "12dB";
 		return "24dB";
-	}
-
-	juce::String formatExpScBandTooltip (const char* name, bool enabled, float hz, int slope)
-	{
-		return juce::String (name) + " "
-		     + (enabled ? (formatFrequencyWithUnitForPrompt (hz) + " " + filterSlopeToText (slope))
-		                : juce::String ("OFF"));
-	}
-
-	juce::String formatExpTooltip (bool post, float ratio, float thresholdDb,
-	                               float scHpHz, float scLpHz,
-	                               bool scHpOn, bool scLpOn,
-	                               int scHpSlope, int scLpSlope,
-	                               float scGainDb)
-	{
-		return juce::String (post ? "POST" : "PRE")
-		     + " | 1:" + formatExpRatioDisplay (ratio)
-		     + " | " + juce::String (thresholdDb, 1) + " dB"
-		     + " | SC " + formatGainFaderDb (scGainDb)
-		     + " | " + formatExpScBandTooltip ("HP", scHpOn, scHpHz, scHpSlope)
-		     + " | " + formatExpScBandTooltip ("LP", scLpOn, scLpHz, scLpSlope);
 	}
 
 	struct PopupSwatchButton final : public juce::TextButton
@@ -1253,8 +1238,8 @@ void SATTRAudioProcessorEditor::MinimalLNF::drawBubble (juce::Graphics& g,
 {
 	drawOverlayPanel (g,
 	                  body.getSmallestIntegerContainer(),
-	                  findColour (juce::TooltipWindow::backgroundColourId),
-	                  findColour (juce::TooltipWindow::outlineColourId));
+	                  scheme.bg,
+	                  scheme.outline);
 }
 
 juce::Font SATTRAudioProcessorEditor::MinimalLNF::getTextButtonFont (juce::TextButton&, int buttonHeight)
@@ -1321,10 +1306,10 @@ void SATTRAudioProcessorEditor::MinimalLNF::drawTooltip (juce::Graphics& g,
 
 	drawOverlayPanel (g,
 	                  { 0, 0, width, height },
-	                  findColour (juce::TooltipWindow::backgroundColourId),
-	                  findColour (juce::TooltipWindow::outlineColourId));
+	                  scheme.bg,
+	                  scheme.outline);
 
-	g.setColour (findColour (juce::TooltipWindow::textColourId));
+	g.setColour (scheme.text);
 	g.setFont (f);
 	g.drawFittedText (text,
 	                  textInsetX,
@@ -1473,27 +1458,32 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 	setupSlider (r.fred,  "Angle " + suffix + " (off-axis mic simulation)", ST::Fred);
 	setupSlider (r.pos,   "Distance " + suffix + " (proximity/distance)",   ST::Pos);
 
-	addAndMakeVisible (r.inv);   r.inv.setButtonText ("INV");            r.inv.addListener (this);
-	addAndMakeVisible (r.chaos); r.chaos.setButtonText ("CHSD"); r.chaos.addListener (this);
+	addAndMakeVisible (r.inv);   r.inv.setButtonText ("");            r.inv.addListener (this);
+	r.inv.setTooltip ({});
+	addAndMakeVisible (r.chaos); r.chaos.setButtonText (""); r.chaos.addListener (this);
 	r.chaos.addMouseListener (this, false);
-	addAndMakeVisible (r.chaosFilter); r.chaosFilter.setButtonText ("CHSF"); r.chaosFilter.addListener (this);
+	addAndMakeVisible (r.chaosFilter); r.chaosFilter.setButtonText (""); r.chaosFilter.addListener (this);
 	r.chaosFilter.addMouseListener (this, false);
 
 	{
-		const float savedAmt = audioProcessor.getValueTreeState().getRawParameterValue (chaosAmtId)->load();
-		const float savedSpd = audioProcessor.getValueTreeState().getRawParameterValue (chaosSpdId)->load();
+		const auto& ids = kLoaderParams[juce::jlimit (0, 2, loaderIndex)];
+		const float savedAmtD = audioProcessor.getValueTreeState().getRawParameterValue (chaosAmtId)->load();
+		const float savedSpdD = audioProcessor.getValueTreeState().getRawParameterValue (chaosSpdId)->load();
+		const float savedAmtF = audioProcessor.getValueTreeState().getRawParameterValue (ids.chaosAmtFilter)->load();
+		const float savedSpdF = audioProcessor.getValueTreeState().getRawParameterValue (ids.chaosSpdFilter)->load();
+		r.chaos.setTooltip (formatChaosTooltip (savedAmtD, savedSpdD));
+		r.chaosFilter.setTooltip (formatChaosTooltip (savedAmtF, savedSpdF));
 		r.chaosDisp.setText ("", juce::dontSendNotification);
-		r.chaosDisp.setInterceptsMouseClicks (true, false);
-		r.chaosDisp.addMouseListener (this, false);
-		r.chaosDisp.setTooltip (formatChaosTooltip (savedAmt, savedSpd));
+		r.chaosDisp.setInterceptsMouseClicks (false, false);
+		r.chaosDisp.setTooltip ({});
 		r.chaosDisp.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
 		r.chaosDisp.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
 		r.chaosDisp.setOpaque (false);
 		addAndMakeVisible (r.chaosDisp);
 	}
 
-	// EXP button + display overlay (tooltip shows PRE/POST | ratio)
-	addAndMakeVisible (r.exp);   r.exp.setButtonText ("EXP");   r.exp.addListener (this);
+	// EXP uses a compact tooltip; full SC/filter details live in the right-click prompt.
+	addAndMakeVisible (r.exp);   r.exp.setButtonText ("");   r.exp.addListener (this);
 	r.exp.addMouseListener (this, false);
 	{
 		const auto& orderParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpOrderA
@@ -1502,52 +1492,13 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 		const auto& ratioParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpRatioA
 		                         : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpRatioB
 		                                            : SATTRAudioProcessor::kParamExpRatioC;
-		const auto& threshParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpThreshA
-		                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpThreshB
-		                                             : SATTRAudioProcessor::kParamExpThreshC;
-		const auto& scHpParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScHpA
-		                        : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScHpB
-		                                           : SATTRAudioProcessor::kParamExpScHpC;
-		const auto& scLpParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScLpA
-		                        : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScLpB
-		                                           : SATTRAudioProcessor::kParamExpScLpC;
-		const auto& scHpOnParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScHpOnA
-		                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScHpOnB
-		                                             : SATTRAudioProcessor::kParamExpScHpOnC;
-		const auto& scLpOnParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScLpOnA
-		                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScLpOnB
-		                                             : SATTRAudioProcessor::kParamExpScLpOnC;
-		const auto& scHpSlopeParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScHpSlopeA
-		                             : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScHpSlopeB
-		                                                : SATTRAudioProcessor::kParamExpScHpSlopeC;
-		const auto& scLpSlopeParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScLpSlopeA
-		                             : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScLpSlopeB
-		                                                : SATTRAudioProcessor::kParamExpScLpSlopeC;
-		const auto& scGainParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpScGainA
-		                          : loaderIndex == 1 ? SATTRAudioProcessor::kParamExpScGainB
-		                                             : SATTRAudioProcessor::kParamExpScGainC;
-		const bool  savedOrder = audioProcessor.getValueTreeState().getRawParameterValue (orderParamId)->load() >= 0.5f;
+		const bool savedOrder = audioProcessor.getValueTreeState().getRawParameterValue (orderParamId)->load() >= 0.5f;
 		const float savedRatio = audioProcessor.getValueTreeState().getRawParameterValue (ratioParamId)->load();
-		const float savedThresh = audioProcessor.getValueTreeState().getRawParameterValue (threshParamId)->load();
-		const float savedScHp = audioProcessor.getValueTreeState().getRawParameterValue (scHpParamId)->load();
-		const float savedScLp = audioProcessor.getValueTreeState().getRawParameterValue (scLpParamId)->load();
-		const bool savedScHpOn = audioProcessor.getValueTreeState().getRawParameterValue (scHpOnParamId)->load() >= 0.5f;
-		const bool savedScLpOn = audioProcessor.getValueTreeState().getRawParameterValue (scLpOnParamId)->load() >= 0.5f;
-		const int savedScHpSlope = juce::jlimit (SATTRAudioProcessor::kFilterSlopeMin,
-		                                         SATTRAudioProcessor::kFilterSlopeMax,
-		                                         (int) std::lround (audioProcessor.getValueTreeState().getRawParameterValue (scHpSlopeParamId)->load()));
-		const int savedScLpSlope = juce::jlimit (SATTRAudioProcessor::kFilterSlopeMin,
-		                                         SATTRAudioProcessor::kFilterSlopeMax,
-		                                         (int) std::lround (audioProcessor.getValueTreeState().getRawParameterValue (scLpSlopeParamId)->load()));
-		const float savedScGain = audioProcessor.getValueTreeState().getRawParameterValue (scGainParamId)->load();
+		r.exp.setTooltip (formatExpTooltip (savedOrder, savedRatio));
+
 		r.expDisp.setText ("", juce::dontSendNotification);
-		r.expDisp.setInterceptsMouseClicks (true, false);
-		r.expDisp.addMouseListener (this, false);
-		r.expDisp.setTooltip (formatExpTooltip (savedOrder, savedRatio, savedThresh,
-		                                        savedScHp, savedScLp,
-		                                        savedScHpOn, savedScLpOn,
-		                                        savedScHpSlope, savedScLpSlope,
-		                                        savedScGain));
+		r.expDisp.setInterceptsMouseClicks (false, false);
+		r.expDisp.setTooltip ({});
 		r.expDisp.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
 		r.expDisp.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
 		r.expDisp.setOpaque (false);
@@ -1969,7 +1920,7 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 
 	// Title & version
 	{
-		constexpr int titleX = 16;
+		const int titleX = cachedHeaderTitleX_;
 		constexpr int titleY = 12;
 		constexpr int titleH = 32;
 		g.setFont (juce::Font (juce::FontOptions (28.0f).withStyle ("Bold")));
@@ -2235,6 +2186,48 @@ void SATTRAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 	drawToggleBar (cachedToggleBarAreaB_, ioExpandedB_);
 	drawToggleBar (cachedToggleBarAreaC_, ioExpandedC_);
 
+	auto drawLoaderToggleLabel = [&] (const juce::ToggleButton& button,
+	                                  const juce::String& text,
+	                                  int clipRight)
+	{
+		if (! button.isVisible())
+			return;
+
+		const int boxSide = juce::jlimit (14,
+		                                  juce::jmax (14, button.getHeight() - 2),
+		                                  (int) std::lround ((double) button.getHeight() * 0.65));
+		const int labelX = button.getX() + 2 + boxSide + 4;
+		const int labelW = juce::jmax (0, clipRight - labelX);
+		if (labelW <= 0)
+			return;
+
+		const auto area = juce::Rectangle<int> (labelX, button.getY(), labelW, button.getHeight());
+		g.setColour (activeScheme.text.withMultipliedAlpha (button.getAlpha()));
+		g.setFont (kBoldFont40());
+		drawIfFitsWithOptionalShrink (g, area, text, 40.0f, 14.0f);
+	};
+
+	auto drawLoaderTogglePair = [&] (int loader,
+	                                 const juce::ToggleButton& leftButton,
+	                                 const juce::String& leftText,
+	                                 const juce::ToggleButton& rightButton,
+	                                 const juce::String& rightText)
+	{
+		const int leftClip = rightButton.isVisible() ? rightButton.getX() - 6 : leftButton.getRight();
+		const int rightClip = columnRight_[loader] > 0 ? columnRight_[loader] - 10 : rightButton.getRight();
+		drawLoaderToggleLabel (leftButton, leftText, leftClip);
+		drawLoaderToggleLabel (rightButton, rightText, rightClip);
+	};
+
+	for (int loader = 0; loader < 3; ++loader)
+	{
+		auto refs = getLoaderRefs (loader);
+		if (refs.inv.isVisible() || refs.exp.isVisible())
+			drawLoaderTogglePair (loader, refs.inv, "INV", refs.exp, "EXP");
+		if (refs.chaosFilter.isVisible() || refs.chaos.isVisible())
+			drawLoaderTogglePair (loader, refs.chaosFilter, "CHSF", refs.chaos, "CHSD");
+	}
+
 	auto drawSideRail = [&] (const juce::Rectangle<int>& area, bool pointsRight)
 	{
 		if (area.isEmpty()) return;
@@ -2304,6 +2297,17 @@ void SATTRAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 // ----------------------------------------------------------------
 void SATTRAudioProcessorEditor::resized()
 {
+	if (! applyingCompactResize_)
+	{
+		const int snappedW = getCompactTargetWidthForLoaderCount (getMaxVisibleLoaderCountForWidth (getWidth()));
+		if (getWidth() != snappedW || getHeight() != kCompactFixedHeightPx)
+		{
+			juce::ScopedValueSetter<bool> guard (applyingCompactResize_, true);
+			setSize (snappedW, kCompactFixedHeightPx);
+			return;
+		}
+	}
+
 	// Persist window size to processor
 	audioProcessor.setUiEditorSize (getWidth(), getHeight());
 
@@ -2316,10 +2320,11 @@ void SATTRAudioProcessorEditor::resized()
 	
 	// Header (title area + buttons)
 	auto header = bounds.removeFromTop (40);
+	cachedHeaderTitleX_ = kCompactSideRailSlotWidthPx + 10;
 
 	// Place ALIGN button in header, next to title
 	{
-		constexpr int titleX = 16;
+		const int titleX = cachedHeaderTitleX_;
 		constexpr int titleY = 12;
 		constexpr int titleH = 32;
 		constexpr int titleW = 100; // approximate width of "SAT-TR" text
@@ -2356,14 +2361,13 @@ void SATTRAudioProcessorEditor::resized()
 		                                         firstVisibleLoaderIndex_);
 
 		auto loaderBounds = bounds;
-		const bool needsNavigationRails = visibleLoaderCount_ < kCompactMaxVisibleLoaders;
-		juce::Rectangle<int> leftRailSlot;
-		juce::Rectangle<int> rightRailSlot;
-		if (needsNavigationRails)
-		{
-			leftRailSlot = loaderBounds.removeFromLeft (kCompactSideRailSlotWidthPx);
-			rightRailSlot = loaderBounds.removeFromRight (kCompactSideRailSlotWidthPx);
+		const bool showLeftRail = firstVisibleLoaderIndex_ > 0;
+		const bool showRightRail = firstVisibleLoaderIndex_ + visibleLoaderCount_ < kCompactMaxVisibleLoaders;
+		const auto leftRailSlot = loaderBounds.removeFromLeft (kCompactSideRailSlotWidthPx);
+		const auto rightRailSlot = loaderBounds.removeFromRight (kCompactSideRailSlotWidthPx);
 
+		if (showLeftRail || showRightRail)
+		{
 			auto makeSideRail = [&] (juce::Rectangle<int> slot)
 			{
 				const int y = bounds.getY() + kCompactSideRailYInsetPx;
@@ -2380,7 +2384,7 @@ void SATTRAudioProcessorEditor::resized()
 
 		const int fixedLoadersW = juce::jmin (loaderBounds.getWidth(),
 		                                      visibleLoaderCount_ * kCompactLoaderColumnWidthPx);
-		auto fixedLoaderBounds = loaderBounds.withSizeKeepingCentre (fixedLoadersW, loaderBounds.getHeight());
+		auto fixedLoaderBounds = loaderBounds.withWidth (fixedLoadersW);
 		for (int viewSlot = 0; viewSlot < visibleLoaderCount_; ++viewSlot)
 		{
 			const int loader = firstVisibleLoaderIndex_ + viewSlot;
@@ -2530,7 +2534,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		filterPosCmb.setVisible (true);
 		sumBusCmb.setVisible (true);
 
-		// CHSF + CHSD checkboxes - CHSF aligned with sliders, CHSD aligned with value column
+		// CHSF + CHSD checkboxes - each button owns its full legend hit area.
 		constexpr int valuePadPx = 8;
 		const int chsfW = sliderW;
 		const int chsdX = checkArea.getX() + sliderW + valuePadPx;
@@ -2539,8 +2543,8 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		chaos.setBounds (chsdX, checkArea.getY(), chsdW, checkH);
 		chaosFilter.setVisible (true);
 		chaos.setVisible (true);
-		chaosDisp.setBounds (checkArea.getX(), checkArea.getY(), checkArea.getWidth(), checkH);
-		chaosDisp.setVisible (true);
+		chaosDisp.setBounds (0, 0, 0, 0);
+		chaosDisp.setVisible (false);
 
 		// Hide collapsed-only controls
 		hp.setVisible (false);     lp.setVisible (false);
@@ -2636,7 +2640,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		delayS.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
 		delayS.setVisible (true);
 
-		// Checkbox: INV + EXP
+		// Checkbox: INV + EXP - each button owns its full legend hit area.
 		constexpr int valuePadPx2 = 8;
 		const int invW = sliderW;
 		const int expX = checkArea.getX() + sliderW + valuePadPx2;
@@ -2645,8 +2649,8 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		inv.setVisible (true);
 		expBtn.setBounds (expX, checkArea.getY(), expW, checkH);
 		expBtn.setVisible (true);
-		expDisp.setBounds (expX, checkArea.getY(), expW, checkH);
-		expDisp.setVisible (true);
+		expDisp.setBounds (0, 0, 0, 0);
+		expDisp.setVisible (false);
 
 		// Hide expanded-only controls
 		in_.setVisible (false);        out.setVisible (false);     tilt.setVisible (false);
@@ -2884,51 +2888,40 @@ void SATTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 	// Click on OS label - no longer needed (now a footer combo)
 	// (removed)
 
-	// CHAOS checkboxes: left-click toggles, right-click opens chaos amount/speed prompt
+	// CHAOS checkboxes: left-click is handled by the button, right-click opens amount/speed prompt.
 	{
 		juce::ToggleButton* enableBtns[]      = { &enableButtonA,  &enableButtonB,  &enableButtonC };
 		juce::ToggleButton* chaosBtns[]       = { &chaosButtonA,   &chaosButtonB,   &chaosButtonC };
 		juce::ToggleButton* chaosFilterBtns[] = { &chaosFilterButtonA, &chaosFilterButtonB, &chaosFilterButtonC };
-		juce::Label*        chaosDisps[]      = { &chaosDisplayA,  &chaosDisplayB,  &chaosDisplayC };
 
 		for (int i = 0; i < 3; ++i)
 		{
 			if (! enableBtns[i]->getToggleState())
 				continue;
 
-			// Hit-test chaos filter button or its display overlay half
 			const bool hitFilter = chaosFilterBtns[i]->isVisible()
-				&& (chaosFilterBtns[i]->getBounds().contains (p)
-				|| (chaosDisps[i]->isVisible() && chaosDisps[i]->getBounds().contains (p)
-					&& p.x < chaosFilterBtns[i]->getBounds().getRight()));
+				&& chaosFilterBtns[i]->getBounds().contains (p);
 
-			// Hit-test chaos delay button or its display overlay half
 			const bool hitDelay = !hitFilter
 				&& chaosBtns[i]->isVisible()
-				&& (chaosBtns[i]->getBounds().contains (p)
-					|| (chaosDisps[i]->isVisible() && chaosDisps[i]->getBounds().contains (p)
-						&& p.x >= chaosBtns[i]->getBounds().getX()));
+				&& chaosBtns[i]->getBounds().contains (p);
 
 			if (hitFilter)
 			{
 				if (e.mods.isPopupMenu())
 					openChaosPrompt (i, true);
-				else
-					chaosFilterBtns[i]->setToggleState (! chaosFilterBtns[i]->getToggleState(), juce::sendNotificationSync);
 				return;
 			}
 			if (hitDelay)
 			{
 				if (e.mods.isPopupMenu())
 					openChaosPrompt (i, false);
-				else
-					chaosBtns[i]->setToggleState (! chaosBtns[i]->getToggleState(), juce::sendNotificationSync);
 				return;
 			}
 		}
 	}
 
-	// EXP button: left-click toggles, right-click opens EXP prompt
+	// EXP checkbox: left-click is handled by the button, right-click opens EXP prompt.
 	{
 		juce::ToggleButton* enableBtns[] = { &enableButtonA,  &enableButtonB,  &enableButtonC };
 		juce::ToggleButton* expBtns[]    = { &expButtonA,     &expButtonB,     &expButtonC };
@@ -2947,8 +2940,6 @@ void SATTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 			{
 				if (e.mods.isPopupMenu())
 					openExpPrompt (i);
-				else
-					expBtns[i]->setToggleState (! expBtns[i]->getToggleState(), juce::sendNotificationSync);
 				return;
 			}
 		}
@@ -3011,13 +3002,13 @@ void SATTRAudioProcessorEditor::setupBar (juce::Slider& s)
 int SATTRAudioProcessorEditor::getCompactTargetWidthForLoaderCount (int loaderCount) noexcept
 {
 	const int safeCount = juce::jlimit (kCompactMinVisibleLoaders, kCompactMaxVisibleLoaders, loaderCount);
-	const int railSlots = safeCount < kCompactMaxVisibleLoaders ? kCompactSideRailSlotWidthPx * 2 : 0;
+	const int railSlots = kCompactSideRailSlotWidthPx * 2;
 	return safeCount * kCompactLoaderColumnWidthPx + railSlots;
 }
 
 int SATTRAudioProcessorEditor::getMaxVisibleLoaderCountForWidth (int width) noexcept
 {
-	if (width >= getCompactTargetWidthForLoaderCount (3))
+	if (width >= kCompactMaxVisibleLoaders * kCompactLoaderColumnWidthPx)
 		return 3;
 	if (width >= getCompactTargetWidthForLoaderCount (2))
 		return 2;
@@ -3137,8 +3128,11 @@ void SATTRAudioProcessorEditor::layoutFooterControls (juce::Rectangle<int> area)
 	trimCombo.setVisible (false);
 	trimCombo.setBounds (0, 0, 0, 0);
 
-	const int panelW = juce::jmin (kCompactFooterPanelWidthPx, juce::jmax (1, area.getWidth() - 32));
-	auto panel = area.withSizeKeepingCentre (panelW, area.getHeight()).reduced (0, 28);
+	const int contentX = juce::jmax (0, cachedHeaderTitleX_);
+	const int availableW = juce::jmax (1, area.getWidth() - contentX * 2);
+	const int panelW = juce::jmin (kCompactFooterPanelWidthPx, availableW);
+	const int panelX = area.getX() + (area.getWidth() - panelW) / 2;
+	auto panel = area.withX (panelX).withWidth (panelW).reduced (0, 28);
 	cachedFooterPanelArea_ = panel;
 	const int barH = 30;
 	const int comboH = 34;
@@ -5202,7 +5196,7 @@ void SATTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 		juce::ModalCallbackFunction::create (
 			[safeThis, aw, amtBar, spdBar,
 			 savedAmt = currentAmt, savedSpd = currentSpd,
-			 amtId, spdId, loaderIndex, spdLogMin, spdLogRange] (int result) mutable
+			 amtId, spdId, loaderIndex, isFilter, spdLogMin, spdLogRange] (int result) mutable
 		{
 			std::unique_ptr<juce::AlertWindow> killer (aw);
 
@@ -5228,8 +5222,10 @@ void SATTRAudioProcessorEditor::openChaosPrompt (int loaderIndex, bool isFilter)
 			                                    SATTRAudioProcessor::kChaosSpdMax,
 			                                    std::exp (spdLogMin + juce::jlimit (0.0f, 1.0f, spdBar->value) * spdLogRange));
 			auto tip = formatChaosTooltip (newAmt, newSpd);
-			auto& disp = loaderIndex == 0 ? safeThis->chaosDisplayA : (loaderIndex == 1 ? safeThis->chaosDisplayB : safeThis->chaosDisplayC);
-			disp.setTooltip (tip);
+			auto& button = isFilter
+			             ? (loaderIndex == 0 ? safeThis->chaosFilterButtonA : (loaderIndex == 1 ? safeThis->chaosFilterButtonB : safeThis->chaosFilterButtonC))
+			             : (loaderIndex == 0 ? safeThis->chaosButtonA       : (loaderIndex == 1 ? safeThis->chaosButtonB       : safeThis->chaosButtonC));
+			button.setTooltip (tip);
 		}),
 		false);
 }
@@ -6425,13 +6421,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 				if (auto* p = vts.getParameter (scGainParamId))
 					p->setValueNotifyingHost (p->convertTo0to1 (newScGain));
 
-				auto tip = formatExpTooltip (*orderState, newRatio, newThresh, newScHp, newScLp,
-				                            newScHpOn, newScLpOn, newScHpSlope, newScLpSlope, newScGain);
-				if (newKnee > 0.05f)
-					tip += " | K " + juce::String (newKnee, 1) + " dB";
-				auto& disp = loaderIndex == 0 ? safeThis->expDisplayA
-				           : (loaderIndex == 1 ? safeThis->expDisplayB : safeThis->expDisplayC);
-				disp.setTooltip (tip);
+				auto& button = loaderIndex == 0 ? safeThis->expButtonA
+				             : (loaderIndex == 1 ? safeThis->expButtonB : safeThis->expButtonC);
+				button.setTooltip (formatExpTooltip (*orderState, newRatio));
 			}
 
 			delete viewport;
