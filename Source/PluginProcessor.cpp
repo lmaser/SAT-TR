@@ -1462,7 +1462,7 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		state.lastMix = wetEnd;
 	};
 
-	// Count how many loaders are active (for parallel compensation)
+	// Count how many loaders are active for parallel routing decisions.
 	auto countEnabled = [&] (bool a, bool b, bool c) -> int
 	{
 		return (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0);

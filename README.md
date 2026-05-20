@@ -9,7 +9,7 @@ It combines 6 saturation algorithms, oversampling up to x16, per-loader dynamics
 
 SAT-TR does not use one generic waveshaper for every mode. It combines physically-informed stages and fitted black-box models, depending on the algorithm, so each saturation family keeps its own gain staging, voicing, dynamics, and anti-aliasing strategy.
 
-Three independent loader slots can each run their own saturation model alongside per-loader gain staging, tilt, filters, expander/gate, chaos modulation, delay compensation, and Mid/Side bus routing. Loaders are routed through one of four topologies (series, parallel, or hybrid), with optional global wet limiting, normalization, oversampling, and auto-alignment.
+Three independent loader slots can each run their own saturation model alongside per-loader gain staging, tilt, filters, expander/gate, chaos modulation, delay compensation, and Mid/Side bus routing. Loaders are routed through one of six topologies (series, parallel, or hybrid), with optional global wet limiting, normalization, oversampling, and auto-alignment.
 
 The saturation engine uses ADAA-backed nonlinear stages where they matter, per-model dynamics blocks (`SAG`, `COMP`, `PEAK` depending on algorithm), analog-style instability/drift, and multi-pass series processing for denser amplifier-style stacking.
 
