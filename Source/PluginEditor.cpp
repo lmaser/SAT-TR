@@ -3459,13 +3459,15 @@ juce::Slider* SATTRAudioProcessorEditor::getSliderForValueAreaPoint (juce::Point
 		const int colR = columnRight_[i];
 
 		BarSlider* sliders[] = { &r.hp, &r.lp, &r.in, &r.out, &r.tilt,
-		                         &r.pan, &r.fred, &r.pos, &r.detail, &r.instability };
+		                         &r.pan, &r.fred, &r.pos,
+		                         &r.satDrive, &r.satGirth, &r.satMod, &r.satBias, &r.satSag,
+		                         &r.detail, &r.instability, &r.delay };
 
 		for (auto* s : sliders)
-			if (s->isVisible() && getValueAreaFor (s->getBounds(), colR).contains (p))
+			if (s->isVisible() && s->isEnabled() && getValueAreaFor (s->getBounds(), colR).contains (p))
 				return s;
 
-		if (r.mix.isVisible() && getValueAreaFor (r.mix.getBounds(), colR).contains (p))
+		if (r.mix.isVisible() && r.mix.isEnabled() && getValueAreaFor (r.mix.getBounds(), colR).contains (p))
 			return &r.mix;
 	}
 
