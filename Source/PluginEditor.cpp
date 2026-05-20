@@ -111,20 +111,25 @@ namespace
 	constexpr int kCompactFixedHeightPx = 752;
 	constexpr int kCompactMinVisibleLoaders = 1;
 	constexpr int kCompactMaxVisibleLoaders = 3;
-	constexpr int kCompactSideRailWidthPx = 18;
-	constexpr int kCompactSideRailSlotWidthPx = 32;
-	constexpr int kCompactRailContentGapPx = 2;
-	constexpr int kCompactSideRailYInsetPx = 86;
+	constexpr int kCompactEdgeReserveWidthPx = 18;
+	constexpr int kCompactEdgeReserveSlotPx = 32;
+	constexpr int kCompactEdgeContentGapPx = 2;
+	constexpr int kCompactLoaderTabYInsetPx = 86;
+	constexpr int kCompactLoaderTabWidthPx = 34;
+	constexpr int kCompactLoaderTabHeightPx = 52;
+	constexpr int kCompactLoaderTabGapPx = 10;
+	constexpr int kCompactLoaderTabSafeInsetRightPx = 10;
 	constexpr int kCompactFooterRailSlotHeightPx = 34;
-	constexpr int kCompactFooterRailHeightPx = 22;
+	constexpr int kCompactFooterRailHeightPx = 28;
+	constexpr int kCompactFooterRailWidthPx = 132;
 	constexpr int kCompactFooterRailXInsetPx = 18;
 	constexpr int kCompactFooterPanelWidthPx = 500;
 
 	constexpr int getCompactLoaderContentSideInsetPx() noexcept
 	{
 		// Keep the external compact width equal to the simple plugins while
-		// reserving safe space for side-rail overlays inside each loader.
-		return ((kCompactSideRailSlotWidthPx + kCompactSideRailWidthPx) / 2) + kCompactRailContentGapPx;
+		// reserving safe space for edge tabs inside each loader.
+		return ((kCompactEdgeReserveSlotPx + kCompactEdgeReserveWidthPx) / 2) + kCompactEdgeContentGapPx;
 	}
 
 	juce::Rectangle<int> makeFooterValueArea (const juce::Rectangle<int>& barBounds, int valueWidthPx)
@@ -2243,67 +2248,56 @@ void SATTRAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 			drawLoaderTogglePair (loader, refs.chaosFilter, "CHSF", refs.chaos, "CHSD");
 	}
 
-	auto drawSideRail = [&] (const juce::Rectangle<int>& area, bool pointsRight)
+	auto makeLoaderTabLabel = [] (int startIndex, int visibleCount)
 	{
-		if (area.isEmpty()) return;
+		static constexpr const char* singleLabels[] = { "A", "B", "C" };
+		if (visibleCount <= 1)
+			return juce::String (singleLabels[juce::jlimit (0, 2, startIndex)]);
 
-		const float radius = (float) area.getWidth() * 0.55f;
-		g.setColour (activeScheme.fg.withAlpha (0.25f));
-		g.fillRoundedRectangle (area.toFloat(), radius);
+		if (visibleCount == 2)
+			return startIndex <= 0 ? juce::String ("AB") : juce::String ("BC");
 
-		const float triW = (float) area.getWidth() * 0.75f;
-		const float triH = triW * 1.15f;
-		const float cx = (float) area.getCentreX();
-		const float cy = (float) area.getCentreY();
-
-		juce::Path tri;
-		if (pointsRight)
-		{
-			tri.addTriangle (cx - triW * 0.35f, cy - triH * 0.5f,
-			                 cx - triW * 0.35f, cy + triH * 0.5f,
-			                 cx + triW * 0.35f, cy);
-		}
-		else
-		{
-			tri.addTriangle (cx + triW * 0.35f, cy - triH * 0.5f,
-			                 cx + triW * 0.35f, cy + triH * 0.5f,
-			                 cx - triW * 0.35f, cy);
-		}
-
-		g.setColour (activeScheme.text);
-		g.fillPath (tri);
+		return juce::String();
 	};
 
-	drawSideRail (cachedLeftLoaderRailArea_, false);
-	drawSideRail (cachedRightLoaderRailArea_, true);
+	for (int i = 0; i < cachedLoaderTabCount_; ++i)
+	{
+		const auto area = cachedLoaderTabAreas_[i];
+		if (area.isEmpty())
+			continue;
+
+		const bool selected = cachedLoaderTabStartIndices_[i] == firstVisibleLoaderIndex_;
+		const auto tabBounds = area.toFloat();
+		const float radius = 8.0f;
+
+		g.setColour (selected ? activeScheme.text : activeScheme.bg);
+		g.fillRoundedRectangle (tabBounds, radius);
+		g.setColour (activeScheme.text);
+		g.drawRoundedRectangle (tabBounds.reduced (1.0f), radius, 2.0f);
+
+		g.setColour (selected ? activeScheme.bg : activeScheme.text);
+		g.setFont (juce::Font (juce::FontOptions (16.0f).withStyle ("Bold")));
+		g.drawFittedText (makeLoaderTabLabel (cachedLoaderTabStartIndices_[i], visibleLoaderCount_),
+		                  area.reduced (3, 0),
+		                  juce::Justification::centred,
+		                  1);
+	}
 
 	if (! cachedFooterRailArea_.isEmpty())
 	{
-		const float radius = (float) cachedFooterRailArea_.getHeight() * 0.3f;
-		g.setColour (activeScheme.fg.withAlpha (0.25f));
-		g.fillRoundedRectangle (cachedFooterRailArea_.toFloat(), radius);
-
-		const float triH = (float) cachedFooterRailArea_.getHeight() * 0.78f;
-		const float triW = triH * 1.125f;
-		const float cx = (float) cachedFooterRailArea_.getCentreX();
-		const float cy = (float) cachedFooterRailArea_.getCentreY();
-
-		juce::Path tri;
-		if (footerExpanded_)
-		{
-			tri.addTriangle (cx - triW * 0.5f, cy + triH * 0.35f,
-			                 cx + triW * 0.5f, cy + triH * 0.35f,
-			                 cx,               cy - triH * 0.35f);
-		}
-		else
-		{
-			tri.addTriangle (cx - triW * 0.5f, cy - triH * 0.35f,
-			                 cx + triW * 0.5f, cy - triH * 0.35f,
-			                 cx,               cy + triH * 0.35f);
-		}
-
+		const auto tabBounds = cachedFooterRailArea_.toFloat();
+		const float radius = (float) cachedFooterRailArea_.getHeight() * 0.28f;
+		g.setColour (footerExpanded_ ? activeScheme.text : activeScheme.bg);
+		g.fillRoundedRectangle (tabBounds, radius);
 		g.setColour (activeScheme.text);
-		g.fillPath (tri);
+		g.drawRoundedRectangle (tabBounds.reduced (1.0f), radius, 2.0f);
+
+		g.setColour (footerExpanded_ ? activeScheme.bg : activeScheme.text);
+		g.setFont (juce::Font (juce::FontOptions (15.0f).withStyle ("Bold")));
+		g.drawFittedText ("GLOBAL",
+		                  cachedFooterRailArea_.reduced (8, 0),
+		                  juce::Justification::centred,
+		                  1);
 	}
 
 	if (tooltipVisible)
@@ -2355,9 +2349,13 @@ void SATTRAudioProcessorEditor::resized()
 
 	// Bottom rail toggles between loader view and the global footer view.
 	auto footerRailSlot = bounds.removeFromBottom (kCompactFooterRailSlotHeightPx);
-	cachedFooterRailArea_ = footerRailSlot
-		.reduced (kCompactFooterRailXInsetPx, juce::jmax (0, (footerRailSlot.getHeight() - kCompactFooterRailHeightPx) / 2))
-		.withHeight (kCompactFooterRailHeightPx);
+	const int footerTabW = juce::jmin (kCompactFooterRailWidthPx,
+	                                   juce::jmax (0, footerRailSlot.getWidth() - (kCompactFooterRailXInsetPx * 2)));
+	const int footerTabH = juce::jmin (kCompactFooterRailHeightPx, footerRailSlot.getHeight());
+	cachedFooterRailArea_ = juce::Rectangle<int> (footerRailSlot.getCentreX() - (footerTabW / 2),
+	                                              footerRailSlot.getCentreY() - (footerTabH / 2),
+	                                              footerTabW,
+	                                              footerTabH);
 
 	if (footerExpanded_)
 	{
@@ -2379,26 +2377,24 @@ void SATTRAudioProcessorEditor::resized()
 		                                         firstVisibleLoaderIndex_);
 
 		auto loaderBounds = bounds;
-		const bool showLeftRail = firstVisibleLoaderIndex_ > 0;
-		const bool showRightRail = firstVisibleLoaderIndex_ + visibleLoaderCount_ < kCompactMaxVisibleLoaders;
-		const auto leftRailSlot = bounds.withWidth (kCompactSideRailSlotWidthPx);
-		const auto rightRailSlot = bounds.withX (bounds.getRight() - kCompactSideRailSlotWidthPx)
-		                                .withWidth (kCompactSideRailSlotWidthPx);
-
-		if (showLeftRail || showRightRail)
+		if (visibleLoaderCount_ < kCompactMaxVisibleLoaders)
 		{
-			auto makeSideRail = [&] (juce::Rectangle<int> slot)
-			{
-				const int y = bounds.getY() + kCompactSideRailYInsetPx;
-				const int h = juce::jmax (0, bounds.getHeight() - kCompactSideRailYInsetPx * 2);
-				return juce::Rectangle<int> { slot.getCentreX() - (kCompactSideRailWidthPx / 2), y,
-				                              kCompactSideRailWidthPx, h };
-			};
+			cachedLoaderTabCount_ = kCompactMaxVisibleLoaders - visibleLoaderCount_ + 1;
+			const int totalTabsH = cachedLoaderTabCount_ * kCompactLoaderTabHeightPx
+			                     + (cachedLoaderTabCount_ - 1) * kCompactLoaderTabGapPx;
+			const int railTop = bounds.getY() + kCompactLoaderTabYInsetPx;
+			const int railH = juce::jmax (0, bounds.getHeight() - kCompactLoaderTabYInsetPx * 2);
+			const int firstY = railTop + juce::jmax (0, (railH - totalTabsH) / 2);
+			const int x = bounds.getRight() - kCompactLoaderTabWidthPx;
 
-			if (firstVisibleLoaderIndex_ > 0)
-				cachedLeftLoaderRailArea_ = makeSideRail (leftRailSlot);
-			if (firstVisibleLoaderIndex_ + visibleLoaderCount_ < kCompactMaxVisibleLoaders)
-				cachedRightLoaderRailArea_ = makeSideRail (rightRailSlot);
+			for (int i = 0; i < cachedLoaderTabCount_; ++i)
+			{
+				cachedLoaderTabStartIndices_[i] = i;
+				cachedLoaderTabAreas_[i] = { x,
+				                             firstY + i * (kCompactLoaderTabHeightPx + kCompactLoaderTabGapPx),
+				                             kCompactLoaderTabWidthPx,
+				                             kCompactLoaderTabHeightPx };
+			}
 		}
 
 		const int fixedLoadersW = juce::jmin (loaderBounds.getWidth(),
@@ -2410,7 +2406,8 @@ void SATTRAudioProcessorEditor::resized()
 			auto loaderArea = (viewSlot == visibleLoaderCount_ - 1) ? fixedLoaderBounds
 			                                                       : fixedLoaderBounds.removeFromLeft (kCompactLoaderColumnWidthPx);
 			columnLeft_[loader] = loaderArea.getX() + getCompactLoaderContentSideInsetPx();
-			columnRight_[loader] = loaderArea.getRight() - getCompactLoaderContentSideInsetPx();
+			columnRight_[loader] = loaderArea.getRight() - getCompactLoaderContentSideInsetPx()
+			                     - kCompactLoaderTabSafeInsetRightPx;
 			layoutLoaderSection (loaderArea, loader);
 		}
 	}
@@ -2433,6 +2430,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	const int railSafeInsetPx = juce::jmax (0, getCompactLoaderContentSideInsetPx() - margin);
 	area.reduce (railSafeInsetPx, 0);
 	area.reduce (margin, margin);
+	area.removeFromRight (kCompactLoaderTabSafeInsetRightPx);
 
 	// Enable checkbox at top
 	auto& enableBtn = pick (enableButtonA, enableButtonB, enableButtonC);
@@ -2484,8 +2482,9 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	const int comboLabelGap2 = 19;
 	const int checkH = 42;
 
-	// Compute per-view: expanded has 8 rows, collapsed has 10
-	const int numRows = expanded ? 8 : 10;
+	// Both views share the same 10-row grid so the algorithm/RAW anchor and
+	// the first parameter row line up exactly when toggling compact sections.
+	const int numRows = 10;
 	const int bottomSpacer = expanded ? (gap * 2) : (comboLabelGap2 + gap * 2);
 	auto contentArea = area;
 	auto checkArea = contentArea.removeFromBottom (checkH);
@@ -2495,7 +2494,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	// expanded/collapsed state. The variable-height content above it is what
 	// absorbs resize rounding.
 	const int layoutOverhead = expanded
-	                         ? ((gap * 6) + modeLabelGap + comboLabelGap2)
+	                         ? ((gap * 6) + (modeLabelGap * 2) + comboLabelGap2)
 	                         : (modeLabelGap + (gap * 8));
 	const int sliderH = juce::jmax (18, (contentArea.getHeight() - layoutOverhead) / numRows);
 	const int visualSliderH = juce::jlimit (24, 30, sliderH);
@@ -2507,7 +2506,17 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 
 	if (expanded)
 	{
-		// -- Expanded IO view: IN, OUT, TILT, FILTER, PAN, MIX, MODE IN/OUT, CHAOS --
+		// -- Expanded IO view: algorithm/RAW anchor, IN, OUT, TILT, FILTER, PAN, MIX, MODE IN/OUT, CHAOS --
+
+		auto& satTypeCmb = pick (satTypeComboA, satTypeComboB, satTypeComboC);
+		auto& rawBtn     = pick (rawButtonA,    rawButtonB,    rawButtonC);
+		auto comboRow = contentArea.removeFromTop (sliderH);
+		satTypeCmb.setBounds (fitControlHeight (comboRow.removeFromLeft (sliderW), visualComboH));
+		satTypeCmb.setVisible (true);
+		constexpr int rawGap = 6;
+		rawBtn.setBounds (fitControlHeight ({ comboRow.getX() + rawGap, comboRow.getY(), comboRow.getWidth() - rawGap, sliderH }, visualSliderH));
+		rawBtn.setVisible (true);
+		contentArea.removeFromTop (modeLabelGap);
 
 		auto sliderRow = contentArea.removeFromTop (sliderH);
 		in_.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
@@ -2575,7 +2584,6 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		expBtn.setVisible (false);  expDisp.setVisible (false);
 
 		// Hide sat sliders (collapsed-only)
-		auto& satTypeCmb = pick (satTypeComboA, satTypeComboB, satTypeComboC);
 		auto& drive = pick (satDriveSliderA, satDriveSliderB, satDriveSliderC);
 		auto& girthS = pick (satGirthSliderA, satGirthSliderB, satGirthSliderC);
 		auto& sModS  = pick (satModSliderA,   satModSliderB,   satModSliderC);
@@ -2583,10 +2591,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		auto& sSagS  = pick (satSagSliderA,   satSagSliderB,   satSagSliderC);
 		auto& detailS = pick (detailSliderA, detailSliderB, detailSliderC);
 		auto& sInstabilityS  = pick (instabilitySliderA,      instabilitySliderB,      instabilitySliderC);
-		auto& rawBtn = pick (rawButtonA,      rawButtonB,      rawButtonC);
 		auto& delayS = pick (delaySliderA,    delaySliderB,    delaySliderC);
-		satTypeCmb.setVisible (false);
-		rawBtn.setVisible (false);
 		drive.setVisible (false);  girthS.setVisible (false);
 		sModS.setVisible (false);  sBiasS.setVisible (false);  sSagS.setVisible (false);
 		detailS.setVisible (false); sInstabilityS.setVisible (false);  delayS.setVisible (false);
@@ -2875,16 +2880,13 @@ void SATTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 			return;
 		}
 
-		if (cachedLeftLoaderRailArea_.contains (p))
+		for (int i = 0; i < cachedLoaderTabCount_; ++i)
 		{
-			setFirstVisibleLoaderIndex (firstVisibleLoaderIndex_ - 1);
-			return;
-		}
-
-		if (cachedRightLoaderRailArea_.contains (p))
-		{
-			setFirstVisibleLoaderIndex (firstVisibleLoaderIndex_ + 1);
-			return;
+			if (cachedLoaderTabAreas_[i].contains (p))
+			{
+				setFirstVisibleLoaderIndex (cachedLoaderTabStartIndices_[i]);
+				return;
+			}
 		}
 	}
 
@@ -3037,17 +3039,27 @@ int SATTRAudioProcessorEditor::getCompactTargetWidthForLoaderCount (int loaderCo
 
 int SATTRAudioProcessorEditor::getMaxVisibleLoaderCountForWidth (int width) noexcept
 {
-	if (width >= getCompactTargetWidthForLoaderCount (kCompactMaxVisibleLoaders))
+	const int oneLoaderW = getCompactTargetWidthForLoaderCount (1);
+	const int twoLoadersW = getCompactTargetWidthForLoaderCount (2);
+	const int threeLoadersW = getCompactTargetWidthForLoaderCount (3);
+	const int twoLoaderThreshold = (oneLoaderW + twoLoadersW) / 2;
+	const int threeLoaderThreshold = (twoLoadersW + threeLoadersW) / 2;
+
+	if (width >= threeLoaderThreshold)
 		return 3;
-	if (width >= getCompactTargetWidthForLoaderCount (2))
+	if (width >= twoLoaderThreshold)
 		return 2;
 	return 1;
 }
 
 void SATTRAudioProcessorEditor::clearCompactRailAreas() noexcept
 {
-	cachedLeftLoaderRailArea_ = {};
-	cachedRightLoaderRailArea_ = {};
+	cachedLoaderTabCount_ = 0;
+	for (int i = 0; i < 3; ++i)
+	{
+		cachedLoaderTabAreas_[i] = {};
+		cachedLoaderTabStartIndices_[i] = 0;
+	}
 	cachedFooterRailArea_ = {};
 	cachedFooterPanelArea_ = {};
 	cachedFooterTitleArea_ = {};

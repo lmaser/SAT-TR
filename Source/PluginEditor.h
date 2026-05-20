@@ -558,15 +558,16 @@ private:
 	juce::Rectangle<int> cachedToggleBarAreaB_;
 	juce::Rectangle<int> cachedToggleBarAreaC_;
 
-	// Loader/footer compaction state. Phase 1 keeps this inert; later phases
-	// will use it to switch between 1/2/3 visible loaders and footer focus.
+	// Loader/footer compaction state: switches between 1/2/3 visible loaders
+	// and the GLOBAL footer focus without changing processing.
 	int visibleLoaderCount_ = 3;
 	int firstVisibleLoaderIndex_ = 0;
 	bool footerExpanded_ = false;
 	bool applyingCompactResize_ = false;
 	int cachedHeaderTitleX_ = 16;
-	juce::Rectangle<int> cachedLeftLoaderRailArea_;
-	juce::Rectangle<int> cachedRightLoaderRailArea_;
+	juce::Rectangle<int> cachedLoaderTabAreas_[3];
+	int cachedLoaderTabStartIndices_[3] = {};
+	int cachedLoaderTabCount_ = 0;
 	juce::Rectangle<int> cachedFooterRailArea_;
 	juce::Rectangle<int> cachedFooterPanelArea_;
 	juce::Rectangle<int> cachedFooterTitleArea_;
