@@ -2086,12 +2086,12 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 			if (! modeIn.isVisible()) return;
 			const float alpha = enableBtn.getToggleState() ? 1.0f : 0.35f;
 			g.setColour (activeScheme.text.withAlpha (alpha));
-			const auto font = juce::Font (juce::FontOptions (15.0f).withStyle ("Bold"));
+			const auto font = juce::Font (juce::FontOptions (17.0f).withStyle ("Bold"));
 			g.setFont (font);
-			const auto miArea = modeIn.getBounds().withHeight (18).translated (0, -19);
-			const auto moArea = modeOut.getBounds().withHeight (18).translated (0, -19);
-			const auto sbArea = sumBus.getBounds().withHeight (18).translated (0, -19);
-			const auto fpArea = filterPos.getBounds().withHeight (18).translated (0, -19);
+			const auto miArea = modeIn.getBounds().withHeight (20).translated (0, -21);
+			const auto moArea = modeOut.getBounds().withHeight (20).translated (0, -21);
+			const auto sbArea = sumBus.getBounds().withHeight (20).translated (0, -21);
+			const auto fpArea = filterPos.getBounds().withHeight (20).translated (0, -21);
 			const float comboW = (float) modeIn.getWidth();
 			juce::GlyphArrangement ga;
 			ga.addLineOfText (font, "MODE OUT", 0.0f, 0.0f);
@@ -2437,13 +2437,14 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	                     :                      ioExpandedC_;
 
 	const int modeLabelGap = gap * 2;
-	const int comboLabelGap2 = 19;
+	const int modeComboLabelOffset = 21;
+	const int modeComboGapY = 8;
 	const int checkH = 42;
 
 	// Both views share the same 10-row grid so the algorithm/RAW anchor and
 	// the first parameter row line up exactly when toggling compact sections.
 	const int numRows = 10;
-	const int bottomSpacer = expanded ? (gap * 2) : (comboLabelGap2 + gap * 2);
+	const int bottomSpacer = expanded ? (gap * 2) : (modeComboLabelOffset + gap * 2);
 	auto contentArea = area;
 	auto checkArea = contentArea.removeFromBottom (checkH);
 	contentArea.removeFromBottom (bottomSpacer);
@@ -2452,7 +2453,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	// expanded/collapsed state. The variable-height content above it is what
 	// absorbs resize rounding.
 	const int layoutOverhead = expanded
-	                         ? ((gap * 6) + (modeLabelGap * 2) + comboLabelGap2)
+	                         ? ((gap * 6) + modeLabelGap + modeComboLabelOffset + modeComboGapY + modeComboLabelOffset)
 	                         : (modeLabelGap + (gap * 8));
 	const int sliderH = juce::jmax (18, (contentArea.getHeight() - layoutOverhead) / numRows);
 	const int visualSliderH = juce::jlimit (24, 30, sliderH);
@@ -2507,16 +2508,22 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		contentArea.removeFromTop (gap);
 
 		// MODE IN / MODE OUT / F/T / SUM BUS combos (2x2 grid, same height as sliders)
-		contentArea.removeFromTop (modeLabelGap);
 		const int modeComboW = (sliderW - gap) / 2;
 		const int comboSlotH = juce::jlimit (38, 48, sliderH + 14);
-		auto modeRow1 = contentArea.removeFromTop (comboSlotH);
+		const int modeComboBlockH = modeComboLabelOffset + comboSlotH
+		                          + modeComboGapY + modeComboLabelOffset + comboSlotH;
+		const int modeBlockTopLimit = mix.getBottom() + gap;
+		const int modeBlockBottomLimit = checkArea.getY() - gap;
+		const int availableModeBlockH = juce::jmax (modeComboBlockH, modeBlockBottomLimit - modeBlockTopLimit);
+		const int modeVisualTop = modeBlockTopLimit + juce::jmax (0, (availableModeBlockH - modeComboBlockH) / 2);
+		const int modeY = modeVisualTop + modeComboLabelOffset;
+		const int modeX = contentArea.getX();
+		auto modeRow1 = juce::Rectangle<int> (modeX, modeY, sliderW, comboSlotH);
 		modeInCmb.setBounds  (fitControlHeight ({ modeRow1.getX(), modeRow1.getY(), modeComboW, comboSlotH }, visualComboH));
 		modeOutCmb.setBounds (fitControlHeight ({ modeRow1.getX() + modeComboW + gap, modeRow1.getY(), modeComboW, comboSlotH }, visualComboH));
 		modeInCmb.setVisible (true);
 		modeOutCmb.setVisible (true);
-		contentArea.removeFromTop (comboLabelGap2);
-		auto modeRow2 = contentArea.removeFromTop (comboSlotH);
+		auto modeRow2 = juce::Rectangle<int> (modeX, modeY + comboSlotH + modeComboGapY + modeComboLabelOffset, sliderW, comboSlotH);
 		filterPosCmb.setBounds (fitControlHeight ({ modeRow2.getX(), modeRow2.getY(), modeComboW, comboSlotH }, visualComboH));
 		sumBusCmb.setBounds    (fitControlHeight ({ modeRow2.getX() + modeComboW + gap, modeRow2.getY(), modeComboW, comboSlotH }, visualComboH));
 		filterPosCmb.setVisible (true);
