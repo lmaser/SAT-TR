@@ -46,15 +46,15 @@ Saturation model selector. 6 algorithms:
 | **TUBE** | Triode / power-tube inspired stage | `DRIVE`, `BODY`, `TYPE`, `BIAS`, `SAG` |
 | **TRANSISTOR** | BJT <-> FET solid-state preamp / fuzz stage | `GAIN`, `BODY`, `TYPE`, `BIAS`, `COMP` |
 | **DIODE** | Diode overdrive family (`feedback -> hard -> open`) | `DRIVE`, `COND`, `TOPO`, `SYM`, `COMP` |
-| **CLIPPER** | Broadband / pedal clipper family (`classic -> TS -> Klon`) | `THR`, `KNEE`, `VOICE`, `SYM`, `PEAK` |
+| **CLIPPER** | Broadband / pedal clipper family (`classic -> TS -> Klon`) | `DRIVE`, `KNEE`, `VOICE`, `SYM`, `PEAK` |
 
-#### DRIVE / GAIN / THR
+#### DRIVE / GAIN
 
 Primary amount control. The visible label changes with the selected algorithm:
 
 - **DRIVE**: primary saturation amount
 - **GAIN**: transistor input drive / stage push
-- **THR**: clip-threshold style control in `CLIPPER`
+- In `CLIPPER`, **DRIVE** is implemented internally as clip-threshold drive: higher values lower the effective threshold and produce more clipping.
 
 #### GIRTH / BODY / COND / KNEE
 

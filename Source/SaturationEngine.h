@@ -2278,7 +2278,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
         xStage += bodyPreLp * bodyCurve * lfFeedAmt;
     }
 
-    if (!rawMode && react > 0.0001f)
+    if (react > 0.0001f)
     {
         const float sagSense = getTriodeSagSenseInput (xStage);
         const TriodeReactResult triodeComp = processTriodeReact (
@@ -3315,15 +3315,13 @@ inline void processBlock (State& state,
         }
     }
     state.currentSeriesCount = requestedSeriesCount;
-    const bool rawStripFilters = rawMode && (model == Model::Tape || model == Model::Tube
-                                          || model == Model::Transistor
-                                          || model == Model::Diode);
-
     if (rawMode)
     {
         for (int ch = 0; ch < 2; ++ch)
             state.safetyLpf[ch].reset();
 
+        // RAW strips wrapper colour/filter state only. Model dynamics such as
+        // SAG/COMP/PEAK remain active when their control is enabled.
         for (int sp = 0; sp < state.currentSeriesCount; ++sp)
         {
             for (int ch = 0; ch < 2; ++ch)
@@ -3331,24 +3329,6 @@ inline void processBlock (State& state,
                 state.emphasis[sp][ch].reset();
                 state.dcX[sp][ch] = 0.0f;
                 state.dcY[sp][ch] = 0.0f;
-                if (!(rawMode && model == Model::Tape))
-                    state.sagEnvelope[sp][ch] = 0.0f;
-
-                if (model == Model::Tape)
-                {
-                    if (!rawMode)
-                    {
-                        state.dynamicsComp[sp][ch].reset();
-                        state.tapeFlux[sp][ch] = 0.0f;
-                        state.tapeStressEnv[sp][ch] = 0.0f;
-                    }
-                }
-
-                if (model == Model::Diode)
-                    state.dynamicsComp[sp][ch].reset();
-
-                if (model == Model::Tube)
-                    state.triodeReact[sp][ch].reset();
             }
         }
     }
@@ -3513,9 +3493,7 @@ inline void processBlock (State& state,
                 MultibandSagResult mbSag;
                 bool useMbSag = false;
 
-                if (react > 0.001f && model != Model::Tube && model != Model::Transistor
-                    && !(rawStripFilters && (model == Model::Transistor
-                                          || model == Model::Clipper || model == Model::Diode)))
+                if (react > 0.001f && model != Model::Tube && model != Model::Transistor)
                 {
                     const int window = std::min (
                         (int) ((float) reactBaseWindow * (1.0f + react * 3.0f) * sampleRate / 44100.0f),

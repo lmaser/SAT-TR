@@ -3296,7 +3296,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 				reactLabels[l] = "COMP";
 				break;
 			case 5:
-				driveLabels[l] = "THR";
+				driveLabels[l] = "DRIVE";
 				girthLabels[l] = "KNEE";
 				modLabels[l]   = "VOICE";
 				biasLabels[l]  = "SYM";
@@ -3702,7 +3702,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 			case 2: girthLabel = "BODY"; modLabel = "TYPE"; reactLabel = "SAG";  break;
 			case 3: driveLabel = "GAIN"; girthLabel = "BODY"; modLabel = "TYPE"; reactLabel = "COMP"; break;
 			case 4: girthLabel = "COND"; modLabel = "TOPO"; biasLabel = "SYM"; reactLabel = "COMP"; break;
-			case 5: driveLabel = "THR"; girthLabel = "KNEE"; modLabel = "VOICE"; biasLabel = "SYM"; reactLabel = "PEAK"; break;
+			case 5: driveLabel = "DRIVE"; girthLabel = "KNEE"; modLabel = "VOICE"; biasLabel = "SYM"; reactLabel = "PEAK"; break;
 			default: break;
 		}
 
