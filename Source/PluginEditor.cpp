@@ -1473,11 +1473,11 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 	setupSlider (r.fred,  "Angle " + suffix + " (off-axis mic simulation)", ST::Fred);
 	setupSlider (r.pos,   "Distance " + suffix + " (proximity/distance)",   ST::Pos);
 
-	addAndMakeVisible (r.inv);   r.inv.setButtonText ("");            r.inv.addListener (this);
+	addAndMakeVisible (r.inv);   r.inv.setButtonText ("INV");         r.inv.addListener (this);
 	r.inv.setTooltip ({});
-	addAndMakeVisible (r.chaos); r.chaos.setButtonText (""); r.chaos.addListener (this);
+	addAndMakeVisible (r.chaos); r.chaos.setButtonText ("CHSD"); r.chaos.addListener (this);
 	r.chaos.addMouseListener (this, false);
-	addAndMakeVisible (r.chaosFilter); r.chaosFilter.setButtonText (""); r.chaosFilter.addListener (this);
+	addAndMakeVisible (r.chaosFilter); r.chaosFilter.setButtonText ("CHSF"); r.chaosFilter.addListener (this);
 	r.chaosFilter.addMouseListener (this, false);
 
 	{
@@ -1498,7 +1498,7 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 	}
 
 	// EXP uses a compact tooltip; full SC/filter details live in the right-click prompt.
-	addAndMakeVisible (r.exp);   r.exp.setButtonText ("");   r.exp.addListener (this);
+	addAndMakeVisible (r.exp);   r.exp.setButtonText ("EXP");   r.exp.addListener (this);
 	r.exp.addMouseListener (this, false);
 	{
 		const auto& orderParamId = loaderIndex == 0 ? SATTRAudioProcessor::kParamExpOrderA
@@ -2205,48 +2205,6 @@ void SATTRAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 	drawToggleBar (cachedToggleBarAreaA_, ioExpandedA_);
 	drawToggleBar (cachedToggleBarAreaB_, ioExpandedB_);
 	drawToggleBar (cachedToggleBarAreaC_, ioExpandedC_);
-
-	auto drawLoaderToggleLabel = [&] (const juce::ToggleButton& button,
-	                                  const juce::String& text,
-	                                  int clipRight)
-	{
-		if (! button.isVisible())
-			return;
-
-		const int boxSide = juce::jlimit (14,
-		                                  juce::jmax (14, button.getHeight() - 2),
-		                                  (int) std::lround ((double) button.getHeight() * 0.65));
-		const int labelX = button.getX() + 2 + boxSide + 4;
-		const int labelW = juce::jmax (0, clipRight - labelX);
-		if (labelW <= 0)
-			return;
-
-		const auto area = juce::Rectangle<int> (labelX, button.getY(), labelW, button.getHeight());
-		g.setColour (activeScheme.text.withMultipliedAlpha (button.getAlpha()));
-		g.setFont (kBoldFont40());
-		drawIfFitsWithOptionalShrink (g, area, text, 40.0f, 14.0f);
-	};
-
-	auto drawLoaderTogglePair = [&] (int loader,
-	                                 const juce::ToggleButton& leftButton,
-	                                 const juce::String& leftText,
-	                                 const juce::ToggleButton& rightButton,
-	                                 const juce::String& rightText)
-	{
-		const int leftClip = rightButton.isVisible() ? rightButton.getX() - 6 : leftButton.getRight();
-		const int rightClip = columnRight_[loader] > 0 ? columnRight_[loader] - 10 : rightButton.getRight();
-		drawLoaderToggleLabel (leftButton, leftText, leftClip);
-		drawLoaderToggleLabel (rightButton, rightText, rightClip);
-	};
-
-	for (int loader = 0; loader < 3; ++loader)
-	{
-		auto refs = getLoaderRefs (loader);
-		if (refs.inv.isVisible() || refs.exp.isVisible())
-			drawLoaderTogglePair (loader, refs.inv, "INV", refs.exp, "EXP");
-		if (refs.chaosFilter.isVisible() || refs.chaos.isVisible())
-			drawLoaderTogglePair (loader, refs.chaosFilter, "CHSF", refs.chaos, "CHSD");
-	}
 
 	auto makeLoaderTabLabel = [] (int startIndex, int visibleCount)
 	{
