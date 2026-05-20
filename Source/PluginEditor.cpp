@@ -2444,19 +2444,18 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	// Both views share the same 10-row grid so the algorithm/RAW anchor and
 	// the first parameter row line up exactly when toggling compact sections.
 	const int numRows = 10;
-	const int bottomSpacer = expanded ? (gap * 2) : (modeComboLabelOffset + gap * 2);
+	const int compactBottomSpacer = modeComboLabelOffset + gap * 2;
+	const int bottomSpacer = expanded ? (gap * 2) : compactBottomSpacer;
 	auto contentArea = area;
 	auto checkArea = contentArea.removeFromBottom (checkH);
 	contentArea.removeFromBottom (bottomSpacer);
 
-	// Keep the bottom checkbox row anchored to the same baseline regardless of
-	// expanded/collapsed state. The variable-height content above it is what
-	// absorbs resize rounding.
-	const int layoutOverhead = expanded
-	                         ? ((gap * 6) + modeLabelGap + modeComboLabelOffset + modeComboGapY + modeComboLabelOffset)
-	                         : (modeLabelGap + (gap * 8));
-	const int sliderH = juce::jmax (18, (contentArea.getHeight() - layoutOverhead) / numRows);
-	const int visualSliderH = juce::jlimit (24, 30, sliderH);
+	// Use one shared row pitch for both views; otherwise the IN/OUT page and
+	// the normal page drift by a few pixels even though they share anchors.
+	const int sharedContentH = area.getHeight() - checkH - compactBottomSpacer;
+	const int sharedLayoutOverhead = modeLabelGap + (gap * 8);
+	const int sliderH = juce::jmax (18, (sharedContentH - sharedLayoutOverhead) / numRows);
+	const int visualSliderH = juce::jlimit (24, 32, sliderH);
 	const int visualComboH = 38;
 	auto fitControlHeight = [] (juce::Rectangle<int> r, int h)
 	{
