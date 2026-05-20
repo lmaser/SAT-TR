@@ -1806,9 +1806,6 @@ SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 	addChildComponent (promptOverlay);
 	promptOverlay.setInterceptsMouseClicks (true, true);
 
-	// Setup CRT effect
-	setComponentEffect (&crtEffect);
-
 	// Setup parameter listeners for UI state
 	for (auto* paramId : kUiMirrorParamIds)
 		params.addParameterListener (paramId, this);
@@ -1816,7 +1813,7 @@ SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 	// Restore persisted UI state from processor (palette, CRT, colors)
 	useCustomPalette = audioProcessor.getUiUseCustomPalette();
 	crtEnabled       = audioProcessor.getUiFxTailEnabled();
-	crtEffect.setEnabled (crtEnabled);
+	applyCrtState (crtEnabled);
 	for (int i = 0; i < 2; ++i)
 		customPalette[(size_t) i] = audioProcessor.getUiCustomPaletteColour (i);
 
@@ -1841,9 +1838,6 @@ SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 	                 getCompactTargetWidthForLoaderCount (kCompactMaxVisibleLoaders),
 	                 kCompactFixedHeightPx);
 
-	// Start timer
-	startTimer (kIdleTimerHz);
-
 	// Initialize loader enabled/disabled visual state
 	updateLoaderEnabledState (0);
 	updateLoaderEnabledState (1);
@@ -1854,6 +1848,7 @@ SATTRAudioProcessorEditor::~SATTRAudioProcessorEditor()
 {
 	TR::dismissEditorOwnedModalPrompts (lnf);
 	setPromptOverlayActive (false);
+	stopTimer();
 
 	// Persist UI state to processor before teardown
 	audioProcessor.setUiUseCustomPalette (useCustomPalette);
@@ -2798,12 +2793,21 @@ void SATTRAudioProcessorEditor::comboBoxChanged (juce::ComboBox* combo)
 	repaint();
 }
 
+void SATTRAudioProcessorEditor::applyCrtState (bool enabled)
+{
+	crtEnabled = enabled;
+	crtEffect.setEnabled (crtEnabled);
+	setComponentEffect (crtEnabled ? &crtEffect : nullptr);
+	crtTime = 0.0f;
+	stopTimer();
+	startTimerHz (crtEnabled ? kCrtTimerHz : kIdleTimerHz);
+}
+
 void SATTRAudioProcessorEditor::parameterChanged (const juce::String& paramID, float newValue)
 {
 	if (paramID == SATTRAudioProcessor::kParamUiFxTail)
 	{
-		crtEnabled = newValue > 0.5f;
-		crtEffect.setEnabled (crtEnabled);
+		applyCrtState (newValue > 0.5f);
 		return;
 	}
 
@@ -6611,8 +6615,7 @@ void SATTRAudioProcessorEditor::openGraphicsPopup()
 	lnf.setScheme (activeScheme);
 
 	useCustomPalette = audioProcessor.getUiUseCustomPalette();
-	crtEnabled = audioProcessor.getUiFxTailEnabled();
-	crtEffect.setEnabled (crtEnabled);
+	applyCrtState (audioProcessor.getUiFxTailEnabled());
 	applyActivePalette();
 
 	setPromptOverlayActive (true);

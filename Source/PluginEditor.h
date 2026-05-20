@@ -609,12 +609,7 @@ private:
 	float crtTime = 0.0f;
 	bool crtEnabled = false;
 
-	void applyCrtState (bool enabled)
-	{
-		crtEnabled = enabled;
-		crtEffect.setEnabled (enabled);
-		crtTime = 0.0f;
-	}
+	void applyCrtState (bool enabled);
 
 	// ══════════════════════════════════════════════════════════════
 	//  Palette & Colour Scheme
