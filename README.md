@@ -30,7 +30,7 @@ SAT-TR uses a text-based UI with horizontal bar sliders. Loader tabs switch betw
 - **ALIGN button**: Momentary trigger. Auto-sets per-loader delay compensation and invert state from synthetic probe analysis.
 - **Gear icon** (top-right): Opens the info popup with version, credits, and the Graphics prompt.
 - **Graphics popup**: Toggles graphic FX and switches between default/custom colour palettes.
-- **Resize**: Drag the bottom-right corner. Size persists across sessions.
+- **Resize**: Drag the bottom-right corner. New instances open at one-loader minimum size (`360 x 752`); width persists as 1/2/3-loader views and height stays fixed.
 
 ## Parameters
 

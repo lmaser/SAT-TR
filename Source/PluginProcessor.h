@@ -454,23 +454,24 @@ public:
 	int getUiEditorWidth() const
 	{
 		if (auto* p = parameters.getRawParameterValue (kParamUiWidth))
-			return static_cast<int> (*p);
+			return juce::jlimit (360, 1080, static_cast<int> (*p));
 		return 360;
 	}
 
 	int getUiEditorHeight() const
 	{
-		if (auto* p = parameters.getRawParameterValue (kParamUiHeight))
-			return static_cast<int> (*p);
 		return 752;
 	}
 
 	void setUiEditorSize (int w, int h)
 	{
+		const int safeW = juce::jlimit (360, 1080, w);
+		const int safeH = 752;
 		if (auto* pw = parameters.getParameter (kParamUiWidth))
-			pw->setValueNotifyingHost (pw->convertTo0to1 (static_cast<float> (w)));
+			pw->setValueNotifyingHost (pw->convertTo0to1 (static_cast<float> (safeW)));
 		if (auto* ph = parameters.getParameter (kParamUiHeight))
-			ph->setValueNotifyingHost (ph->convertTo0to1 (static_cast<float> (h)));
+			ph->setValueNotifyingHost (ph->convertTo0to1 (static_cast<float> (safeH)));
+		juce::ignoreUnused (h);
 	}
 
 	bool getUiUseCustomPalette() const
