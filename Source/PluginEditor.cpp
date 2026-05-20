@@ -2698,7 +2698,7 @@ void SATTRAudioProcessorEditor::updateLoaderEnabledState (int loaderIndex)
 
 	const bool enabled = r.enableBtn.getToggleState();
 	const float alpha = enabled ? 1.0f : 0.35f;
-	const bool interactive = enabled && ! promptOverlayActive;
+	const bool interactive = enabled;
 
 	juce::Component* components[] = {
 		&r.hp, &r.lp, &r.in, &r.out, &r.tilt,
@@ -2731,8 +2731,9 @@ void SATTRAudioProcessorEditor::updateSatControlsEnabledState (int loaderIndex)
 
 	const bool isClean = (getSelectedSatTypeModelIndex (r.satType) == static_cast<int> (SatEngine::Model::Clean));
 
-	// Sat-specific controls should be interactive only when loader enabled AND not CLEAN
-	const bool satInteractive = loaderEnabled && ! isClean && ! promptOverlayActive;
+	// Sat-specific controls should be interactive only when loader enabled AND not CLEAN.
+	// Modal prompts are blocked by promptOverlay itself, so they must not alter visual alpha.
+	const bool satInteractive = loaderEnabled && ! isClean;
 	const float satAlpha = satInteractive ? 1.0f : 0.35f;
 
 	juce::Component* satControls[] = {
@@ -3565,34 +3566,10 @@ void SATTRAudioProcessorEditor::setPromptOverlayActive (bool shouldBeActive)
 	if (shouldBeActive)
 		promptOverlay.toFront (false);
 
-	if (shouldBeActive)
+	// promptOverlay intercepts mouse input while the modal prompt is open. Do not disable
+	// the underlying controls here, otherwise the overlay dimming stacks with disabled alpha.
+	if (! shouldBeActive)
 	{
-		// Disable ALL interactive controls while prompt is open
-		const std::array<juce::Component*, 5> globalControls {
-			&enableButtonA, &enableButtonB, &enableButtonC,
-			&routeCombo,
-			&invButtonA
-		};
-		for (auto* c : globalControls)
-			c->setEnabled (false);
-
-		// Disable loader subsection controls
-		updateLoaderEnabledState (0);
-		updateLoaderEnabledState (1);
-		updateLoaderEnabledState (2);
-	}
-	else
-	{
-		// Re-enable global controls
-		const std::array<juce::Component*, 5> globalControls {
-			&enableButtonA, &enableButtonB, &enableButtonC,
-			&routeCombo,
-			&invButtonA
-		};
-		for (auto* c : globalControls)
-			c->setEnabled (true);
-
-		// Re-apply loader enabled state (respects per-loader enable toggle)
 		updateLoaderEnabledState (0);
 		updateLoaderEnabledState (1);
 		updateLoaderEnabledState (2);
