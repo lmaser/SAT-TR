@@ -1236,10 +1236,11 @@ void SATTRAudioProcessorEditor::MinimalLNF::drawBubble (juce::Graphics& g,
                                                         const juce::Point<float>&,
                                                         const juce::Rectangle<float>& body)
 {
+	g.fillAll (findColour (juce::TooltipWindow::backgroundColourId));
 	drawOverlayPanel (g,
 	                  body.getSmallestIntegerContainer(),
-	                  scheme.bg,
-	                  scheme.outline);
+	                  findColour (juce::TooltipWindow::backgroundColourId),
+	                  findColour (juce::TooltipWindow::outlineColourId));
 }
 
 juce::Font SATTRAudioProcessorEditor::MinimalLNF::getTextButtonFont (juce::TextButton&, int buttonHeight)
@@ -1304,12 +1305,13 @@ void SATTRAudioProcessorEditor::MinimalLNF::drawTooltip (juce::Graphics& g,
 	const int textInsetX = juce::jmax (4, (int) std::round ((double) h * UiMetrics::tooltipTextInsetXRatio));
 	const int textInsetY = juce::jmax (1, (int) std::round ((double) h * UiMetrics::tooltipTextInsetYRatio));
 
+	g.fillAll (findColour (juce::TooltipWindow::backgroundColourId));
 	drawOverlayPanel (g,
 	                  { 0, 0, width, height },
-	                  scheme.bg,
-	                  scheme.outline);
+	                  findColour (juce::TooltipWindow::backgroundColourId),
+	                  findColour (juce::TooltipWindow::outlineColourId));
 
-	g.setColour (scheme.text);
+	g.setColour (findColour (juce::TooltipWindow::textColourId));
 	g.setFont (f);
 	g.drawFittedText (text,
 	                  textInsetX,
@@ -1655,6 +1657,8 @@ void SATTRAudioProcessorEditor::commitSatTypeComboSelection (int loaderIndex)
 SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 	: AudioProcessorEditor (&p), audioProcessor (p)
 {
+	setOpaque (true);
+	setBufferedToImage (true);
 	setLookAndFeel (&lnf);
 
 	// Setup loader A/B/C components (unified)
@@ -1795,6 +1799,7 @@ SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 	// Setup tooltip window
 	tooltipWindow = std::make_unique<juce::TooltipWindow> (this, 250);
 	tooltipWindow->setLookAndFeel (&lnf);
+	tooltipWindow->setOpaque (true);
 	tooltipWindow->setAlwaysOnTop (true);
 	tooltipWindow->setInterceptsMouseClicks (false, false);
 
@@ -1856,6 +1861,7 @@ SATTRAudioProcessorEditor::~SATTRAudioProcessorEditor()
 	audioProcessor.setUiFxTailEnabled (crtEnabled);
 
 	setComponentEffect (nullptr);
+	setLookAndFeel (nullptr);
 
 	if (tooltipWindow != nullptr)
 		tooltipWindow->setLookAndFeel (nullptr);

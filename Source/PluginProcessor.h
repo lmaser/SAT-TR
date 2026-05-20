@@ -455,14 +455,14 @@ public:
 	{
 		if (auto* p = parameters.getRawParameterValue (kParamUiWidth))
 			return static_cast<int> (*p);
-		return 800;
+		return 424;
 	}
 
 	int getUiEditorHeight() const
 	{
 		if (auto* p = parameters.getRawParameterValue (kParamUiHeight))
 			return static_cast<int> (*p);
-		return 600;
+		return 752;
 	}
 
 	void setUiEditorSize (int w, int h)
