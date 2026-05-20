@@ -455,7 +455,7 @@ public:
 	{
 		if (auto* p = parameters.getRawParameterValue (kParamUiWidth))
 			return static_cast<int> (*p);
-		return 424;
+		return 360;
 	}
 
 	int getUiEditorHeight() const

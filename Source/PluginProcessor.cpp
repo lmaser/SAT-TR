@@ -778,7 +778,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	//  UI State Parameters (hidden from automation)
 	// ----------------------------------------------------------------
 	layout.add (std::make_unique<juce::AudioParameterInt> (
-		juce::ParameterID { kParamUiWidth, 1 }, "UI Width", 400, 2000, 424,
+		juce::ParameterID { kParamUiWidth, 1 }, "UI Width", 360, 1080, 360,
 		juce::AudioParameterIntAttributes().withAutomatable (false)));
 
 	layout.add (std::make_unique<juce::AudioParameterInt> (

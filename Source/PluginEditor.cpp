@@ -113,11 +113,19 @@ namespace
 	constexpr int kCompactMaxVisibleLoaders = 3;
 	constexpr int kCompactSideRailWidthPx = 18;
 	constexpr int kCompactSideRailSlotWidthPx = 32;
+	constexpr int kCompactRailContentGapPx = 2;
 	constexpr int kCompactSideRailYInsetPx = 86;
 	constexpr int kCompactFooterRailSlotHeightPx = 34;
 	constexpr int kCompactFooterRailHeightPx = 22;
 	constexpr int kCompactFooterRailXInsetPx = 18;
 	constexpr int kCompactFooterPanelWidthPx = 500;
+
+	constexpr int getCompactLoaderContentSideInsetPx() noexcept
+	{
+		// Keep the external compact width equal to the simple plugins while
+		// reserving safe space for side-rail overlays inside each loader.
+		return ((kCompactSideRailSlotWidthPx + kCompactSideRailWidthPx) / 2) + kCompactRailContentGapPx;
+	}
 
 	juce::Rectangle<int> makeFooterValueArea (const juce::Rectangle<int>& barBounds, int valueWidthPx)
 	{
@@ -2330,7 +2338,7 @@ void SATTRAudioProcessorEditor::resized()
 	
 	// Header (title area + buttons)
 	auto header = bounds.removeFromTop (40);
-	cachedHeaderTitleX_ = kCompactSideRailSlotWidthPx + 10;
+	cachedHeaderTitleX_ = getCompactLoaderContentSideInsetPx();
 
 	// Place ALIGN button in header, next to title
 	{
@@ -2373,8 +2381,9 @@ void SATTRAudioProcessorEditor::resized()
 		auto loaderBounds = bounds;
 		const bool showLeftRail = firstVisibleLoaderIndex_ > 0;
 		const bool showRightRail = firstVisibleLoaderIndex_ + visibleLoaderCount_ < kCompactMaxVisibleLoaders;
-		const auto leftRailSlot = loaderBounds.removeFromLeft (kCompactSideRailSlotWidthPx);
-		const auto rightRailSlot = loaderBounds.removeFromRight (kCompactSideRailSlotWidthPx);
+		const auto leftRailSlot = bounds.withWidth (kCompactSideRailSlotWidthPx);
+		const auto rightRailSlot = bounds.withX (bounds.getRight() - kCompactSideRailSlotWidthPx)
+		                                .withWidth (kCompactSideRailSlotWidthPx);
 
 		if (showLeftRail || showRightRail)
 		{
@@ -2400,8 +2409,8 @@ void SATTRAudioProcessorEditor::resized()
 			const int loader = firstVisibleLoaderIndex_ + viewSlot;
 			auto loaderArea = (viewSlot == visibleLoaderCount_ - 1) ? fixedLoaderBounds
 			                                                       : fixedLoaderBounds.removeFromLeft (kCompactLoaderColumnWidthPx);
-			columnLeft_[loader] = loaderArea.getX();
-			columnRight_[loader] = loaderArea.getRight();
+			columnLeft_[loader] = loaderArea.getX() + getCompactLoaderContentSideInsetPx();
+			columnRight_[loader] = loaderArea.getRight() - getCompactLoaderContentSideInsetPx();
 			layoutLoaderSection (loaderArea, loader);
 		}
 	}
@@ -2421,6 +2430,8 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 
 	auto pick = [&] (auto& a, auto& b, auto& c) -> auto& { return loaderIndex == 0 ? a : (loaderIndex == 1 ? b : c); };
 
+	const int railSafeInsetPx = juce::jmax (0, getCompactLoaderContentSideInsetPx() - margin);
+	area.reduce (railSafeInsetPx, 0);
 	area.reduce (margin, margin);
 
 	// Enable checkbox at top
@@ -3021,13 +3032,12 @@ void SATTRAudioProcessorEditor::setupBar (juce::Slider& s)
 int SATTRAudioProcessorEditor::getCompactTargetWidthForLoaderCount (int loaderCount) noexcept
 {
 	const int safeCount = juce::jlimit (kCompactMinVisibleLoaders, kCompactMaxVisibleLoaders, loaderCount);
-	const int railSlots = kCompactSideRailSlotWidthPx * 2;
-	return safeCount * kCompactLoaderColumnWidthPx + railSlots;
+	return safeCount * kCompactLoaderColumnWidthPx;
 }
 
 int SATTRAudioProcessorEditor::getMaxVisibleLoaderCountForWidth (int width) noexcept
 {
-	if (width >= kCompactMaxVisibleLoaders * kCompactLoaderColumnWidthPx)
+	if (width >= getCompactTargetWidthForLoaderCount (kCompactMaxVisibleLoaders))
 		return 3;
 	if (width >= getCompactTargetWidthForLoaderCount (2))
 		return 2;
