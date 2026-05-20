@@ -2436,14 +2436,16 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	                     : (loaderIndex == 1) ? ioExpandedB_
 	                     :                      ioExpandedC_;
 
-	const int modeLabelGap = gap * 2;
+	constexpr int loaderHeaderBlockH = 72;
 	const int modeComboLabelOffset = 21;
 	const int modeComboGapY = 8;
 	const int checkH = 42;
 
-	// Both views share the same 10-row grid so the algorithm/RAW anchor and
-	// the first parameter row line up exactly when toggling compact sections.
+	// Both views share one header + parameter grid so the algorithm/RAW anchor
+	// and the first parameter row line up exactly when toggling compact sections.
 	const int numRows = 10;
+	const int parameterRows = numRows - 1;
+	const int parameterGaps = parameterRows - 1;
 	const int compactBottomSpacer = modeComboLabelOffset + gap * 2;
 	const int bottomSpacer = expanded ? (gap * 2) : compactBottomSpacer;
 	auto contentArea = area;
@@ -2453,10 +2455,10 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	// Use one shared row pitch for both views; otherwise the IN/OUT page and
 	// the normal page drift by a few pixels even though they share anchors.
 	const int sharedContentH = area.getHeight() - checkH - compactBottomSpacer;
-	const int sharedLayoutOverhead = modeLabelGap + (gap * 8);
-	const int sliderH = juce::jmax (18, (sharedContentH - sharedLayoutOverhead) / numRows);
+	const int sliderH = juce::jmax (18, (sharedContentH - loaderHeaderBlockH - (parameterGaps * gap)) / parameterRows);
 	const int visualSliderH = juce::jlimit (24, 32, sliderH);
 	const int visualComboH = 38;
+	const int visualAlgorithmH = 42;
 	auto fitControlHeight = [] (juce::Rectangle<int> r, int h)
 	{
 		return r.withSizeKeepingCentre (r.getWidth(), juce::jmin (h, r.getHeight()));
@@ -2468,13 +2470,13 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 
 		auto& satTypeCmb = pick (satTypeComboA, satTypeComboB, satTypeComboC);
 		auto& rawBtn     = pick (rawButtonA,    rawButtonB,    rawButtonC);
-		auto comboRow = contentArea.removeFromTop (sliderH);
-		satTypeCmb.setBounds (fitControlHeight (comboRow.removeFromLeft (sliderW), visualComboH));
+		auto headerBlock = contentArea.removeFromTop (loaderHeaderBlockH);
+		auto comboRow = headerBlock.removeFromTop (sliderH);
+		satTypeCmb.setBounds (fitControlHeight (comboRow.removeFromLeft (sliderW), visualAlgorithmH));
 		satTypeCmb.setVisible (true);
 		constexpr int rawGap = 6;
 		rawBtn.setBounds (fitControlHeight ({ comboRow.getX() + rawGap, comboRow.getY(), comboRow.getWidth() - rawGap, sliderH }, visualSliderH));
 		rawBtn.setVisible (true);
-		contentArea.removeFromTop (modeLabelGap);
 
 		auto sliderRow = contentArea.removeFromTop (sliderH);
 		in_.setBounds (fitControlHeight (sliderRow.removeFromLeft (sliderW), visualSliderH));
@@ -2567,14 +2569,14 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		// SatType combo (same height as sliders) + RAW checkbox
 		auto& satTypeCmb = pick (satTypeComboA, satTypeComboB, satTypeComboC);
 		auto& rawBtn     = pick (rawButtonA,    rawButtonB,    rawButtonC);
-		auto comboRow = contentArea.removeFromTop (sliderH);
-		satTypeCmb.setBounds (fitControlHeight (comboRow.removeFromLeft (sliderW), visualComboH));
+		auto headerBlock = contentArea.removeFromTop (loaderHeaderBlockH);
+		auto comboRow = headerBlock.removeFromTop (sliderH);
+		satTypeCmb.setBounds (fitControlHeight (comboRow.removeFromLeft (sliderW), visualAlgorithmH));
 		satTypeCmb.setVisible (true);
 		// RAW checkbox sits to the right of the combo
 		constexpr int rawGap = 6;
 		rawBtn.setBounds (fitControlHeight ({ comboRow.getX() + rawGap, comboRow.getY(), comboRow.getWidth() - rawGap, sliderH }, visualSliderH));
 		rawBtn.setVisible (true);
-		contentArea.removeFromTop (modeLabelGap);
 
 		// Saturation sliders
 		auto& drive = pick (satDriveSliderA, satDriveSliderB, satDriveSliderC);
