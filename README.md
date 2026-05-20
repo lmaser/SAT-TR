@@ -15,13 +15,14 @@ The saturation engine uses ADAA-backed nonlinear stages where they matter, per-m
 
 ## Interface
 
-SAT-TR uses a text-based UI with horizontal bar sliders. Most core controls stay visible at once, with prompts used for deeper parameter entry and utility configuration.
+SAT-TR uses a text-based UI with horizontal bar sliders. Loader tabs switch between visible saturation slots at compact widths, and prompts are used for deeper parameter entry and utility configuration.
 
 - **Bar sliders**: Click and drag horizontally. Right-click for numeric entry.
 - **Toggle buttons**: Click to enable/disable (`RAW`, `INV`, `EXP`, `CHAOS D`, `CHAOS F`).
 - **Combo boxes**: Click to choose routing, mode, algorithm, oversampling, normalization, and limiter placement.
+- **Loader tabs**: Use the side tabs to switch visible loaders when the window is compact. Wider sizes reveal more loaders at once.
 - **Collapsible IO section**: Click the toggle bar (triangle) to show/hide per-loader I/O controls. State persists across sessions.
-- **Bottom global section**: Click the bottom toggle bar to switch between loader controls and the global control page. The global page keeps the same left content axis as the loader view.
+- **Bottom global section**: Click the `GLOBAL` tab to switch between loader controls and the global control page. The global page keeps the same left content axis as the loader view.
 - **Filter bar**: Click to open the HP/LP filter configuration prompt.
 - **EXP button**: Left-click enables/disables the expander. Right-click opens the expander prompt.
 - **CHAOS buttons**: Left-click enables/disables the target. Right-click opens the amount/speed prompt for delay or filter chaos.
