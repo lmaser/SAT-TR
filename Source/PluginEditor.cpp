@@ -1799,7 +1799,6 @@ SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 	// Setup tooltip window
 	tooltipWindow = std::make_unique<juce::TooltipWindow> (this, 250);
 	tooltipWindow->setLookAndFeel (&lnf);
-	tooltipWindow->setOpaque (true);
 	tooltipWindow->setAlwaysOnTop (true);
 	tooltipWindow->setInterceptsMouseClicks (false, false);
 
@@ -2158,6 +2157,13 @@ void SATTRAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 	if (promptOverlayActive)
 		return;
 
+	const bool tooltipVisible = tooltipWindow != nullptr && tooltipWindow->isVisible();
+	if (tooltipVisible)
+	{
+		g.saveState();
+		g.excludeClipRegion (tooltipWindow->getBounds().expanded (2));
+	}
+
 	// -- Per-loader toggle bars (triangle + rounded horizontal bar) --
 	auto drawToggleBar = [&] (const juce::Rectangle<int>& area, bool expanded)
 	{
@@ -2296,6 +2302,9 @@ void SATTRAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 		g.setColour (activeScheme.text);
 		g.fillPath (tri);
 	}
+
+	if (tooltipVisible)
+		g.restoreState();
 }
 
 // ----------------------------------------------------------------
