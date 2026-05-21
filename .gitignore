@@ -26,6 +26,7 @@ ThirdParty/fftw3/*.f03
 
 # Logs
 *.log
+*.csv
 build_log.txt
 
 # IDE
@@ -33,6 +34,11 @@ build_log.txt
 
 # Backups
 *.bak
+*.tmp
+*.orig
+*.rej
+_codex_backups/
 
 # Analysis files
 *.html
+DETAIL_DSP_PLAN.md
