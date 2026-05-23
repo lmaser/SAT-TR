@@ -2036,9 +2036,8 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		}
 	}
 
-	// Safety soft-limiter: prevent catastrophic output (NaN/Inf runaway).
-	// Soft-knee tanh at +24 dBFS (15.85), hard clip at +30 dBFS (31.62).
-	// Engages only during extreme settings (RAW + SERIES=6 + high drive).
+	// Safety hard-limiter: prevent catastrophic output only (NaN/Inf runaway).
+	// Set very high (+48 dBFS) so it never engages during normal operation.
 	{
 #if SATTR_DSP_DEBUG_LOG
 		// Log output levels before safety limiter (throttled - same ~1s cadence)
@@ -2061,8 +2060,7 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			}
 		}
 #endif
-		constexpr float kSoftKnee = 15.849f;  // +24 dBFS - soft limiting starts here
-		constexpr float kHardClip = 31.623f;   // +30 dBFS - absolute maximum
+		constexpr float kSafetyLimit = 251.19f; // +48 dBFS - only catches runaways
 		for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 		{
 			auto* data = buffer.getWritePointer (ch);
@@ -2071,16 +2069,7 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				float s = data[n];
 				// NaN/Inf guard
 				if (! std::isfinite (s)) { data[n] = 0.0f; continue; }
-				const float a = std::abs (s);
-				if (a > kSoftKnee)
-				{
-					// Soft-knee: tanh compression above threshold, then hard clip
-					const float excess = (a - kSoftKnee) / kSoftKnee;
-					const float compressed = kSoftKnee + kSoftKnee * std::tanh (excess);
-					s = (s >= 0.0f ? compressed : -compressed);
-					s = juce::jlimit (-kHardClip, kHardClip, s);
-				}
-				data[n] = s;
+				data[n] = juce::jlimit (-kSafetyLimit, kSafetyLimit, s);
 			}
 		}
 	}

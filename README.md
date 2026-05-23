@@ -230,11 +230,11 @@ The fader floor is -144 dB, displayed as -INF; 0 dB is centered on the control.
 
 Momentary trigger. Calculates relative alignment from the active loader responses and writes per-loader delay compensation plus invert state automatically.
 
-#### LIMITER
+#### LIM
 
 Dual-stage peak limiter with placement control:
 
-- **THRESH** (`-36.0` to `0.0 dB`): limiter threshold
+- **LIM** (`-36.0` to `0.0 dB`): limiter threshold
 - **MODE**: `NONE`, `WET`, `GLOBAL`
 
 #### INV POLARITY
