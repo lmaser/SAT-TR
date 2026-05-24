@@ -2251,7 +2251,7 @@ void SATTRAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 		g.drawRoundedRectangle (tabBounds.reduced (1.0f), radius, 2.0f);
 
 		g.setColour (footerExpanded_ ? activeScheme.bg : activeScheme.text);
-		g.setFont (juce::Font (juce::FontOptions (15.0f).withStyle ("Bold")));
+		g.setFont (juce::Font (juce::FontOptions (17.0f).withStyle ("Bold")));
 		g.drawFittedText ("GLOBAL",
 		                  cachedFooterRailArea_.reduced (8, 0),
 		                  juce::Justification::centred,
@@ -3295,6 +3295,11 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 	const char* modLabels[3];
 	const char* biasLabels[3];
 	const char* reactLabels[3];
+	const char* driveShortLabels[3];
+	const char* girthShortLabels[3];
+	const char* modShortLabels[3];
+	const char* biasShortLabels[3];
+	const char* reactShortLabels[3];
 	for (int l = 0; l < 3; ++l)
 	{
 		auto lr = getLoaderRefs (l);
@@ -3303,17 +3308,27 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 		girthLabels[l] = "GIRTH";
 		modLabels[l]   = "MOD";
 		biasLabels[l]  = "BIAS";
+		driveShortLabels[l] = "DRV";
+		girthShortLabels[l] = "GTH";
+		modShortLabels[l]   = "MOD";
+		biasShortLabels[l]  = "BIAS";
 		switch (satModel)
 		{
             case 1:
                 girthLabels[l] = "BODY";
                 modLabels[l]   = "FORM";
                 reactLabels[l] = "COMP";
+                girthShortLabels[l] = "BDY";
+                modShortLabels[l]   = "FRM";
+                reactShortLabels[l] = "CMP";
                 break; // Tape
             case 2:
                 girthLabels[l] = "BODY";
                 modLabels[l]   = "TYPE";
                 reactLabels[l] = "SAG";
+                girthShortLabels[l] = "BDY";
+                modShortLabels[l]   = "TYP";
+                reactShortLabels[l] = "SAG";
                 break; // Tube
 			case 3:
 				driveLabels[l] = "GAIN";
@@ -3321,12 +3336,20 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 				modLabels[l]   = "TYPE";
 				biasLabels[l]  = "BIAS";
 				reactLabels[l] = "COMP";
+				driveShortLabels[l] = "GAIN";
+				girthShortLabels[l] = "BDY";
+				modShortLabels[l]   = "TYP";
+				reactShortLabels[l] = "CMP";
 				break;
 			case 4:
 				girthLabels[l] = "COND";
 				modLabels[l]   = "TOPO";
 				biasLabels[l]  = "SYM";
 				reactLabels[l] = "COMP";
+				girthShortLabels[l] = "COND";
+				modShortLabels[l]   = "TOP";
+				biasShortLabels[l]  = "SYM";
+				reactShortLabels[l] = "CMP";
 				break;
 			case 5:
 				driveLabels[l] = "DRIVE";
@@ -3334,8 +3357,15 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 				modLabels[l]   = "VOICE";
 				biasLabels[l]  = "SYM";
 				reactLabels[l] = "PEAK";
+				girthShortLabels[l] = "KNEE";
+				modShortLabels[l]   = "VOX";
+				biasShortLabels[l]  = "SYM";
+				reactShortLabels[l] = "PEAK";
 				break;
-			default:                         reactLabels[l] = "DYN";   break; // Clean/unknown
+			default:
+				reactLabels[l] = "DYN";
+				reactShortLabels[l] = "DYN";
+				break; // Clean/unknown
 		}
 	}
 
@@ -3352,6 +3382,11 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 		fmts[12].label = modLabels[loader];
 		fmts[13].label = biasLabels[loader];
 		fmts[14].label = reactLabels[loader];
+		fmts[10].shortLabel = driveShortLabels[loader];
+		fmts[11].shortLabel = girthShortLabels[loader];
+		fmts[12].shortLabel = modShortLabels[loader];
+		fmts[13].shortLabel = biasShortLabels[loader];
+		fmts[14].shortLabel = reactShortLabels[loader];
 
 		auto refs = getLoaderRefs (loader);
 		const bool loaderEnabled = refs.enableBtn.getToggleState();
@@ -3395,11 +3430,10 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 				case 3: // Percent (value is 0..1 range -> display as %)
 				{
 					const int pct = juce::roundToInt (val * 100.0);
-					const auto shortLabel = fmt.shortLabel != nullptr ? fmt.shortLabel : "";
+					const auto shortLabel = fmt.shortLabel != nullptr ? fmt.shortLabel : fmt.label;
 					ct.full    = juce::String (pct) + "% " + fmt.label;
-					ct.short_  = fmt.shortLabel != nullptr ? juce::String (pct) + "% " + shortLabel
-					                                       : juce::String (pct) + "%";
-					ct.intOnly = juce::String (pct);
+					ct.short_  = juce::String (pct) + "% " + shortLabel;
+					ct.intOnly = juce::String (pct) + "%";
 					break;
 				}
 				case 4: // Pan
@@ -3416,8 +3450,8 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 				{
 					const int pct = juce::roundToInt (val * 100.0);
 					ct.full    = juce::String (pct) + "% " + fmt.label;
-					ct.short_  = juce::String (pct) + "%";
-					ct.intOnly = juce::String (pct);
+					ct.short_  = juce::String (pct) + "% " + (fmt.shortLabel != nullptr ? fmt.shortLabel : fmt.label);
+					ct.intOnly = juce::String (pct) + "%";
 					break;
 				}
 				case 7: // Integer with "x" suffix (series count)
