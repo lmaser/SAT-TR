@@ -678,7 +678,7 @@ private:
 	//  TR-style legend text cache (for value display)
 	// ══════════════════════════════════════════════════════════════
 	struct CachedParamText { juce::String full, short_, intOnly; };
-	// Param indices: HP=0, LP=1, IN=2, OUT=3, TILT=4, SERIES=5, PAN=6, FRED=7, POS=8, MIX=9, DRIVE=10, GIRTH=11, MOD=12, BIAS=13, SAG=14, DETAIL=15, INST=16, DELAY=17
+	// Param indices: HP=0, LP=1, IN=2, OUT=3, TILT=4, SERIES=5, PAN=6, FRED=7, POS=8, MIX=9, DRIVE=10, CHAR=11, MOD=12, BIAS=13, SAG=14, DETAIL=15, INST=16, DELAY=17
 	static constexpr int kNumCachedParams = 18;
 	CachedParamText cachedTexts[3][kNumCachedParams];  // [loader][param]
 

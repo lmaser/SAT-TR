@@ -10,7 +10,7 @@
 //  6 physically-modeled saturation algorithms with:
 //    ADAA (1st-order antiderivative anti-aliasing)
 //    REACT (Airwindows-inspired energy tracking -> parameter modulation)
-//    GIRTH (post-waveshaper wavefolding + sharpen)
+//    CHAR (post-waveshaper wavefolding + sharpen)
 //    Instability (analog drift via Hermite S&H)
 //    MOD (input-domain power warp + model-specific secondary)
 //    Internal emphasis / de-emphasis EQ per model
@@ -956,7 +956,7 @@ struct State
     adaa::StableTanhADAA transistorCoreAdaa[kMaxSeries][2];
     adaa::TapeTanhADAA tapeAdaa[kMaxSeries][2];
     adaa::ClipperADAA clipperAdaa[kMaxSeries][2];
-    // GIRTH wavefolder ADAA [series pass][channel]
+    // CHAR wavefolder ADAA [series pass][channel]
     adaa::SinFoldADAA girthAdaa[kMaxSeries][2];
 
     // Instability drift
@@ -1981,7 +1981,7 @@ inline float getTriodeLevelTrim (float drive, float mod, int seriesCount) noexce
 }
 
 // ----------------------------------------------------------------
-//  GIRTH -- post-waveshaper fold + sharpen
+//  CHAR -- post-waveshaper fold + sharpen
 // ----------------------------------------------------------------
 inline float applyGirth (float shaped, float girth,
                          adaa::SinFoldADAA& foldAdaa) noexcept
@@ -2337,7 +2337,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     const float reservoirDb = reservoirCore * juce::jmap (tubeMorph, 1.6f, 2.5f);
     const float atrophyGain = adaa::fastExp (-(atrophyDb + reservoirDb) * 0.11512925465f);
 
-    // Tube2ustyle stage inside the black box. MOD/GIRTH stay mostly outside
+    // Tube2ustyle stage inside the black box. MOD/CHAR stay mostly outside
     // for now so we can match the core behavior first.
     const float overallscale = sr / 44100.0f;
     float s = xStage;
@@ -2509,7 +2509,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
 }
 
 // TRANSISTOR: common-emitter/common-source inspired black box.
-// MOD morphs BJT punch into softer FET behaviour while GIRTH/BODY relaxes
+// MOD morphs BJT punch into softer FET behaviour while CHAR/BODY relaxes
 // degeneration and lets more low-mid energy hit the nonlinear stage.
 inline float processTransistorStage (float x, float drive, float girth, float bias, float mod,
                                      float react, bool rawMode,
@@ -3698,7 +3698,7 @@ inline void processBlock (State& state,
                 }
 
 
-                // -- GIRTH (all passes) --
+                // -- CHAR (all passes) --
                 if (model == Model::Tape)
                 {
                     x = applyTapeGirth (x, girth);
@@ -3706,7 +3706,7 @@ inline void processBlock (State& state,
                 else if (model == Model::Transistor || model == Model::Clipper
                       || model == Model::Diode)
                 {
-                    // GIRTH/COLOR is already encoded inside these cores.
+                    // CHAR/COLOR is already encoded inside these cores.
                 }
                 else
                     x = applyGirth (x, girth, state.girthAdaa[sp][ch]);

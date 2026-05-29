@@ -3319,7 +3319,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 		auto lr = getLoaderRefs (l);
 		const int satModel = getSelectedSatTypeModelIndex (lr.satType);
 		driveLabels[l] = "DRIVE";
-		girthLabels[l] = "GIRTH";
+		girthLabels[l] = "CHAR";
 		modLabels[l]   = "MOD";
 		biasLabels[l]  = "BIAS";
 		driveShortLabels[l] = "DRV";
@@ -3386,7 +3386,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 	ParamFmt fmts[kNumCachedParams] = {
 		{0,"HP"}, {0,"LP"}, {1,"IN"}, {1,"OUT"}, {5,"TILT"}, {7,"SERIES"},
 		{4,"PAN"}, {3,"ANGLE"}, {3,"DIST"}, {3,"MIX"},
-		{3,"DRIVE"}, {3,"GIRTH"}, {3,"MOD"}, {6,"BIAS"}, {3,"DYN"}, {3,"DETAIL","DTL"}, {3,"INST"}, {8,"DELAY","DLY"}
+		{3,"DRIVE"}, {3,"CHAR"}, {3,"MOD"}, {6,"BIAS"}, {3,"DYN"}, {3,"DETAIL","DTL"}, {3,"INST"}, {8,"DELAY","DLY"}
 	};
 
 	for (int loader = 0; loader < 3; ++loader)
@@ -3737,7 +3737,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 			switch (stype)
 			{
 				case BarSlider::Type::SatDrive: return "DRIVE";
-				case BarSlider::Type::SatGirth: return "GIRTH";
+				case BarSlider::Type::SatGirth: return "CHAR";
 				case BarSlider::Type::SatMod:   return "MOD";
 				case BarSlider::Type::SatBias:  return "BIAS";
 				case BarSlider::Type::SatSag:   return "DYN";
@@ -3748,7 +3748,7 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 		auto lr = getLoaderRefs (loaderIndex);
 		const int satModel = getSelectedSatTypeModelIndex (lr.satType);
 		juce::String driveLabel = "DRIVE";
-		juce::String girthLabel = "GIRTH";
+		juce::String girthLabel = "CHAR";
 		juce::String modLabel   = "MOD";
 		juce::String biasLabel  = "BIAS";
 		juce::String reactLabel = "DYN";

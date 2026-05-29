@@ -57,7 +57,7 @@ Primary amount control. The visible label changes with the selected algorithm:
 - **GAIN**: transistor input drive / stage push
 - In `CLIPPER`, **DRIVE** is implemented internally as clip-threshold drive: higher values lower the effective threshold and produce more clipping.
 
-#### GIRTH / BODY / COND / KNEE
+#### CHAR / BODY / COND / KNEE
 
 Secondary shape or body control. Its behavior depends on the algorithm:
 
