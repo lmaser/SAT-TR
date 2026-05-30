@@ -91,7 +91,7 @@ namespace
 	juce::String formatSatDelayMsForUi (double ms)
 	{
 		const double safeMs = juce::jmax (0.0, ms);
-		return formatSatDelayMsNumberForUi (safeMs) + (safeMs >= 1000.0 ? " s" : " ms");
+		return formatSatDelayMsNumberForUi (safeMs) + (safeMs >= 1000.0 ? "s" : "ms");
 	}
 
 	juce::String formatTimeMsForPromptValue (double ms)
@@ -3322,8 +3322,8 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 		girthLabels[l] = "CHAR";
 		modLabels[l]   = "MOD";
 		biasLabels[l]  = "BIAS";
-		driveShortLabels[l] = "DRV";
-		girthShortLabels[l] = "GTH";
+		driveShortLabels[l] = "DRIVE";
+		girthShortLabels[l] = "CHAR";
 		modShortLabels[l]   = "MOD";
 		biasShortLabels[l]  = "BIAS";
 		switch (satModel)
@@ -3332,16 +3332,16 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
                 girthLabels[l] = "BODY";
                 modLabels[l]   = "FORM";
                 reactLabels[l] = "COMP";
-                girthShortLabels[l] = "BDY";
-                modShortLabels[l]   = "FRM";
-                reactShortLabels[l] = "CMP";
+                girthShortLabels[l] = "BODY";
+                modShortLabels[l]   = "FORM";
+                reactShortLabels[l] = "COMP";
                 break; // Tape
             case 2:
                 girthLabels[l] = "BODY";
                 modLabels[l]   = "TYPE";
                 reactLabels[l] = "SAG";
-                girthShortLabels[l] = "BDY";
-                modShortLabels[l]   = "TYP";
+                girthShortLabels[l] = "BODY";
+                modShortLabels[l]   = "TYPE";
                 reactShortLabels[l] = "SAG";
                 break; // Tube
 			case 3:
@@ -3351,9 +3351,9 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 				biasLabels[l]  = "BIAS";
 				reactLabels[l] = "COMP";
 				driveShortLabels[l] = "GAIN";
-				girthShortLabels[l] = "BDY";
-				modShortLabels[l]   = "TYP";
-				reactShortLabels[l] = "CMP";
+				girthShortLabels[l] = "BODY";
+				modShortLabels[l]   = "TYPE";
+				reactShortLabels[l] = "COMP";
 				break;
 			case 4:
 				girthLabels[l] = "COND";
@@ -3361,9 +3361,9 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 				biasLabels[l]  = "SYM";
 				reactLabels[l] = "COMP";
 				girthShortLabels[l] = "COND";
-				modShortLabels[l]   = "TOP";
+				modShortLabels[l]   = "TOPO";
 				biasShortLabels[l]  = "SYM";
-				reactShortLabels[l] = "CMP";
+				reactShortLabels[l] = "COMP";
 				break;
 			case 5:
 				driveLabels[l] = "DRIVE";
@@ -3386,7 +3386,7 @@ bool SATTRAudioProcessorEditor::refreshLegendTextCache()
 	ParamFmt fmts[kNumCachedParams] = {
 		{0,"HP"}, {0,"LP"}, {1,"IN"}, {1,"OUT"}, {5,"TILT"}, {7,"SERIES"},
 		{4,"PAN"}, {3,"ANGLE"}, {3,"DIST"}, {3,"MIX"},
-		{3,"DRIVE"}, {3,"CHAR"}, {3,"MOD"}, {6,"BIAS"}, {3,"DYN"}, {3,"DETAIL","DTL"}, {3,"INST"}, {8,"DELAY","DLY"}
+		{3,"DRIVE"}, {3,"CHAR"}, {3,"MOD"}, {6,"BIAS"}, {3,"DYN"}, {3,"DETAIL","DETL"}, {3,"INST"}, {8,"DELAY"}
 	};
 
 	for (int loader = 0; loader < 3; ++loader)
@@ -3782,9 +3782,9 @@ void SATTRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 	else if (isOut)         { suffix = " dB OUTPUT";   suffixShort = " dB OUT"; }
 	else if (isLimThresh)   { suffix = " dB LIM";      suffixShort = " dB LIM"; }
 	else if (isTilt)        { suffix = " dB TILT";     suffixShort = " dB TILT"; }
-	else if (isDetail)      { suffix = " % DETAIL";    suffixShort = " % DTL"; }
+	else if (isDetail)      { suffix = " % DETL";    suffixShort = " % DETL"; }
 	else if (isInstability) { suffix = " % INST";      suffixShort = " % INST"; }
-	else if (isDelay)       { suffix = " ms";          suffixShort = " ms"; }
+	else if (isDelay)       { suffix = "ms";          suffixShort = "ms"; }
 	else if (isPan)         { suffix = " % PAN";       suffixShort = " % PAN"; }
 	else if (isFred)        { suffix = " % ANGLE";     suffixShort = " % ANGLE"; }
 	else if (isPos)         { suffix = " % DIST";      suffixShort = " % DIST"; }
