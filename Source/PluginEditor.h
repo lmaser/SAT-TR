@@ -81,7 +81,7 @@ private:
 		enum class Type { Unknown, HpFreq, LpFreq, Input, Output, Tilt,
 	                  Series, Pan, Fred, Pos,
 	                  Mix, GlobalMix, GlobalOutput, LimThreshold,
-	                  SatDrive, SatGirth, SatMod, SatBias, SatSag, Detail, Instability, Delay };
+	                  SatDrive, SatChar, SatTypeCtrl, SatBias, SatSag, Detail, Instability, Delay };
 		void setOwner (SATTRAudioProcessorEditor* o) { owner = o; }
 		void setType (Type t) { type_ = t; }
 		Type getType() const { return type_; }
@@ -292,7 +292,7 @@ private:
 		FilterBarComponent &filterBar;  BarSlider &mix;
 		juce::ComboBox &satType;
 		juce::ToggleButton &raw;
-		BarSlider &satDrive, &satGirth, &satMod, &satBias, &satSag;
+		BarSlider &satDrive, &satChar, &satTypeCtrl, &satBias, &satSag;
 		BarSlider &detail;
 		BarSlider &instability;
 		BarSlider &delay;
@@ -307,7 +307,7 @@ private:
 		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &mixAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> &satTypeAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>   &rawAtt;
-		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &satDriveAtt, &satGirthAtt, &satModAtt, &satBiasAtt, &satSagAtt;
+		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &satDriveAtt, &satCharAtt, &satTypeCtrlAtt, &satBiasAtt, &satSagAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &detailAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &instabilityAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &delayAtt;
@@ -327,8 +327,8 @@ private:
 		const char* chaosAmt; const char* chaosSpd;
 		const char* chaosAmtFilter; const char* chaosSpdFilter;
 		const char* modeIn;  const char* modeOut; const char* sumBus; const char* filterPos; const char* mix;
-		const char* satType; const char* satRaw; const char* satDrive; const char* satGirth;
-		const char* satMod;  const char* satBias;  const char* satSag;
+		const char* satType; const char* satRaw; const char* satDrive; const char* satChar;
+		const char* satTypeCtrl;  const char* satBias;  const char* satSag;
 		const char* detail;
 		const char* instability;
 		const char* delay;
@@ -387,16 +387,16 @@ private:
 
 	juce::ComboBox satTypeComboA;
 	BarSlider satDriveSliderA;
-	BarSlider satGirthSliderA;
-	BarSlider satModSliderA;
+	BarSlider satCharSliderA;
+	BarSlider satTypeCtrlSliderA;
 	BarSlider satBiasSliderA;
 	BarSlider satSagSliderA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> satTypeAttachA;
 	juce::ToggleButton rawButtonA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> rawAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satDriveAttachA;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satGirthAttachA;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satModAttachA;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satCharAttachA;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satTypeCtrlAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satBiasAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satSagAttachA;
 	BarSlider delaySliderA;
@@ -453,16 +453,16 @@ private:
 
 	juce::ComboBox satTypeComboB;
 	BarSlider satDriveSliderB;
-	BarSlider satGirthSliderB;
-	BarSlider satModSliderB;
+	BarSlider satCharSliderB;
+	BarSlider satTypeCtrlSliderB;
 	BarSlider satBiasSliderB;
 	BarSlider satSagSliderB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> satTypeAttachB;
 	juce::ToggleButton rawButtonB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> rawAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satDriveAttachB;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satGirthAttachB;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satModAttachB;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satCharAttachB;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satTypeCtrlAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satBiasAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satSagAttachB;
 	BarSlider delaySliderB;
@@ -519,16 +519,16 @@ private:
 
 	juce::ComboBox satTypeComboC;
 	BarSlider satDriveSliderC;
-	BarSlider satGirthSliderC;
-	BarSlider satModSliderC;
+	BarSlider satCharSliderC;
+	BarSlider satTypeCtrlSliderC;
 	BarSlider satBiasSliderC;
 	BarSlider satSagSliderC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> satTypeAttachC;
 	juce::ToggleButton rawButtonC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> rawAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satDriveAttachC;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satGirthAttachC;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satModAttachC;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satCharAttachC;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satTypeCtrlAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satBiasAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satSagAttachC;
 	BarSlider delaySliderC;

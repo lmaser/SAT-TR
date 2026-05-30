@@ -365,11 +365,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamSatDriveA, "Sat Drive A",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSatGirthA, "Sat Girth A",
-		juce::NormalisableRange<float> (kSatGirthMin, kSatGirthMax, 0.001f), kSatGirthDefault));
+		kParamSatCharA, "Sat Char A",
+		juce::NormalisableRange<float> (kSatCharMin, kSatCharMax, 0.001f), kSatCharDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSatModA, "Sat Mod A",
-		juce::NormalisableRange<float> (kSatModMin, kSatModMax, 0.001f), kSatModDefault));
+		kParamSatTypeCtrlA, "Sat Type A",
+		juce::NormalisableRange<float> (kSatTypeCtrlMin, kSatTypeCtrlMax, 0.001f), kSatTypeCtrlDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatBiasA, "Sat Bias A",
 		juce::NormalisableRange<float> (kSatBiasMin, kSatBiasMax, 0.001f), kSatBiasDefault));
@@ -517,11 +517,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamSatDriveB, "Sat Drive B",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSatGirthB, "Sat Girth B",
-		juce::NormalisableRange<float> (kSatGirthMin, kSatGirthMax, 0.001f), kSatGirthDefault));
+		kParamSatCharB, "Sat Char B",
+		juce::NormalisableRange<float> (kSatCharMin, kSatCharMax, 0.001f), kSatCharDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSatModB, "Sat Mod B",
-		juce::NormalisableRange<float> (kSatModMin, kSatModMax, 0.001f), kSatModDefault));
+		kParamSatTypeCtrlB, "Sat Type B",
+		juce::NormalisableRange<float> (kSatTypeCtrlMin, kSatTypeCtrlMax, 0.001f), kSatTypeCtrlDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatBiasB, "Sat Bias B",
 		juce::NormalisableRange<float> (kSatBiasMin, kSatBiasMax, 0.001f), kSatBiasDefault));
@@ -669,11 +669,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamSatDriveC, "Sat Drive C",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSatGirthC, "Sat Girth C",
-		juce::NormalisableRange<float> (kSatGirthMin, kSatGirthMax, 0.001f), kSatGirthDefault));
+		kParamSatCharC, "Sat Char C",
+		juce::NormalisableRange<float> (kSatCharMin, kSatCharMax, 0.001f), kSatCharDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSatModC, "Sat Mod C",
-		juce::NormalisableRange<float> (kSatModMin, kSatModMax, 0.001f), kSatModDefault));
+		kParamSatTypeCtrlC, "Sat Type C",
+		juce::NormalisableRange<float> (kSatTypeCtrlMin, kSatTypeCtrlMax, 0.001f), kSatTypeCtrlDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatBiasC, "Sat Bias C",
 		juce::NormalisableRange<float> (kSatBiasMin, kSatBiasMax, 0.001f), kSatBiasDefault));
@@ -958,22 +958,22 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	// Saturation parameter pointers
 	pSatTypeA  = parameters.getRawParameterValue (kParamSatTypeA);
 	pSatDriveA = parameters.getRawParameterValue (kParamSatDriveA);
-	pSatGirthA = parameters.getRawParameterValue (kParamSatGirthA);
-	pSatModA   = parameters.getRawParameterValue (kParamSatModA);
+	pSatCharA = parameters.getRawParameterValue (kParamSatCharA);
+	pSatTypeCtrlA   = parameters.getRawParameterValue (kParamSatTypeCtrlA);
 	pSatBiasA  = parameters.getRawParameterValue (kParamSatBiasA);
 	pSatSagA   = parameters.getRawParameterValue (kParamSatSagA);
 	pSatRawA   = parameters.getRawParameterValue (kParamSatRawA);
 	pSatTypeB  = parameters.getRawParameterValue (kParamSatTypeB);
 	pSatDriveB = parameters.getRawParameterValue (kParamSatDriveB);
-	pSatGirthB = parameters.getRawParameterValue (kParamSatGirthB);
-	pSatModB   = parameters.getRawParameterValue (kParamSatModB);
+	pSatCharB = parameters.getRawParameterValue (kParamSatCharB);
+	pSatTypeCtrlB   = parameters.getRawParameterValue (kParamSatTypeCtrlB);
 	pSatBiasB  = parameters.getRawParameterValue (kParamSatBiasB);
 	pSatSagB   = parameters.getRawParameterValue (kParamSatSagB);
 	pSatRawB   = parameters.getRawParameterValue (kParamSatRawB);
 	pSatTypeC  = parameters.getRawParameterValue (kParamSatTypeC);
 	pSatDriveC = parameters.getRawParameterValue (kParamSatDriveC);
-	pSatGirthC = parameters.getRawParameterValue (kParamSatGirthC);
-	pSatModC   = parameters.getRawParameterValue (kParamSatModC);
+	pSatCharC = parameters.getRawParameterValue (kParamSatCharC);
+	pSatTypeCtrlC   = parameters.getRawParameterValue (kParamSatTypeCtrlC);
 	pSatBiasC  = parameters.getRawParameterValue (kParamSatBiasC);
 	pSatSagC   = parameters.getRawParameterValue (kParamSatSagC);
 	pSatRawC   = parameters.getRawParameterValue (kParamSatRawC);
@@ -2131,8 +2131,8 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		snap.model        = loadRelaxedInt (diagPick (pSatTypeA, pSatTypeB, pSatTypeC));
 		snap.seriesCount  = juce::jlimit (1, 4, loadRelaxedInt (diagPick (pSeriesA, pSeriesB, pSeriesC)));
 		snap.osOrder      = loadRelaxedInt (pOversample);
-		snap.girth        = loadRelaxed (diagPick (pSatGirthA, pSatGirthB, pSatGirthC));
-		snap.mod          = loadRelaxed (diagPick (pSatModA,   pSatModB,   pSatModC));
+		snap.girth        = loadRelaxed (diagPick (pSatCharA, pSatCharB, pSatCharC));
+		snap.mod          = loadRelaxed (diagPick (pSatTypeCtrlA,   pSatTypeCtrlB,   pSatTypeCtrlC));
 		snap.bias         = loadRelaxed (diagPick (pSatBiasA,  pSatBiasB,  pSatBiasC));
 		snap.react        = loadRelaxed (diagPick (pSatSagA,   pSatSagB,   pSatSagC));
 		snap.route        = route;
@@ -2249,8 +2249,8 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	// Saturation parameters
 	const int   satType  = loadRelaxedInt (pick (pSatTypeA,  pSatTypeB,  pSatTypeC));
 	const float satDrive = loadRelaxed    (pick (pSatDriveA, pSatDriveB, pSatDriveC));
-	const float satGirth = loadRelaxed    (pick (pSatGirthA, pSatGirthB, pSatGirthC));
-	const float satMod   = loadRelaxed    (pick (pSatModA,   pSatModB,   pSatModC));
+	const float satChar = loadRelaxed    (pick (pSatCharA, pSatCharB, pSatCharC));
+	const float satTypeCtrl = loadRelaxed    (pick (pSatTypeCtrlA,   pSatTypeCtrlB,   pSatTypeCtrlC));
 	const float satBias  = loadRelaxed    (pick (pSatBiasA,  pSatBiasB,  pSatBiasC));
 	const float satSag   = loadRelaxed    (pick (pSatSagA,   pSatSagB,   pSatSagC));
 	const float satDetail = loadRelaxed   (pick (pDetailA,   pDetailB,   pDetailC));
@@ -2798,7 +2798,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			const float osSr = (float) currentSampleRate * (float) os.getOversamplingFactor();
 
 			SatEngine::processBlock (state.satState, osL, osR, osNumSamples,
-			                         model, satDrive, satGirth, satMod, satBias, satSag, satDetail,
+			                         model, satDrive, satChar, satTypeCtrl, satBias, satSag, satDetail,
 			                         instabilityAmt, osSr, seriesCount, false, satRaw, diagCollectorPtr);
 
 			os.processSamplesDown (block);
@@ -2809,7 +2809,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			float* dataR = numChannels > 1 ? buffer.getWritePointer (1) : dataL;
 
 			SatEngine::processBlock (state.satState, dataL, dataR, numSamples,
-			                         model, satDrive, satGirth, satMod, satBias, satSag, satDetail, instabilityAmt,
+			                         model, satDrive, satChar, satTypeCtrl, satBias, satSag, satDetail, instabilityAmt,
 			                         (float) currentSampleRate, seriesCount, true, satRaw, diagCollectorPtr);
 		}
 
@@ -3069,7 +3069,7 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	const int irLen = 512;
 	const float sr = static_cast<float> (currentSampleRate);
 
-	auto makeAlignmentProbe = [&] (int satType, float satMod, bool satRaw) -> juce::AudioBuffer<float>
+	auto makeAlignmentProbe = [&] (int satType, float satTypeCtrl, bool satRaw) -> juce::AudioBuffer<float>
 	{
 		juce::AudioBuffer<float> probe (1, irLen);
 		probe.clear();
@@ -3122,8 +3122,8 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 			float x = data[n];
 			if (usesEmphasis)
 			{
-				x = SatEngine::preEmphasize (x, empSt, model, irDrive, satMod, ec);
-				x = SatEngine::deEmphasize  (x, empSt, model, irDrive, satMod, ec);
+				x = SatEngine::preEmphasize (x, empSt, model, irDrive, satTypeCtrl, ec);
+				x = SatEngine::deEmphasize  (x, empSt, model, irDrive, satTypeCtrl, ec);
 			}
 			data[n] = x;
 		}
@@ -3160,9 +3160,9 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	};
 
 	const int typeA = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeA)->load());
-	const float modA = parameters.getRawParameterValue (kParamSatModA)->load();
+	const float typeCtrlA = parameters.getRawParameterValue (kParamSatTypeCtrlA)->load();
 	const bool rawA = parameters.getRawParameterValue (kParamSatRawA)->load() > 0.5f;
-	auto probeA = makeAlignmentProbe (typeA, modA, rawA);
+	auto probeA = makeAlignmentProbe (typeA, typeCtrlA, rawA);
 	const float* dataA = probeA.getReadPointer (0);
 	const float centroidA = calcCentroid (probeA);
 
@@ -3188,9 +3188,9 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	if (enabledB)
 	{
 		const int typeB = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeB)->load());
-		const float modB = parameters.getRawParameterValue (kParamSatModB)->load();
+		const float typeCtrlB = parameters.getRawParameterValue (kParamSatTypeCtrlB)->load();
 		const bool rawB = parameters.getRawParameterValue (kParamSatRawB)->load() > 0.5f;
-		auto probeB = makeAlignmentProbe (typeB, modB, rawB);
+		auto probeB = makeAlignmentProbe (typeB, typeCtrlB, rawB);
 		centroidB = calcCentroid (probeB);
 		corrSignB = xcorrSign (dataA, probeB);
 	}
@@ -3198,9 +3198,9 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	if (enabledC)
 	{
 		const int typeC = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeC)->load());
-		const float modC = parameters.getRawParameterValue (kParamSatModC)->load();
+		const float typeCtrlC = parameters.getRawParameterValue (kParamSatTypeCtrlC)->load();
 		const bool rawC = parameters.getRawParameterValue (kParamSatRawC)->load() > 0.5f;
-		auto probeC = makeAlignmentProbe (typeC, modC, rawC);
+		auto probeC = makeAlignmentProbe (typeC, typeCtrlC, rawC);
 		centroidC = calcCentroid (probeC);
 		corrSignC = xcorrSign (dataA, probeC);
 	}
