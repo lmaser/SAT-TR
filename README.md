@@ -43,10 +43,10 @@ Saturation model selector. 6 algorithms:
 | Model | Algorithm | Active Control Labels |
 |-------|-----------|-----------------------|
 | **CLEAN** | 1:1 pass-through | `-` |
-| **TAPE** | Tape-style saturation with fitted family morphing | `DRIVE`, `BODY`, `FORM`, `BIAS`, `COMP` |
-| **TUBE** | Triode / power-tube inspired stage | `DRIVE`, `BODY`, `TYPE`, `BIAS`, `SAG` |
-| **TRANSISTOR** | BJT <-> FET solid-state preamp / fuzz stage | `GAIN`, `BODY`, `TYPE`, `BIAS`, `COMP` |
-| **DIODE** | Diode overdrive family (`feedback -> hard -> open`) | `DRIVE`, `COND`, `TOPO`, `SYM`, `COMP` |
+| **TAPE** | Tape-style saturation with fitted family morphing | `DRIVE`, `CHAR`, `FORM`, `BIAS`, `COMP` |
+| **TUBE** | Triode / power-tube inspired stage | `DRIVE`, `CHAR`, `TYPE`, `BIAS`, `SAG` |
+| **TRANSISTOR** | BJT <-> FET solid-state preamp / fuzz stage | `GAIN`, `CHAR`, `TYPE`, `BIAS`, `COMP` |
+| **DIODE** | Diode overdrive family (`feedback -> hard -> open`) | `DRIVE`, `COND`, `TYPE`, `SYM`, `COMP` |
 | **CLIPPER** | Broadband / pedal clipper family (`classic -> TS -> Klon`) | `DRIVE`, `KNEE`, `VOICE`, `SYM`, `PEAK` |
 
 #### DRIVE / GAIN
@@ -57,22 +57,22 @@ Primary amount control. The visible label changes with the selected algorithm:
 - **GAIN**: transistor input drive / stage push
 - In `CLIPPER`, **DRIVE** is implemented internally as clip-threshold drive: higher values lower the effective threshold and produce more clipping.
 
-#### CHAR / BODY / COND / KNEE
+#### CHAR / KNEE
 
-Secondary shape or body control. Its behavior depends on the algorithm:
+Secondary shape or CHAR control. Its behavior depends on the algorithm:
 
-- **BODY**: low-mid/body/depth emphasis inside the model
+- **CHAR**: low-mid/CHAR/depth emphasis inside the model
 - **COND**: conditioning before the diode clipper
 - **KNEE**: clip softness / transition sharpness
 
-#### MOD / FORM / TYPE / TOPO / VOICE
+#### TYPE
 
 Model-specific voicing or topology morph:
 
-- **FORM**: tape family contour / character morph
-- **TYPE**: tube or transistor family blend
-- **TOPO**: diode topology / openness
-- **VOICE**: clipper voicing family
+- **TAPE TYPE**: tape family contour / character morph
+- **TUBE/TRANSISTOR TYPE**: tube or transistor family blend
+- **DIODE TYPE**: diode topology / openness
+- **CLIPPER TYPE**: clipper voicing family
 
 #### BIAS / SYM
 
