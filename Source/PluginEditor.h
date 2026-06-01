@@ -106,6 +106,24 @@ private:
 		bool allowNumericPopup = true;
 	};
 
+	class PromptToggleButton : public juce::ToggleButton
+	{
+	public:
+		using juce::ToggleButton::ToggleButton;
+
+		void mouseDown (const juce::MouseEvent& e) override
+		{
+			if (! e.mods.isPopupMenu())
+				juce::ToggleButton::mouseDown (e);
+		}
+
+		void mouseUp (const juce::MouseEvent& e) override
+		{
+			if (! e.mods.isPopupMenu())
+				juce::ToggleButton::mouseUp (e);
+		}
+	};
+
 	// ══════════════════════════════════════════════════════════════
 	//  Filter bar (dual HP/LP marker component, replaces separate sliders)
 	// ══════════════════════════════════════════════════════════════
@@ -286,7 +304,7 @@ private:
 	{
 		juce::ToggleButton &enableBtn;
 		BarSlider &hp, &lp, &in, &out, &tilt, &series, &pan, &fred, &pos;
-		juce::ToggleButton &inv, &chaos, &chaosFilter;  juce::Label &chaosDisp;
+		juce::ToggleButton &inv, &chaos, &chaosFilter;  juce::Label &chaosDisp, &chaosFilterDisp;
 		juce::ToggleButton &exp;  juce::Label &expDisp;
 		juce::ComboBox &modeIn, &modeOut, &sumBus, &filterPos;
 		FilterBarComponent &filterBar;  BarSlider &mix;
@@ -354,10 +372,11 @@ private:
 	BarSlider posSliderA;
 
 	juce::ToggleButton invButtonA;
-	juce::ToggleButton chaosButtonA;
-	juce::ToggleButton chaosFilterButtonA;
+	PromptToggleButton chaosButtonA;
+	PromptToggleButton chaosFilterButtonA;
 	juce::Label chaosDisplayA;
-	juce::ToggleButton expButtonA;
+	juce::Label chaosFilterDisplayA;
+	PromptToggleButton expButtonA;
 	juce::Label expDisplayA;
 
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enableAttachA;
@@ -420,10 +439,11 @@ private:
 	BarSlider posSliderB;
 
 	juce::ToggleButton invButtonB;
-	juce::ToggleButton chaosButtonB;
-	juce::ToggleButton chaosFilterButtonB;
+	PromptToggleButton chaosButtonB;
+	PromptToggleButton chaosFilterButtonB;
 	juce::Label chaosDisplayB;
-	juce::ToggleButton expButtonB;
+	juce::Label chaosFilterDisplayB;
+	PromptToggleButton expButtonB;
 	juce::Label expDisplayB;
 
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enableAttachB;
@@ -486,10 +506,11 @@ private:
 	BarSlider posSliderC;
 
 	juce::ToggleButton invButtonC;
-	juce::ToggleButton chaosButtonC;
-	juce::ToggleButton chaosFilterButtonC;
+	PromptToggleButton chaosButtonC;
+	PromptToggleButton chaosFilterButtonC;
 	juce::Label chaosDisplayC;
-	juce::ToggleButton expButtonC;
+	juce::Label chaosFilterDisplayC;
+	PromptToggleButton expButtonC;
 	juce::Label expDisplayC;
 
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enableAttachC;
