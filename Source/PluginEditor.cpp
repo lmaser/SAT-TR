@@ -4464,6 +4464,8 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	using namespace TR;
 	lnf.setScheme (activeScheme);
 	const auto scheme = activeScheme;
+	const juce::Font promptFont (juce::FontOptions (34.0f).withStyle ("Bold"));
+	const juce::Font sideFont   (juce::FontOptions (24.0f).withStyle ("Bold"));
 
 	auto& proc = audioProcessor;
 	auto& vts = proc.getValueTreeState();
@@ -4546,13 +4548,69 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 		return minF * std::pow (2.0f, juce::jlimit (0.0f, 1.0f, n) * std::log2 (maxF / minF));
 	};
 
-	// HP section
-	aw->addTextEditor ("hpFreq", juce::String (juce::roundToInt (hpFreq)), juce::String());
+	struct UnitInputFilter : juce::TextEditor::InputFilter
+	{
+		float maxValue = 1.0f;
+		int maxLength = 4;
+		bool allowDecimal = true;
+
+		UnitInputFilter (float maxVal, int maxLen, bool decimal)
+			: maxValue (maxVal), maxLength (maxLen), allowDecimal (decimal) {}
+
+		juce::String filterNewText (juce::TextEditor& editor, const juce::String& newText) override
+		{
+			const bool existingHasDot = editor.getText().containsChar ('.');
+			bool seenDot = false;
+			juce::String result;
+
+			for (auto c : newText)
+			{
+				if (c == '.')
+				{
+					if (! allowDecimal || seenDot || existingHasDot)
+						continue;
+					seenDot = true;
+					result += c;
+				}
+				else if (juce::CharacterFunctions::isDigit (c))
+				{
+					result += c;
+				}
+
+				if (result.length() >= maxLength)
+					break;
+			}
+
+			juce::String proposed = editor.getText();
+			const int insertPos = editor.getCaretPosition();
+			proposed = proposed.substring (0, insertPos) + result
+			         + proposed.substring (insertPos + editor.getHighlightedText().length());
+
+			if (proposed.length() > maxLength || proposed.getFloatValue() > maxValue)
+				return {};
+
+			if (allowDecimal && proposed.length() > 1 && proposed[0] == '0' && proposed[1] != '.')
+				return {};
+
+			return result;
+		}
+	};
+
+	auto formatFilterPromptFrequencyValue = [] (float hz)
+	{
+		const float clamped = juce::jlimit (20.0f, 20000.0f, hz);
+		if (clamped >= 10000.0f)
+			return juce::String (juce::roundToInt (clamped / 1000.0f));
+		if (clamped >= 1000.0f)
+			return juce::String (clamped / 1000.0f, 1);
+		return juce::String (juce::roundToInt (clamped));
+	};
+
+	aw->addTextEditor ("hpFreq", formatFilterPromptFrequencyValue (hpFreq), juce::String());
 	auto* hpBar = new PromptBar (scheme, freqToNorm (hpFreq), freqToNorm (SATTRAudioProcessor::kFilterHpFreqDefault));
 	aw->addAndMakeVisible (hpBar);
 
-	// LP section
-	aw->addTextEditor ("lpFreq", juce::String (juce::roundToInt (lpFreq)), juce::String());
+	aw->addTextEditor ("lpFreq", formatFilterPromptFrequencyValue (lpFreq), juce::String());
 	auto* lpBar = new PromptBar (scheme, freqToNorm (lpFreq), freqToNorm (SATTRAudioProcessor::kFilterLpFreqDefault));
 	aw->addAndMakeVisible (lpBar);
 
@@ -4576,20 +4634,16 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 		return "24dB";
 	};
 
-	const juce::Font slopeFont (juce::FontOptions (24.0f).withStyle ("Bold"));
-
 	auto* hpSlopeLabel = new juce::Label ("", slopeToText (hpSlope));
 	hpSlopeLabel->setJustificationType (juce::Justification::centredRight);
 	hpSlopeLabel->setColour (juce::Label::textColourId, scheme.text);
 	hpSlopeLabel->setBorderSize (juce::BorderSize<int> (0));
-	hpSlopeLabel->setFont (slopeFont);
 	aw->addAndMakeVisible (hpSlopeLabel);
 
 	auto* lpSlopeLabel = new juce::Label ("", slopeToText (lpSlope));
 	lpSlopeLabel->setJustificationType (juce::Justification::centredRight);
 	lpSlopeLabel->setColour (juce::Label::textColourId, scheme.text);
 	lpSlopeLabel->setBorderSize (juce::BorderSize<int> (0));
-	lpSlopeLabel->setFont (slopeFont);
 	aw->addAndMakeVisible (lpSlopeLabel);
 
 	// Shared state
@@ -4608,7 +4662,74 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	const juce::String hpSlopeIdStr (hpSlopeId);
 	const juce::String lpSlopeIdStr (lpSlopeId);
 
-	auto pushParams = [safeThis, hpToggle, lpToggle, hpSlopeVal, lpSlopeVal, normToFreq, aw,
+	auto* hpNameLabel = new juce::Label ("", "HP");
+	hpNameLabel->setJustificationType (juce::Justification::centredLeft);
+	hpNameLabel->setColour (juce::Label::textColourId, scheme.text);
+	hpNameLabel->setBorderSize (juce::BorderSize<int> (0));
+	hpNameLabel->setFont (promptFont);
+	aw->addAndMakeVisible (hpNameLabel);
+
+	auto* lpNameLabel = new juce::Label ("", "LP");
+	lpNameLabel->setJustificationType (juce::Justification::centredLeft);
+	lpNameLabel->setColour (juce::Label::textColourId, scheme.text);
+	lpNameLabel->setBorderSize (juce::BorderSize<int> (0));
+	lpNameLabel->setFont (promptFont);
+	aw->addAndMakeVisible (lpNameLabel);
+
+	auto* hpHzLabel = new juce::Label ("", "Hz");
+	hpHzLabel->setJustificationType (juce::Justification::centredLeft);
+	hpHzLabel->setColour (juce::Label::textColourId, scheme.text);
+	hpHzLabel->setBorderSize (juce::BorderSize<int> (0));
+	hpHzLabel->setFont (promptFont);
+	hpHzLabel->setMinimumHorizontalScale (1.0f);
+	aw->addAndMakeVisible (hpHzLabel);
+
+	auto* lpHzLabel = new juce::Label ("", "Hz");
+	lpHzLabel->setJustificationType (juce::Justification::centredLeft);
+	lpHzLabel->setColour (juce::Label::textColourId, scheme.text);
+	lpHzLabel->setBorderSize (juce::BorderSize<int> (0));
+	lpHzLabel->setFont (promptFont);
+	lpHzLabel->setMinimumHorizontalScale (1.0f);
+	aw->addAndMakeVisible (lpHzLabel);
+
+	auto updateFilterPromptPresentation = [formatFilterPromptFrequencyValue] (juce::TextEditor* te,
+	                                                                          juce::Label* unitLabel,
+	                                                                          float freqHz,
+	                                                                          bool rewriteText)
+	{
+		if (te == nullptr || unitLabel == nullptr)
+			return;
+
+		const float clamped = juce::jlimit (20.0f, 20000.0f, freqHz);
+		const bool useKhz = clamped >= 1000.0f;
+		unitLabel->setText (useKhz ? "kHz" : "Hz", juce::dontSendNotification);
+		te->setInputFilter (new UnitInputFilter (useKhz ? 20.0f : 20000.0f,
+		                                         useKhz ? 4 : 5,
+		                                         useKhz),
+		                    true);
+		if (rewriteText)
+			te->setText (formatFilterPromptFrequencyValue (clamped), juce::dontSendNotification);
+	};
+
+	auto parseFilterPromptFrequency = [] (juce::TextEditor* te, juce::Label* unitLabel, float fallbackHz)
+	{
+		if (te == nullptr || unitLabel == nullptr)
+			return juce::jlimit (20.0f, 20000.0f, fallbackHz);
+
+		const bool useKhz = unitLabel->getText() == "kHz";
+		const float raw = (float) te->getText().getFloatValue();
+		return juce::jlimit (20.0f, 20000.0f, raw * (useKhz ? 1000.0f : 1.0f));
+	};
+
+	preparePromptTextEditor (*aw, "hpFreq", scheme.bg, scheme.text, scheme.fg, promptFont, false);
+	preparePromptTextEditor (*aw, "lpFreq", scheme.bg, scheme.text, scheme.fg, promptFont, false);
+	if (auto* te = aw->getTextEditor ("hpFreq"))
+		updateFilterPromptPresentation (te, hpHzLabel, hpFreq, true);
+	if (auto* te = aw->getTextEditor ("lpFreq"))
+		updateFilterPromptPresentation (te, lpHzLabel, lpFreq, true);
+
+	auto pushParams = [safeThis, hpToggle, lpToggle, hpSlopeVal, lpSlopeVal,
+	                    hpHzLabel, lpHzLabel, parseFilterPromptFrequency, aw,
 	                    hpFreqIdStr, lpFreqIdStr, hpOnIdStr, lpOnIdStr,
 	                    hpSlopeIdStr, lpSlopeIdStr, loaderIndex] ()
 	{
@@ -4623,8 +4744,8 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 
 		auto* hpTe = aw->getTextEditor ("hpFreq");
 		auto* lpTe = aw->getTextEditor ("lpFreq");
-		float hpF = hpTe ? juce::jlimit (20.0f, 20000.0f, (float) hpTe->getText().getFloatValue()) : 20.0f;
-		float lpF = lpTe ? juce::jlimit (20.0f, 20000.0f, (float) lpTe->getText().getFloatValue()) : 20000.0f;
+		float hpF = parseFilterPromptFrequency (hpTe, hpHzLabel, 20.0f);
+		float lpF = parseFilterPromptFrequency (lpTe, lpHzLabel, 20000.0f);
 		if (hpF > lpF) { const float mid = (hpF + lpF) * 0.5f; hpF = mid; lpF = mid; }
 		if (hpTe) setP (hpFreqIdStr, hpF);
 		if (lpTe) setP (lpFreqIdStr, lpF);
@@ -4678,12 +4799,14 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	auto hpCyclerGuard = std::shared_ptr<SlopeCycler> (hpCycler);
 	auto lpCyclerGuard = std::shared_ptr<SlopeCycler> (lpCycler);
 
-	// Wire toggle real-time
 	hpToggle->onClick = pushParams;
 	lpToggle->onClick = pushParams;
 
-	// Wire bar -> text sync
-	auto barToText = [aw, syncing, normToFreq, freqToNorm, pushParams, hpBar, lpBar] (const char* editorId, float v01, bool isHp)
+	auto* hpTe = aw->getTextEditor ("hpFreq");
+	auto* lpTe = aw->getTextEditor ("lpFreq");
+
+	auto barToText = [aw, syncing, normToFreq, pushParams, hpBar, lpBar,
+	                  hpHzLabel, lpHzLabel, updateFilterPromptPresentation, layoutFn] (const char* editorId, float v01, bool isHp)
 	{
 		if (*syncing) return;
 		*syncing = true;
@@ -4697,34 +4820,41 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 
 		if (auto* te = aw->getTextEditor (editorId))
 		{
-			te->setText (juce::String (juce::roundToInt (normToFreq (v01))), juce::sendNotification);
+			updateFilterPromptPresentation (te,
+			                                isHp ? hpHzLabel : lpHzLabel,
+			                                normToFreq (v01),
+			                                true);
 			te->selectAll();
 		}
 		*syncing = false;
 		pushParams();
+		if (layoutFn && *layoutFn) (*layoutFn)();
 	};
 
 	hpBar->onValueChanged = [barToText] (float v) { barToText ("hpFreq", v, true); };
 	lpBar->onValueChanged = [barToText] (float v) { barToText ("lpFreq", v, false); };
 
-	auto textToBar = [syncing, freqToNorm, normToFreq, pushParams, aw, hpBar, lpBar] (juce::TextEditor* te, PromptBar* bar, bool isHp)
+	auto textToBar = [syncing, freqToNorm, pushParams, aw, hpBar, lpBar,
+	                  hpHzLabel, lpHzLabel, parseFilterPromptFrequency, updateFilterPromptPresentation]
+	                 (juce::TextEditor* te, PromptBar* bar, bool isHp)
 	{
 		if (*syncing || te == nullptr || bar == nullptr) return;
 		*syncing = true;
-		float freq = juce::jlimit (20.0f, 20000.0f, (float) te->getText().getFloatValue());
+		juce::Label* unitLabel = isHp ? hpHzLabel : lpHzLabel;
+		const float fallback = isHp ? 20.0f : 20000.0f;
+		float freq = parseFilterPromptFrequency (te, unitLabel, fallback);
 		auto* otherTe = aw->getTextEditor (isHp ? "lpFreq" : "hpFreq");
-		const float otherFreq = otherTe ? juce::jlimit (20.0f, 20000.0f, (float) otherTe->getText().getFloatValue()) : (isHp ? 20000.0f : 20.0f);
+		juce::Label* otherUnit = isHp ? lpHzLabel : hpHzLabel;
+		const float otherFallback = isHp ? 20000.0f : 20.0f;
+		const float otherFreq = parseFilterPromptFrequency (otherTe, otherUnit, otherFallback);
 		if (isHp) freq = juce::jmin (freq, otherFreq);
 		else      freq = juce::jmax (freq, otherFreq);
-		te->setText (juce::String (juce::roundToInt (freq)), juce::dontSendNotification);
+		updateFilterPromptPresentation (te, unitLabel, freq, true);
 		bar->value01 = freqToNorm (freq);
 		bar->repaint();
 		*syncing = false;
 		pushParams();
 	};
-
-	auto* hpTe = aw->getTextEditor ("hpFreq");
-	auto* lpTe = aw->getTextEditor ("lpFreq");
 
 	if (hpTe != nullptr)
 		hpTe->onTextChange = [syncing, textToBar, hpTe, hpBar, layoutFn] () { textToBar (hpTe, hpBar, true); if (*layoutFn) (*layoutFn)(); };
@@ -4739,47 +4869,6 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	applyPromptShellSize (*aw);
 	layoutAlertWindowButtons (*aw);
 
-	const int margin     = kPromptInnerMargin;
-	const int toggleSide = 26;
-	const juce::Font promptFont (juce::FontOptions (34.0f).withStyle ("Bold"));
-
-	// Labels: HP name, LP name, Hz labels
-	auto* hpNameLabel = new juce::Label ("", "HP");
-	hpNameLabel->setJustificationType (juce::Justification::centredLeft);
-	hpNameLabel->setColour (juce::Label::textColourId, scheme.text);
-	hpNameLabel->setBorderSize (juce::BorderSize<int> (0));
-	hpNameLabel->setFont (promptFont);
-	aw->addAndMakeVisible (hpNameLabel);
-
-	auto* lpNameLabel = new juce::Label ("", "LP");
-	lpNameLabel->setJustificationType (juce::Justification::centredLeft);
-	lpNameLabel->setColour (juce::Label::textColourId, scheme.text);
-	lpNameLabel->setBorderSize (juce::BorderSize<int> (0));
-	lpNameLabel->setFont (promptFont);
-	aw->addAndMakeVisible (lpNameLabel);
-
-	auto* hpHzLabel = new juce::Label ("", "Hz");
-	hpHzLabel->setJustificationType (juce::Justification::centredLeft);
-	hpHzLabel->setColour (juce::Label::textColourId, scheme.text);
-	hpHzLabel->setBorderSize (juce::BorderSize<int> (0));
-	hpHzLabel->setFont (promptFont);
-	aw->addAndMakeVisible (hpHzLabel);
-
-	auto* lpHzLabel = new juce::Label ("", "Hz");
-	lpHzLabel->setJustificationType (juce::Justification::centredLeft);
-	lpHzLabel->setColour (juce::Label::textColourId, scheme.text);
-	lpHzLabel->setBorderSize (juce::BorderSize<int> (0));
-	lpHzLabel->setFont (promptFont);
-	aw->addAndMakeVisible (lpHzLabel);
-
-	preparePromptTextEditor (*aw, "hpFreq", scheme.bg, scheme.text, scheme.fg, promptFont, false);
-	preparePromptTextEditor (*aw, "lpFreq", scheme.bg, scheme.text, scheme.fg, promptFont, false);
-	if (auto* hpFreqTe = aw->getTextEditor ("hpFreq"))
-		hpFreqTe->setInputFilter (new NumericInputFilter (20.0, 20000.0, 5, 0), true);
-	if (auto* lpFreqTe = aw->getTextEditor ("lpFreq"))
-		lpFreqTe->setInputFilter (new NumericInputFilter (20.0, 20000.0, 5, 0), true);
-
-	// Toggle forwarder: clicking HP/LP label toggles checkboxes
 	struct ToggleForwarder : public juce::MouseListener
 	{
 		juce::ToggleButton* toggle = nullptr;
@@ -4802,11 +4891,12 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	auto hpFwdGuard = std::shared_ptr<ToggleForwarder> (hpFwd);
 	auto lpFwdGuard = std::shared_ptr<ToggleForwarder> (lpFwd);
 
-	// -- Layout function (with slope labels) --
+	const int margin = kPromptInnerMargin;
+	constexpr int toggleSide = 26;
 	auto layoutRows = [aw, hpToggle, lpToggle,
 	                    hpNameLabel, lpNameLabel, hpHzLabel, lpHzLabel,
 	                    hpSlopeLabel, lpSlopeLabel,
-	                    hpBar, lpBar, promptFont, slopeFont, toggleSide, margin] ()
+	                    hpBar, lpBar, promptFont, sideFont, toggleSide, margin] ()
 	{
 		auto* hpTe = aw->getTextEditor ("hpFreq");
 		auto* lpTe = aw->getTextEditor ("lpFreq");
@@ -4831,18 +4921,17 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 		                                           (int) std::lround ((double) toggleSide * 0.65));
 		const int labelOffset = toggleVisualInsetLeft + toggleVisualSide + tglGap;
 
-		const int nameW  = stringWidth (slopeFont, "LP") + 2;
-		const int slopeW = stringWidth (slopeFont, "24dB") + 4;
-		const int hzGap  = 2;
-		const int hzW    = stringWidth (promptFont, "Hz") + 2;
+		const int nameW  = stringWidth (sideFont, "LP") + 2;
+		const int slopeW = stringWidth (sideFont, "24dB") + 4;
+		const int hzGap  = 1;
 
 		auto placeRow = [&] (juce::ToggleButton* toggle, juce::Label* nameLabel,
 		                     juce::TextEditor* te, juce::Label* hzLabel,
 		                     juce::Label* slopeLabel, PromptBar* bar, int y)
 		{
-			nameLabel->setFont (slopeFont);
-			hzLabel->setFont (promptFont);
-			slopeLabel->setFont (slopeFont);
+			nameLabel->setFont (sideFont);
+			hzLabel->setFont (te->getFont());
+			slopeLabel->setFont (sideFont);
 
 			toggle->setBounds (barX, y + (rowH - toggleSide) / 2, toggleSide, toggleSide);
 			const int nameX = barX + labelOffset;
@@ -4856,15 +4945,19 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 			const int midW = midR - midL;
 
 			const auto txt   = te->getText();
-			const int textW  = juce::jmax (1, stringWidth (promptFont, txt));
+			const int textW  = juce::jmax (1, stringWidth (te->getFont(), txt));
+			const bool useKhz = hzLabel->getText() == "kHz";
+			const int worstTextW = stringWidth (te->getFont(), useKhz ? "20.0" : "999");
+			const int unitTextW = stringWidth (hzLabel->getFont(), hzLabel->getText());
+			const int unitW  = stringWidth (hzLabel->getFont(), "kHz") + 8;
 			constexpr int kEditorPad = 2;
-			const int desiredEditorW = textW + kEditorPad * 2;
-			const int editorW = desiredEditorW;
-			const int groupW  = editorW + hzGap + hzW;
-			const int groupX  = midL + juce::jmax (0, (midW - groupW) / 2);
+			const int editorW = juce::jmax (28, juce::jmax (textW, worstTextW) + kEditorPad * 2);
+			const int visualW = textW + hzGap + unitTextW;
+			const int blockLeft = midL + juce::jmax (0, (midW - visualW) / 2);
+			const int groupX = blockLeft - ((editorW - textW) / 2);
 
 			te->setBounds (groupX, y, editorW, rowH);
-			hzLabel->setBounds (groupX + editorW + hzGap, y, hzW, rowH);
+			hzLabel->setBounds (blockLeft + textW + hzGap, y, unitW, rowH);
 
 			const int barW = juce::jmax (60, barR - barX);
 			bar->setBounds (barX, y + rowH + barGap, barW, barH);
@@ -4879,7 +4972,12 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 
 	preparePromptTextEditor (*aw, "hpFreq", scheme.bg, scheme.text, scheme.fg, promptFont, false);
 	preparePromptTextEditor (*aw, "lpFreq", scheme.bg, scheme.text, scheme.fg, promptFont, false);
+	if (auto* te = aw->getTextEditor ("hpFreq"))
+		updateFilterPromptPresentation (te, hpHzLabel, hpFreq, true);
+	if (auto* te = aw->getTextEditor ("lpFreq"))
+		updateFilterPromptPresentation (te, lpHzLabel, lpFreq, true);
 	layoutRows();
+	focusAndSelectPromptTextEditor (*aw, "hpFreq");
 
 	styleAlertButtons (*aw, lnf);
 
