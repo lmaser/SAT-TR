@@ -36,6 +36,7 @@ public:
 	static constexpr const char* kParamResoA        = "reso_a";
 	static constexpr const char* kParamInvA         = "inv_a";
 	static constexpr const char* kParamDelayA       = "delay_a";
+	static constexpr const char* kParamSidechainA   = "sidechain_a";
 	static constexpr const char* kParamChaosA       = "chaos_a";
 	static constexpr const char* kParamChaosFilterA    = "chaos_filter_a";
 	static constexpr const char* kParamChaosAmtA       = "chaos_amt_a";
@@ -91,6 +92,7 @@ public:
 	static constexpr const char* kParamResoB        = "reso_b";
 	static constexpr const char* kParamInvB         = "inv_b";
 	static constexpr const char* kParamDelayB       = "delay_b";
+	static constexpr const char* kParamSidechainB   = "sidechain_b";
 	static constexpr const char* kParamChaosB       = "chaos_b";
 	static constexpr const char* kParamChaosFilterB    = "chaos_filter_b";
 	static constexpr const char* kParamChaosAmtB       = "chaos_amt_b";
@@ -146,6 +148,7 @@ public:
 	static constexpr const char* kParamResoC        = "reso_c";
 	static constexpr const char* kParamInvC         = "inv_c";
 	static constexpr const char* kParamDelayC       = "delay_c";
+	static constexpr const char* kParamSidechainC   = "sidechain_c";
 	static constexpr const char* kParamChaosC       = "chaos_c";
 	static constexpr const char* kParamChaosFilterC    = "chaos_filter_c";
 	static constexpr const char* kParamChaosAmtC       = "chaos_amt_c";
@@ -565,6 +568,7 @@ public:
 		float lastOutGain = 1.0f;
 		float lastMix = 1.0f;
 		float lastPosGain = 1.0f;
+		float lastSidechainPreGain = 1.0f;
 		
 		// FRED (Fredman miking) state: fractional delay buffer for off-axis simulation
 		// ~159 us delay ~= 5 cm path difference (realistic Fredman setup)
@@ -806,6 +810,9 @@ private:
 	std::atomic<float>* pDelayA  = nullptr;
 	std::atomic<float>* pDelayB  = nullptr;
 	std::atomic<float>* pDelayC  = nullptr;
+	std::atomic<float>* pSidechainA = nullptr;
+	std::atomic<float>* pSidechainB = nullptr;
+	std::atomic<float>* pSidechainC = nullptr;
 	std::atomic<float>* pExpA       = nullptr;
 	std::atomic<float>* pExpOrderA  = nullptr;
 	std::atomic<float>* pExpRatioA  = nullptr;
@@ -1000,6 +1007,8 @@ private:
 	// DC blocking filter state (per-channel)
 	float dcBlockX_[2] = { 0.0f, 0.0f };
 	float dcBlockY_[2] = { 0.0f, 0.0f };
+	float sidechainEnv_ = 0.0f;
+	float sidechainDriveAmount_ = 0.0f;
 
 	// Auto-align (momentary trigger state)
 	juce::int64 lastAlignTime_ = 0;

@@ -1357,7 +1357,7 @@ const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoad
 		SATTRAudioProcessor::kParamEnableA,
 		SATTRAudioProcessor::kParamHpFreqA, SATTRAudioProcessor::kParamLpFreqA, SATTRAudioProcessor::kParamInA, SATTRAudioProcessor::kParamOutA, SATTRAudioProcessor::kParamTiltA,
 		SATTRAudioProcessor::kParamSeriesA, SATTRAudioProcessor::kParamPanA,    SATTRAudioProcessor::kParamFredA, SATTRAudioProcessor::kParamPosA, SATTRAudioProcessor::kParamResoA,
-		SATTRAudioProcessor::kParamInvA,    SATTRAudioProcessor::kParamChaosA, SATTRAudioProcessor::kParamChaosFilterA,
+		SATTRAudioProcessor::kParamInvA,    SATTRAudioProcessor::kParamChaosA, SATTRAudioProcessor::kParamChaosFilterA, SATTRAudioProcessor::kParamSidechainA,
 		SATTRAudioProcessor::kParamChaosAmtA, SATTRAudioProcessor::kParamChaosSpdA,
 		SATTRAudioProcessor::kParamChaosAmtFilterA, SATTRAudioProcessor::kParamChaosSpdFilterA,
 		SATTRAudioProcessor::kParamModeInA, SATTRAudioProcessor::kParamModeOutA, SATTRAudioProcessor::kParamSumBusA, SATTRAudioProcessor::kParamFilterPosA, SATTRAudioProcessor::kParamMixA,
@@ -1372,7 +1372,7 @@ const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoad
 		SATTRAudioProcessor::kParamEnableB,
 		SATTRAudioProcessor::kParamHpFreqB, SATTRAudioProcessor::kParamLpFreqB, SATTRAudioProcessor::kParamInB, SATTRAudioProcessor::kParamOutB, SATTRAudioProcessor::kParamTiltB,
 		SATTRAudioProcessor::kParamSeriesB, SATTRAudioProcessor::kParamPanB,    SATTRAudioProcessor::kParamFredB, SATTRAudioProcessor::kParamPosB, SATTRAudioProcessor::kParamResoB,
-		SATTRAudioProcessor::kParamInvB,    SATTRAudioProcessor::kParamChaosB, SATTRAudioProcessor::kParamChaosFilterB,
+		SATTRAudioProcessor::kParamInvB,    SATTRAudioProcessor::kParamChaosB, SATTRAudioProcessor::kParamChaosFilterB, SATTRAudioProcessor::kParamSidechainB,
 		SATTRAudioProcessor::kParamChaosAmtB, SATTRAudioProcessor::kParamChaosSpdB,
 		SATTRAudioProcessor::kParamChaosAmtFilterB, SATTRAudioProcessor::kParamChaosSpdFilterB,
 		SATTRAudioProcessor::kParamModeInB, SATTRAudioProcessor::kParamModeOutB, SATTRAudioProcessor::kParamSumBusB, SATTRAudioProcessor::kParamFilterPosB, SATTRAudioProcessor::kParamMixB,
@@ -1387,7 +1387,7 @@ const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoad
 		SATTRAudioProcessor::kParamEnableC,
 		SATTRAudioProcessor::kParamHpFreqC, SATTRAudioProcessor::kParamLpFreqC, SATTRAudioProcessor::kParamInC, SATTRAudioProcessor::kParamOutC, SATTRAudioProcessor::kParamTiltC,
 		SATTRAudioProcessor::kParamSeriesC, SATTRAudioProcessor::kParamPanC,    SATTRAudioProcessor::kParamFredC, SATTRAudioProcessor::kParamPosC, SATTRAudioProcessor::kParamResoC,
-		SATTRAudioProcessor::kParamInvC,    SATTRAudioProcessor::kParamChaosC, SATTRAudioProcessor::kParamChaosFilterC,
+		SATTRAudioProcessor::kParamInvC,    SATTRAudioProcessor::kParamChaosC, SATTRAudioProcessor::kParamChaosFilterC, SATTRAudioProcessor::kParamSidechainC,
 		SATTRAudioProcessor::kParamChaosAmtC, SATTRAudioProcessor::kParamChaosSpdC,
 		SATTRAudioProcessor::kParamChaosAmtFilterC, SATTRAudioProcessor::kParamChaosSpdFilterC,
 		SATTRAudioProcessor::kParamModeInC, SATTRAudioProcessor::kParamModeOutC, SATTRAudioProcessor::kParamSumBusC, SATTRAudioProcessor::kParamFilterPosC, SATTRAudioProcessor::kParamMixC,
@@ -1409,19 +1409,19 @@ SATTRAudioProcessorEditor::LoaderRefs SATTRAudioProcessorEditor::getLoaderRefs (
 	{
 		case 1: return { enableButtonB,
 		                 hpFreqSliderB, lpFreqSliderB, inSliderB, outSliderB, tiltSliderB, seriesSliderB, panSliderB, fredSliderB, posSliderB,
-		                 invButtonB, chaosButtonB, chaosFilterButtonB, chaosDisplayB, chaosFilterDisplayB,
+		                 invButtonB, chaosButtonB, chaosFilterButtonB, sidechainButtonB, chaosDisplayB, chaosFilterDisplayB, sidechainDisplayB,
 		                 expButtonB, expDisplayB,
 		                 modeInComboB, modeOutComboB, sumBusComboB, filterPosComboB, filterBarB_, mixSliderB,
 		                 satTypeComboB, rawButtonB, satDriveSliderB, satCharSliderB, satTypeCtrlSliderB, satBiasSliderB, satSagSliderB, detailSliderB, instabilitySliderB, delaySliderB };
 		case 2: return { enableButtonC,
 		                 hpFreqSliderC, lpFreqSliderC, inSliderC, outSliderC, tiltSliderC, seriesSliderC, panSliderC, fredSliderC, posSliderC,
-		                 invButtonC, chaosButtonC, chaosFilterButtonC, chaosDisplayC, chaosFilterDisplayC,
+		                 invButtonC, chaosButtonC, chaosFilterButtonC, sidechainButtonC, chaosDisplayC, chaosFilterDisplayC, sidechainDisplayC,
 		                 expButtonC, expDisplayC,
 		                 modeInComboC, modeOutComboC, sumBusComboC, filterPosComboC, filterBarC_, mixSliderC,
 		                 satTypeComboC, rawButtonC, satDriveSliderC, satCharSliderC, satTypeCtrlSliderC, satBiasSliderC, satSagSliderC, detailSliderC, instabilitySliderC, delaySliderC };
 		default: return { enableButtonA,
 		                  hpFreqSliderA, lpFreqSliderA, inSliderA, outSliderA, tiltSliderA, seriesSliderA, panSliderA, fredSliderA, posSliderA,
-		                  invButtonA, chaosButtonA, chaosFilterButtonA, chaosDisplayA, chaosFilterDisplayA,
+		                  invButtonA, chaosButtonA, chaosFilterButtonA, sidechainButtonA, chaosDisplayA, chaosFilterDisplayA, sidechainDisplayA,
 		                  expButtonA, expDisplayA,
 		                  modeInComboA, modeOutComboA, sumBusComboA, filterPosComboA, filterBarA_, mixSliderA,
 		                  satTypeComboA, rawButtonA, satDriveSliderA, satCharSliderA, satTypeCtrlSliderA, satBiasSliderA, satSagSliderA, detailSliderA, instabilitySliderA, delaySliderA };
@@ -1434,17 +1434,17 @@ SATTRAudioProcessorEditor::AttachRefs SATTRAudioProcessorEditor::getAttachRefs (
 	{
 		case 1: return { enableAttachB,
 		                 hpFreqAttachB, lpFreqAttachB, inAttachB, outAttachB, tiltAttachB, seriesAttachB, panAttachB, fredAttachB, posAttachB,
-		                 invAttachB, chaosAttachB, chaosFilterAttachB, expAttachB,
+		                 invAttachB, chaosAttachB, chaosFilterAttachB, sidechainAttachB, expAttachB,
 		                 modeInAttachB, modeOutAttachB, sumBusAttachB, filterPosAttachB, mixAttachB,
 		                 satTypeAttachB, rawAttachB, satDriveAttachB, satCharAttachB, satTypeCtrlAttachB, satBiasAttachB, satSagAttachB, detailAttachB, instabilityAttachB, delayAttachB };
 		case 2: return { enableAttachC,
 		                 hpFreqAttachC, lpFreqAttachC, inAttachC, outAttachC, tiltAttachC, seriesAttachC, panAttachC, fredAttachC, posAttachC,
-		                 invAttachC, chaosAttachC, chaosFilterAttachC, expAttachC,
+		                 invAttachC, chaosAttachC, chaosFilterAttachC, sidechainAttachC, expAttachC,
 		                 modeInAttachC, modeOutAttachC, sumBusAttachC, filterPosAttachC, mixAttachC,
 		                 satTypeAttachC, rawAttachC, satDriveAttachC, satCharAttachC, satTypeCtrlAttachC, satBiasAttachC, satSagAttachC, detailAttachC, instabilityAttachC, delayAttachC };
 		default: return { enableAttachA,
 		                  hpFreqAttachA, lpFreqAttachA, inAttachA, outAttachA, tiltAttachA, seriesAttachA, panAttachA, fredAttachA, posAttachA,
-		                  invAttachA, chaosAttachA, chaosFilterAttachA, expAttachA,
+		                  invAttachA, chaosAttachA, chaosFilterAttachA, sidechainAttachA, expAttachA,
 		                  modeInAttachA, modeOutAttachA, sumBusAttachA, filterPosAttachA, mixAttachA,
 		                  satTypeAttachA, rawAttachA, satDriveAttachA, satCharAttachA, satTypeCtrlAttachA, satBiasAttachA, satSagAttachA, detailAttachA, instabilityAttachA, delayAttachA };
 	}
@@ -1492,6 +1492,8 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 	r.chaos.addMouseListener (this, false);
 	addAndMakeVisible (r.chaosFilter); r.chaosFilter.setButtonText ("CHSF"); r.chaosFilter.addListener (this);
 	r.chaosFilter.addMouseListener (this, false);
+	addAndMakeVisible (r.sidechain); r.sidechain.setButtonText ("SIDECHAIN"); r.sidechain.addListener (this);
+	r.sidechain.setTooltip ({});
 
 	{
 		const auto& ids = kLoaderParams[juce::jlimit (0, 2, loaderIndex)];
@@ -1517,6 +1519,14 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 		r.chaosFilterDisp.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
 		r.chaosFilterDisp.setOpaque (false);
 		addAndMakeVisible (r.chaosFilterDisp);
+		r.sidechainDisp.setText ("", juce::dontSendNotification);
+		r.sidechainDisp.setInterceptsMouseClicks (true, false);
+		r.sidechainDisp.addMouseListener (this, false);
+		r.sidechainDisp.setTooltip ("External sidechain drives saturation response");
+		r.sidechainDisp.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+		r.sidechainDisp.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
+		r.sidechainDisp.setOpaque (false);
+		addAndMakeVisible (r.sidechainDisp);
 	}
 
 	// EXP uses a compact tooltip; full SC/filter details live in the right-click prompt.
@@ -1629,6 +1639,7 @@ void SATTRAudioProcessorEditor::createLoaderAttachments (juce::AudioProcessorVal
 	a.invAtt     = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>   (params, ids.inv,     ui.inv);
 	a.chaosAtt   = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>   (params, ids.chaos,   ui.chaos);
 	a.chaosFilterAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (params, ids.chaosFilter, ui.chaosFilter);
+	a.sidechainAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (params, ids.sidechain, ui.sidechain);
 	a.expAtt     = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>   (params, ids.exp,     ui.exp);
 	a.modeInAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (params, ids.modeIn,  ui.modeIn);
 	a.modeOutAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (params, ids.modeOut, ui.modeOut);
@@ -2446,6 +2457,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	auto& inv   = pick (invButtonA,     invButtonB,     invButtonC);
 	auto& chaos = pick (chaosButtonA,   chaosButtonB,   chaosButtonC);
 	auto& chaosFilter = pick (chaosFilterButtonA, chaosFilterButtonB, chaosFilterButtonC);
+	auto& sidechain = pick (sidechainButtonA, sidechainButtonB, sidechainButtonC);
 	auto& filterBar  = pick (filterBarA_,      filterBarB_,      filterBarC_);
 	auto& modeInCmb  = pick (modeInComboA,     modeInComboB,     modeInComboC);
 	auto& modeOutCmb = pick (modeOutComboA,    modeOutComboB,    modeOutComboC);
@@ -2453,6 +2465,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	auto& filterPosCmb = pick (filterPosComboA, filterPosComboB, filterPosComboC);
 	auto& chaosDisp  = pick (chaosDisplayA,    chaosDisplayB,    chaosDisplayC);
 	auto& chaosFilterDisp = pick (chaosFilterDisplayA, chaosFilterDisplayB, chaosFilterDisplayC);
+	auto& sidechainDisp = pick (sidechainDisplayA, sidechainDisplayB, sidechainDisplayC);
 	auto& expBtn     = pick (expButtonA,       expButtonB,       expButtonC);
 	auto& expDisp    = pick (expDisplayA,      expDisplayB,      expDisplayC);
 
@@ -2473,7 +2486,8 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 	constexpr int loaderHeaderBlockH = 72;
 	const int modeComboLabelOffset = 21;
 	const int modeComboGapY = 8;
-	const int checkH = 42;
+	const int checkRowH = 42;
+	const int checkH = expanded ? (checkRowH * 2 + gap) : 42;
 
 	// Both views share one header + parameter grid so the algorithm/RAW anchor
 	// and the first parameter row line up exactly when toggling compact sections.
@@ -2564,19 +2578,26 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		filterPosCmb.setVisible (true);
 		sumBusCmb.setVisible (true);
 
-		// CHSF + CHSD checkboxes - each button owns its full legend hit area.
+		// CHSF + CHSD checkboxes, then external sidechain in a second row.
 		constexpr int valuePadPx = 8;
+		auto chaosRow = checkArea.removeFromTop (checkRowH);
+		checkArea.removeFromTop (gap);
+		auto sidechainRow = checkArea.removeFromTop (checkRowH);
 		const int chsfW = sliderW;
-		const int chsdX = checkArea.getX() + sliderW + valuePadPx;
-		const int chsdW = checkArea.getRight() - chsdX;
-		chaosFilter.setBounds (checkArea.getX(), checkArea.getY(), chsfW, checkH);
-		chaos.setBounds (chsdX, checkArea.getY(), chsdW, checkH);
+		const int chsdX = chaosRow.getX() + sliderW + valuePadPx;
+		const int chsdW = chaosRow.getRight() - chsdX;
+		chaosFilter.setBounds (chaosRow.getX(), chaosRow.getY(), chsfW, checkRowH);
+		chaos.setBounds (chsdX, chaosRow.getY(), chsdW, checkRowH);
 		chaosFilter.setVisible (true);
 		chaos.setVisible (true);
 		chaosFilterDisp.setBounds (labelAreaForToggle (chaosFilter));
 		chaosFilterDisp.setVisible (true);
 		chaosDisp.setBounds (labelAreaForToggle (chaos));
 		chaosDisp.setVisible (true);
+		sidechain.setBounds (sidechainRow.getX(), sidechainRow.getY(), sidechainRow.getWidth(), checkRowH);
+		sidechain.setVisible (true);
+		sidechainDisp.setBounds (labelAreaForToggle (sidechain));
+		sidechainDisp.setVisible (true);
 
 		// Hide collapsed-only controls
 		hp.setVisible (false);     lp.setVisible (false);
@@ -2686,6 +2707,7 @@ void SATTRAudioProcessorEditor::layoutLoaderSection (juce::Rectangle<int> area, 
 		mix.setVisible (false);
 		modeInCmb.setVisible (false);    modeOutCmb.setVisible (false);    sumBusCmb.setVisible (false);    filterPosCmb.setVisible (false);
 		chaos.setVisible (false);      chaosFilter.setVisible (false);  chaosDisp.setVisible (false); chaosFilterDisp.setVisible (false);
+		sidechain.setVisible (false);  sidechainDisp.setVisible (false);
 		hp.setVisible (false);         lp.setVisible (false);      fred.setVisible (false);
 		pos.setVisible (false);
 	}
@@ -2705,7 +2727,7 @@ void SATTRAudioProcessorEditor::updateLoaderEnabledState (int loaderIndex)
 	juce::Component* components[] = {
 		&r.hp, &r.lp, &r.in, &r.out, &r.tilt,
 		&r.series, &r.pan, &r.fred, &r.pos,
-		&r.inv, &r.chaos, &r.chaosFilter, &r.chaosDisp, &r.chaosFilterDisp,
+		&r.inv, &r.chaos, &r.chaosFilter, &r.sidechain, &r.chaosDisp, &r.chaosFilterDisp, &r.sidechainDisp,
 		&r.exp, &r.expDisp,
 		&r.modeIn, &r.modeOut, &r.sumBus, &r.filterPos,
 		&r.filterBar, &r.mix,
@@ -3024,6 +3046,29 @@ void SATTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 		}
 	}
 
+	// Sidechain checkbox: left-click on legend toggles; right-click is intentionally inert.
+	{
+		juce::ToggleButton* enableBtns[] = { &enableButtonA,     &enableButtonB,     &enableButtonC };
+		juce::ToggleButton* scBtns[]     = { &sidechainButtonA,  &sidechainButtonB,  &sidechainButtonC };
+		juce::Label*        scDisps[]    = { &sidechainDisplayA, &sidechainDisplayB, &sidechainDisplayC };
+
+		for (int i = 0; i < 3; ++i)
+		{
+			if (! enableBtns[i]->getToggleState())
+				continue;
+
+			const bool hitSidechain = scDisps[i]->isVisible()
+				&& scDisps[i]->getBounds().contains (p);
+
+			if (hitSidechain)
+			{
+				if (! e.mods.isPopupMenu())
+					scBtns[i]->setToggleState (! scBtns[i]->getToggleState(), juce::sendNotificationSync);
+				return;
+			}
+		}
+	}
+
 	// EXP checkbox: left-click is handled by the button, right-click opens EXP prompt.
 	{
 		juce::ToggleButton* enableBtns[] = { &enableButtonA,  &enableButtonB,  &enableButtonC };
@@ -3191,7 +3236,7 @@ void SATTRAudioProcessorEditor::hideLoaderSection (int loaderIndex)
 		&refs.enableBtn,
 		&refs.hp, &refs.lp, &refs.in, &refs.out, &refs.tilt,
 		&refs.series, &refs.pan, &refs.fred, &refs.pos,
-		&refs.inv, &refs.chaos, &refs.chaosFilter, &refs.chaosDisp, &refs.chaosFilterDisp,
+		&refs.inv, &refs.chaos, &refs.chaosFilter, &refs.sidechain, &refs.chaosDisp, &refs.chaosFilterDisp, &refs.sidechainDisp,
 		&refs.exp, &refs.expDisp,
 		&refs.modeIn, &refs.modeOut, &refs.sumBus, &refs.filterPos,
 		&refs.filterBar, &refs.mix,

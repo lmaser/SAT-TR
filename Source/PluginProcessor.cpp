@@ -180,6 +180,7 @@ SATTRAudioProcessor::SATTRAudioProcessor()
                      #if ! JucePlugin_IsMidiEffect
                       #if ! JucePlugin_IsSynth
                        .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+                       .withInput  ("Sidechain", juce::AudioChannelSet::stereo(), false)
                       #endif
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                      #endif
@@ -327,6 +328,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamDelayA, "Delay A",
 		juce::NormalisableRange<float> (kDelayMin, kDelayMax, 0.001f, 0.5f), kDelayDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamSidechainA, "Sidechain A", false));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamChaosA, "Chaos D A", false));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -480,6 +483,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamDelayB, "Delay B",
 		juce::NormalisableRange<float> (kDelayMin, kDelayMax, 0.001f, 0.5f), kDelayDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamSidechainB, "Sidechain B", false));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamChaosB, "Chaos D B", false));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamChaosFilterB, "Chaos F B", false));
@@ -631,6 +636,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamDelayC, "Delay C",
 		juce::NormalisableRange<float> (kDelayMin, kDelayMax, 0.001f, 0.5f), kDelayDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamSidechainC, "Sidechain C", false));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamChaosC, "Chaos D C", false));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -981,6 +988,9 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pDelayA  = parameters.getRawParameterValue (kParamDelayA);
 	pDelayB  = parameters.getRawParameterValue (kParamDelayB);
 	pDelayC  = parameters.getRawParameterValue (kParamDelayC);
+	pSidechainA = parameters.getRawParameterValue (kParamSidechainA);
+	pSidechainB = parameters.getRawParameterValue (kParamSidechainB);
+	pSidechainC = parameters.getRawParameterValue (kParamSidechainC);
 	pExpA       = parameters.getRawParameterValue (kParamExpA);
 	pExpOrderA  = parameters.getRawParameterValue (kParamExpOrderA);
 	pExpRatioA  = parameters.getRawParameterValue (kParamExpRatioA);
@@ -1038,6 +1048,8 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 		lastGlobalWetMix_ = loadRelaxed (pWetLevel, kWetLevelDefault);
 	}
 	lastLimiterThresholdLin_ = fastDecibelsToGain (loadRelaxed (pLimThreshold, kLimThresholdDefault));
+	sidechainEnv_ = 0.0f;
+	sidechainDriveAmount_ = 0.0f;
 
 	// Reset tilt EQ state
 	tiltState_[0] = tiltState_[1] = 0.0f;
@@ -1076,6 +1088,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 		state.lastOutGain = gainFaderDecibelsToGain (outDb);
 		state.lastMix = mixVal;
 		state.lastPosGain = 1.0f - juce::jlimit (0.0f, 1.0f, posVal) * 0.5f;
+		state.lastSidechainPreGain = 1.0f;
 	};
 	initLoaderSmoothing (stateA, loadRelaxed (pInA,  kInDefault), loadRelaxed (pOutA, kOutDefault),
 	                     loadRelaxed (pMixA, kGlobalMixDefault), loadRelaxed (pPosA, kPosDefault));
@@ -1173,6 +1186,12 @@ bool SATTRAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) co
    #if ! JucePlugin_IsSynth
     if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
         return false;
+
+    const auto sidechainLayout = layouts.getChannelSet (true, 1);
+    if (! sidechainLayout.isDisabled()
+     && sidechainLayout != juce::AudioChannelSet::mono()
+     && sidechainLayout != juce::AudioChannelSet::stereo())
+        return false;
    #endif
 
     return true;
@@ -1231,7 +1250,7 @@ void SATTRAudioProcessor::applyMidSideInputMode (juce::AudioBuffer<float>& buf, 
 	}
 }
 
-void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce::MidiBuffer& midiMessages)
 {
 	juce::ScopedNoDenormals noDenormals;
 	juce::ignoreUnused (midiMessages);
@@ -1246,11 +1265,13 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	// Clear unused output channels
 	for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-		buffer.clear (i, 0, buffer.getNumSamples());
+		ioBuffer.clear (i, 0, ioBuffer.getNumSamples());
 
-	const int numSamples = buffer.getNumSamples();
+	const int numSamples = ioBuffer.getNumSamples();
 	if (numSamples == 0)
 		return;
+
+	auto buffer = getBusBuffer (ioBuffer, false, 0);
 
 	// Resize work buffers to match actual block size each call.
 	// avoidReallocating=true keeps existing allocation if big enough (zero-alloc path).
@@ -1323,6 +1344,48 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const bool satRawA = loadRelaxedBool (pSatRawA);
 	const bool satRawB = loadRelaxedBool (pSatRawB);
 	const bool satRawC = loadRelaxedBool (pSatRawC);
+	const bool sidechainA = activeA && loadRelaxedBool (pSidechainA);
+	const bool sidechainB = activeB && loadRelaxedBool (pSidechainB);
+	const bool sidechainC = activeC && loadRelaxedBool (pSidechainC);
+	const bool anySidechainEnabled = sidechainA || sidechainB || sidechainC;
+
+	float sidechainTarget = 0.0f;
+	if (anySidechainEnabled && getBusCount (true) > 1)
+	{
+		auto scBuffer = getBusBuffer (ioBuffer, true, 1);
+		const int scChannels = scBuffer.getNumChannels();
+		if (scChannels > 0)
+		{
+			double sumSquares = 0.0;
+			float peak = 0.0f;
+			for (int ch = 0; ch < scChannels; ++ch)
+			{
+				const float* data = scBuffer.getReadPointer (ch);
+				for (int i = 0; i < numSamples; ++i)
+				{
+					const float x = data[i];
+					sumSquares += (double) x * (double) x;
+					peak = juce::jmax (peak, std::abs (x));
+				}
+			}
+
+			const float rms = (float) std::sqrt (sumSquares / (double) juce::jmax (1, scChannels * numSamples));
+			sidechainTarget = juce::jlimit (0.0f, 1.0f, juce::jmax (rms * 4.0f, peak * 0.75f));
+		}
+	}
+
+	if (! anySidechainEnabled)
+	{
+		sidechainEnv_ = 0.0f;
+		sidechainDriveAmount_ = 0.0f;
+	}
+	else
+	{
+		const float sr = juce::jmax (1.0f, (float) currentSampleRate);
+		const float coeff = 1.0f - std::exp (-(float) numSamples / (sr * (sidechainTarget > sidechainEnv_ ? 0.006f : 0.080f)));
+		sidechainEnv_ += (sidechainTarget - sidechainEnv_) * juce::jlimit (0.0f, 1.0f, coeff);
+		sidechainDriveAmount_ = juce::jlimit (0.0f, 1.0f, sidechainEnv_);
+	}
 
 	// Report oversampling latency to host (only when order changes)
 	{
@@ -2245,7 +2308,8 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 
 	// Saturation parameters
 	const int   satType  = loadRelaxedInt (pick (pSatTypeA,  pSatTypeB,  pSatTypeC));
-	const float satDrive = loadRelaxed    (pick (pSatDriveA, pSatDriveB, pSatDriveC));
+	const bool  sidechainEnabled = loadRelaxedBool (pick (pSidechainA, pSidechainB, pSidechainC));
+	const float satDrive = loadRelaxed (pick (pSatDriveA, pSatDriveB, pSatDriveC));
 	const float satChar = loadRelaxed    (pick (pSatCharA, pSatCharB, pSatCharC));
 	const float satTypeCtrl = loadRelaxed    (pick (pSatTypeCtrlA,   pSatTypeCtrlB,   pSatTypeCtrlC));
 	const float satBias  = loadRelaxed    (pick (pSatBiasA,  pSatBiasB,  pSatBiasC));
@@ -2772,6 +2836,18 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	// 3. SATURATION (with optional oversampling + series chaining)
 	if (model != SatEngine::Model::Clean)
 	{
+		constexpr float kSidechainPreDriveMaxDb = 24.0f;
+		const float sidechainPreGain = sidechainEnabled
+			? fastDecibelsToGain (juce::jlimit (0.0f, 1.0f, sidechainDriveAmount_) * kSidechainPreDriveMaxDb)
+			: 1.0f;
+		if (std::abs (sidechainPreGain - state.lastSidechainPreGain) > 1.0e-5f
+		 || std::abs (sidechainPreGain - 1.0f) > 1.0e-5f)
+		{
+			for (int ch = 0; ch < numChannels; ++ch)
+				buffer.applyGainRamp (ch, 0, numSamples, state.lastSidechainPreGain, sidechainPreGain);
+			state.lastSidechainPreGain = sidechainPreGain;
+		}
+
 #if SAT_DSP_DIAG
 		// Capture pre-saturation peak (L channel)
 		{
@@ -2821,6 +2897,8 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	}
 	else
 	{
+		state.lastSidechainPreGain = 1.0f;
+
 		// Clean bypass skips SatEngine::processBlock, so mark the engine as
 		// clean here. Re-entering a nonlinear model will then reset model
 		// memory instead of resuming stale Tube/Instability state.
