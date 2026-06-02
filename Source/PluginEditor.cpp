@@ -6380,11 +6380,12 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			constexpr int hzGap = 1;
 			const int textW = juce::jmax (1, stringWidth (te->getFont(), te->getText()));
 			const int editorW = juce::jmax (28, textW + kEditorPad);
-			const int visualW = editorW + hzGap + unitTextW;
-			const int groupX = midL + juce::jmax (0, (midW - visualW) / 2);
+			const int visualW = textW + hzGap + unitTextW;
+			const int blockLeft = midL + juce::jmax (0, (midW - visualW) / 2);
+			const int groupX = blockLeft - ((editorW - textW) / 2);
 
 			te->setBounds (groupX, rowY, editorW, scRowH);
-			unit->setBounds (groupX + editorW + hzGap, rowY, unitW, scRowH);
+			unit->setBounds (blockLeft + textW + hzGap, rowY, unitW, scRowH);
 			bar->setBounds (barX, rowY + scRowH + scBarGap, barW, scBarH);
 
 			return scRowTotal;
