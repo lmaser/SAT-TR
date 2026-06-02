@@ -37,6 +37,8 @@ public:
 	static constexpr const char* kParamInvA         = "inv_a";
 	static constexpr const char* kParamDelayA       = "delay_a";
 	static constexpr const char* kParamSidechainA   = "sidechain_a";
+	static constexpr const char* kParamSidechainTimeA = "sidechain_time_a";
+	static constexpr const char* kParamSidechainToneA = "sidechain_tone_a";
 	static constexpr const char* kParamChaosA       = "chaos_a";
 	static constexpr const char* kParamChaosFilterA    = "chaos_filter_a";
 	static constexpr const char* kParamChaosAmtA       = "chaos_amt_a";
@@ -93,6 +95,8 @@ public:
 	static constexpr const char* kParamInvB         = "inv_b";
 	static constexpr const char* kParamDelayB       = "delay_b";
 	static constexpr const char* kParamSidechainB   = "sidechain_b";
+	static constexpr const char* kParamSidechainTimeB = "sidechain_time_b";
+	static constexpr const char* kParamSidechainToneB = "sidechain_tone_b";
 	static constexpr const char* kParamChaosB       = "chaos_b";
 	static constexpr const char* kParamChaosFilterB    = "chaos_filter_b";
 	static constexpr const char* kParamChaosAmtB       = "chaos_amt_b";
@@ -149,6 +153,8 @@ public:
 	static constexpr const char* kParamInvC         = "inv_c";
 	static constexpr const char* kParamDelayC       = "delay_c";
 	static constexpr const char* kParamSidechainC   = "sidechain_c";
+	static constexpr const char* kParamSidechainTimeC = "sidechain_time_c";
+	static constexpr const char* kParamSidechainToneC = "sidechain_tone_c";
 	static constexpr const char* kParamChaosC       = "chaos_c";
 	static constexpr const char* kParamChaosFilterC    = "chaos_filter_c";
 	static constexpr const char* kParamChaosAmtC       = "chaos_amt_c";
@@ -271,6 +277,14 @@ public:
 	static constexpr float kDelayMin            = 0.0f;
 	static constexpr float kDelayMax            = 5.0f;     // ms (small - saturation phase shifts are tiny)
 	static constexpr float kDelayDefault        = 0.0f;
+
+	// External sidechain detector (per-loader)
+	static constexpr float kSidechainTimeMin     = 0.0f;
+	static constexpr float kSidechainTimeMax     = 1.0f;
+	static constexpr float kSidechainTimeDefault = 0.25f;
+	static constexpr float kSidechainToneMin     = 250.0f;
+	static constexpr float kSidechainToneMax     = 20000.0f;
+	static constexpr float kSidechainToneDefault = 5000.0f;
 	// ----------------------------------------------------------------
 	//  Parameter Ranges & Defaults - Saturation
 	// ----------------------------------------------------------------
@@ -813,6 +827,12 @@ private:
 	std::atomic<float>* pSidechainA = nullptr;
 	std::atomic<float>* pSidechainB = nullptr;
 	std::atomic<float>* pSidechainC = nullptr;
+	std::atomic<float>* pSidechainTimeA = nullptr;
+	std::atomic<float>* pSidechainTimeB = nullptr;
+	std::atomic<float>* pSidechainTimeC = nullptr;
+	std::atomic<float>* pSidechainToneA = nullptr;
+	std::atomic<float>* pSidechainToneB = nullptr;
+	std::atomic<float>* pSidechainToneC = nullptr;
 	std::atomic<float>* pExpA       = nullptr;
 	std::atomic<float>* pExpOrderA  = nullptr;
 	std::atomic<float>* pExpRatioA  = nullptr;
@@ -1007,8 +1027,27 @@ private:
 	// DC blocking filter state (per-channel)
 	float dcBlockX_[2] = { 0.0f, 0.0f };
 	float dcBlockY_[2] = { 0.0f, 0.0f };
-	float sidechainEnv_ = 0.0f;
-	float sidechainDriveAmount_ = 0.0f;
+	struct SidechainToneFilterState
+	{
+		float oneX1 = 0.0f;
+		float oneY1 = 0.0f;
+		float biquadX1 = 0.0f;
+		float biquadX2 = 0.0f;
+		float biquadY1 = 0.0f;
+		float biquadY2 = 0.0f;
+
+		void reset() noexcept
+		{
+			oneX1 = oneY1 = 0.0f;
+			biquadX1 = biquadX2 = 0.0f;
+			biquadY1 = biquadY2 = 0.0f;
+		}
+	};
+	float sidechainDcPrevIn_[3][2] = {};
+	float sidechainDcPrevOut_[3][2] = {};
+	SidechainToneFilterState sidechainToneFilters_[3][2];
+	float sidechainEnv_[3] = {};
+	float sidechainDriveAmount_[3] = {};
 
 	// Auto-align (momentary trigger state)
 	juce::int64 lastAlignTime_ = 0;

@@ -41,6 +41,7 @@ private:
 	void openChaosPrompt (int loaderIndex, bool isFilter);
 	void openExpPrompt (int loaderIndex);
 	void openFilterPrompt (int loaderIndex);
+	void openSidechainPrompt (int loaderIndex);
 	void openMixSendPrompt();
 	void applyLabelTextColour (juce::Label& label, juce::Colour colour);
 	void layoutLoaderSection (juce::Rectangle<int> area, int loaderIndex);
@@ -342,6 +343,7 @@ private:
 		const char* hpFreq;  const char* lpFreq;  const char* in;  const char* out;  const char* tilt;
 		const char* series;  const char* pan;     const char* fred;   const char* pos;   const char* reso;
 		const char* inv;     const char* chaos;  const char* chaosFilter; const char* sidechain;
+		const char* sidechainTime; const char* sidechainTone;
 		const char* chaosAmt; const char* chaosSpd;
 		const char* chaosAmtFilter; const char* chaosSpdFilter;
 		const char* modeIn;  const char* modeOut; const char* sumBus; const char* filterPos; const char* mix;
@@ -374,7 +376,7 @@ private:
 	juce::ToggleButton invButtonA;
 	PromptToggleButton chaosButtonA;
 	PromptToggleButton chaosFilterButtonA;
-	juce::ToggleButton sidechainButtonA;
+	PromptToggleButton sidechainButtonA;
 	juce::Label chaosDisplayA;
 	juce::Label chaosFilterDisplayA;
 	juce::Label sidechainDisplayA;
@@ -444,7 +446,7 @@ private:
 	juce::ToggleButton invButtonB;
 	PromptToggleButton chaosButtonB;
 	PromptToggleButton chaosFilterButtonB;
-	juce::ToggleButton sidechainButtonB;
+	PromptToggleButton sidechainButtonB;
 	juce::Label chaosDisplayB;
 	juce::Label chaosFilterDisplayB;
 	juce::Label sidechainDisplayB;
@@ -514,7 +516,7 @@ private:
 	juce::ToggleButton invButtonC;
 	PromptToggleButton chaosButtonC;
 	PromptToggleButton chaosFilterButtonC;
-	juce::ToggleButton sidechainButtonC;
+	PromptToggleButton sidechainButtonC;
 	juce::Label chaosDisplayC;
 	juce::Label chaosFilterDisplayC;
 	juce::Label sidechainDisplayC;

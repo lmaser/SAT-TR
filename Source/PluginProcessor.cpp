@@ -330,6 +330,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kDelayMin, kDelayMax, 0.001f, 0.5f), kDelayDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSidechainA, "Sidechain A", false));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainTimeA, "Sidechain Time A",
+		juce::NormalisableRange<float> (kSidechainTimeMin, kSidechainTimeMax, 0.01f, 1.0f),
+		kSidechainTimeDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainToneA, "Sidechain Tone A",
+		juce::NormalisableRange<float> (kSidechainToneMin, kSidechainToneMax, 0.01f, 0.35f),
+		kSidechainToneDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamChaosA, "Chaos D A", false));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -484,6 +492,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kDelayMin, kDelayMax, 0.001f, 0.5f), kDelayDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSidechainB, "Sidechain B", false));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainTimeB, "Sidechain Time B",
+		juce::NormalisableRange<float> (kSidechainTimeMin, kSidechainTimeMax, 0.01f, 1.0f),
+		kSidechainTimeDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainToneB, "Sidechain Tone B",
+		juce::NormalisableRange<float> (kSidechainToneMin, kSidechainToneMax, 0.01f, 0.35f),
+		kSidechainToneDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamChaosB, "Chaos D B", false));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -638,6 +654,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kDelayMin, kDelayMax, 0.001f, 0.5f), kDelayDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSidechainC, "Sidechain C", false));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainTimeC, "Sidechain Time C",
+		juce::NormalisableRange<float> (kSidechainTimeMin, kSidechainTimeMax, 0.01f, 1.0f),
+		kSidechainTimeDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainToneC, "Sidechain Tone C",
+		juce::NormalisableRange<float> (kSidechainToneMin, kSidechainToneMax, 0.01f, 0.35f),
+		kSidechainToneDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamChaosC, "Chaos D C", false));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -991,6 +1015,12 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pSidechainA = parameters.getRawParameterValue (kParamSidechainA);
 	pSidechainB = parameters.getRawParameterValue (kParamSidechainB);
 	pSidechainC = parameters.getRawParameterValue (kParamSidechainC);
+	pSidechainTimeA = parameters.getRawParameterValue (kParamSidechainTimeA);
+	pSidechainTimeB = parameters.getRawParameterValue (kParamSidechainTimeB);
+	pSidechainTimeC = parameters.getRawParameterValue (kParamSidechainTimeC);
+	pSidechainToneA = parameters.getRawParameterValue (kParamSidechainToneA);
+	pSidechainToneB = parameters.getRawParameterValue (kParamSidechainToneB);
+	pSidechainToneC = parameters.getRawParameterValue (kParamSidechainToneC);
 	pExpA       = parameters.getRawParameterValue (kParamExpA);
 	pExpOrderA  = parameters.getRawParameterValue (kParamExpOrderA);
 	pExpRatioA  = parameters.getRawParameterValue (kParamExpRatioA);
@@ -1048,8 +1078,17 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 		lastGlobalWetMix_ = loadRelaxed (pWetLevel, kWetLevelDefault);
 	}
 	lastLimiterThresholdLin_ = fastDecibelsToGain (loadRelaxed (pLimThreshold, kLimThresholdDefault));
-	sidechainEnv_ = 0.0f;
-	sidechainDriveAmount_ = 0.0f;
+	for (int loader = 0; loader < 3; ++loader)
+	{
+		sidechainEnv_[loader] = 0.0f;
+		sidechainDriveAmount_[loader] = 0.0f;
+		for (int ch = 0; ch < 2; ++ch)
+		{
+			sidechainDcPrevIn_[loader][ch] = 0.0f;
+			sidechainDcPrevOut_[loader][ch] = 0.0f;
+			sidechainToneFilters_[loader][ch].reset();
+		}
+	}
 
 	// Reset tilt EQ state
 	tiltState_[0] = tiltState_[1] = 0.0f;
@@ -1349,42 +1388,134 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 	const bool sidechainC = activeC && loadRelaxedBool (pSidechainC);
 	const bool anySidechainEnabled = sidechainA || sidechainB || sidechainC;
 
-	float sidechainTarget = 0.0f;
-	if (anySidechainEnabled && getBusCount (true) > 1)
+	const bool sidechainActive[3] = { sidechainA, sidechainB, sidechainC };
+	std::atomic<float>* sidechainTimeParams[3] = { pSidechainTimeA, pSidechainTimeB, pSidechainTimeC };
+	std::atomic<float>* sidechainToneParams[3] = { pSidechainToneA, pSidechainToneB, pSidechainToneC };
+	auto scBuffer = (anySidechainEnabled && getBusCount (true) > 1)
+		? getBusBuffer (ioBuffer, true, 1)
+		: juce::AudioBuffer<float> {};
+	const bool sidechainBusAvailable = scBuffer.getNumChannels() > 0;
+
+	auto calcSidechainToneCoefficients = [] (float toneHz, float sampleRate,
+	                                         float& oneB0, float& oneB1, float& oneA1,
+	                                         float& bqB0, float& bqB1, float& bqB2,
+	                                         float& bqA1, float& bqA2) noexcept
 	{
-		auto scBuffer = getBusBuffer (ioBuffer, true, 1);
-		const int scChannels = scBuffer.getNumChannels();
-		if (scChannels > 0)
+		const float toneEndFactor = std::pow (std::pow (10.0f, 18.0f / 10.0f) - 1.0f, 1.0f / 6.0f);
+		const float toneEndHz = juce::jmin (toneHz, sampleRate * 0.45f);
+		const float toneCutoffHz = juce::jlimit (20.0f, sampleRate * 0.45f,
+			(sampleRate / juce::MathConstants<float>::pi)
+				* std::atan (std::tan (juce::MathConstants<float>::pi * toneEndHz / sampleRate) / toneEndFactor));
+		const float k = std::tan (juce::MathConstants<float>::pi * toneCutoffHz / sampleRate);
+		const float oneNorm = 1.0f / (1.0f + k);
+		oneB0 = k * oneNorm;
+		oneB1 = oneB0;
+		oneA1 = (k - 1.0f) * oneNorm;
+
+		const float q = 1.0f;
+		const float k2 = k * k;
+		const float bqNorm = 1.0f / (1.0f + k / q + k2);
+		bqB0 = k2 * bqNorm;
+		bqB1 = 2.0f * bqB0;
+		bqB2 = bqB0;
+		bqA1 = 2.0f * (k2 - 1.0f) * bqNorm;
+		bqA2 = (1.0f - k / q + k2) * bqNorm;
+	};
+
+	auto processSidechainTone = [] (float x, SidechainToneFilterState& state,
+	                                float oneB0, float oneB1, float oneA1,
+	                                float bqB0, float bqB1, float bqB2,
+	                                float bqA1, float bqA2) noexcept
+	{
+		const float oneY = oneB0 * x + oneB1 * state.oneX1 - oneA1 * state.oneY1;
+		state.oneX1 = x;
+		state.oneY1 = oneY;
+
+		const float y = bqB0 * oneY + bqB1 * state.biquadX1 + bqB2 * state.biquadX2
+			- bqA1 * state.biquadY1 - bqA2 * state.biquadY2;
+		state.biquadX2 = state.biquadX1;
+		state.biquadX1 = oneY;
+		state.biquadY2 = state.biquadY1;
+		state.biquadY1 = y;
+		return y;
+	};
+
+	const float sr = juce::jmax (1.0f, (float) currentSampleRate);
+	for (int loader = 0; loader < 3; ++loader)
+	{
+		if (! sidechainActive[loader])
 		{
-			double sumSquares = 0.0;
-			float peak = 0.0f;
-			for (int ch = 0; ch < scChannels; ++ch)
+			sidechainEnv_[loader] = 0.0f;
+			sidechainDriveAmount_[loader] = 0.0f;
+			for (int ch = 0; ch < 2; ++ch)
 			{
-				const float* data = scBuffer.getReadPointer (ch);
-				for (int i = 0; i < numSamples; ++i)
+				sidechainDcPrevIn_[loader][ch] = 0.0f;
+				sidechainDcPrevOut_[loader][ch] = 0.0f;
+				sidechainToneFilters_[loader][ch].reset();
+			}
+			continue;
+		}
+
+		const float time = juce::jlimit (kSidechainTimeMin, kSidechainTimeMax,
+		                                 loadRelaxed (sidechainTimeParams[loader], kSidechainTimeDefault));
+		const float tone = juce::jlimit (kSidechainToneMin, kSidechainToneMax,
+		                                 loadRelaxed (sidechainToneParams[loader], kSidechainToneDefault));
+		if (! sidechainBusAvailable)
+		{
+			for (int ch = 0; ch < 2; ++ch)
+			{
+				sidechainDcPrevIn_[loader][ch] = 0.0f;
+				sidechainDcPrevOut_[loader][ch] = 0.0f;
+				sidechainToneFilters_[loader][ch].reset();
+			}
+		}
+		float oneB0 = 0.0f, oneB1 = 0.0f, oneA1 = 0.0f;
+		float bqB0 = 0.0f, bqB1 = 0.0f, bqB2 = 0.0f, bqA1 = 0.0f, bqA2 = 0.0f;
+		calcSidechainToneCoefficients (tone, sr, oneB0, oneB1, oneA1, bqB0, bqB1, bqB2, bqA1, bqA2);
+
+		double sumSquares = 0.0;
+		float peak = 0.0f;
+		if (sidechainBusAvailable)
+		{
+			const int scChannels = juce::jmin (2, scBuffer.getNumChannels());
+			for (int i = 0; i < numSamples; ++i)
+			{
+				for (int ch = 0; ch < scChannels; ++ch)
 				{
-					const float x = data[i];
-					sumSquares += (double) x * (double) x;
-					peak = juce::jmax (peak, std::abs (x));
+					const float raw = scBuffer.getReadPointer (ch)[i];
+					const float dc = raw - sidechainDcPrevIn_[loader][ch]
+						+ cachedDcBlockR_ * sidechainDcPrevOut_[loader][ch];
+					sidechainDcPrevIn_[loader][ch] = raw;
+					sidechainDcPrevOut_[loader][ch] = dc;
+
+					const float filtered = processSidechainTone (dc, sidechainToneFilters_[loader][ch],
+					                                             oneB0, oneB1, oneA1,
+					                                             bqB0, bqB1, bqB2, bqA1, bqA2);
+					sumSquares += (double) filtered * (double) filtered;
+					peak = juce::jmax (peak, std::abs (filtered));
 				}
 			}
-
-			const float rms = (float) std::sqrt (sumSquares / (double) juce::jmax (1, scChannels * numSamples));
-			sidechainTarget = juce::jlimit (0.0f, 1.0f, juce::jmax (rms * 4.0f, peak * 0.75f));
 		}
-	}
 
-	if (! anySidechainEnabled)
-	{
-		sidechainEnv_ = 0.0f;
-		sidechainDriveAmount_ = 0.0f;
-	}
-	else
-	{
-		const float sr = juce::jmax (1.0f, (float) currentSampleRate);
-		const float coeff = 1.0f - std::exp (-(float) numSamples / (sr * (sidechainTarget > sidechainEnv_ ? 0.006f : 0.080f)));
-		sidechainEnv_ += (sidechainTarget - sidechainEnv_) * juce::jlimit (0.0f, 1.0f, coeff);
-		sidechainDriveAmount_ = juce::jlimit (0.0f, 1.0f, sidechainEnv_);
+		const float rms = sidechainBusAvailable
+			? (float) std::sqrt (sumSquares / (double) juce::jmax (1, juce::jmin (2, scBuffer.getNumChannels()) * numSamples))
+			: 0.0f;
+		const float target = juce::jlimit (0.0f, 1.0f, juce::jmax (rms * 4.0f, peak * 0.75f));
+
+		if (time <= 0.0001f)
+		{
+			sidechainEnv_[loader] = target;
+		}
+		else
+		{
+			const float legacyTime = juce::jmin (1.0f, time * 2.0f);
+			const float extendedBlend = juce::jlimit (0.0f, 1.0f, (time - 0.5f) * 2.0f);
+			const float timeShape = (time <= 0.5f) ? legacyTime : (1.0f + 0.5f * extendedBlend);
+			const float tau = 0.001f + timeShape * timeShape * 0.040f;
+			const float coeff = 1.0f - std::exp (-(float) numSamples / (sr * tau));
+			sidechainEnv_[loader] += (target - sidechainEnv_[loader]) * juce::jlimit (0.0f, 1.0f, coeff);
+		}
+		sidechainDriveAmount_[loader] = juce::jlimit (0.0f, 1.0f, sidechainEnv_[loader]);
 	}
 
 	// Report oversampling latency to host (only when order changes)
@@ -2838,7 +2969,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	{
 		constexpr float kSidechainPreDriveMaxDb = 24.0f;
 		const float sidechainPreGain = sidechainEnabled
-			? fastDecibelsToGain (juce::jlimit (0.0f, 1.0f, sidechainDriveAmount_) * kSidechainPreDriveMaxDb)
+			? fastDecibelsToGain (juce::jlimit (0.0f, 1.0f, sidechainDriveAmount_[loaderIndex]) * kSidechainPreDriveMaxDb)
 			: 1.0f;
 		if (std::abs (sidechainPreGain - state.lastSidechainPreGain) > 1.0e-5f
 		 || std::abs (sidechainPreGain - 1.0f) > 1.0e-5f)
