@@ -1505,6 +1505,73 @@ inline DynamicsCompResult processTapeComp (float x, DynamicsCompState& st,
     return r;
 }
 
+inline DynamicsCompResult processDiodeComp (float x, DynamicsCompState& st,
+                                            float react, float drive, float program,
+                                            float sr) noexcept
+{
+    DynamicsCompResult r;
+    r.sample = x;
+
+    if (react <= 0.0001f)
+        return r;
+
+    const float reactDepth = detail::clampF (react, 0.0f, 1.0f);
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float p = detail::clampF (program, 0.0f, 1.0f);
+    const float detector = std::abs (x) * (1.0f + d * 0.08f);
+
+    // Diode-bridge style compression is full-wave and feedback-like: a fast
+    // control path catches level changes while a slower body reference keeps
+    // the recovery musical instead of tape/HF-split based.
+    const float bodyAtk = detail::onePoleCoeff (34.0f + reactDepth * 76.0f, sr);
+    const float bodyRel = detail::onePoleCoeff (0.70f + reactDepth * 1.90f + p * 1.25f, sr);
+    if (detector > st.scLP)
+        st.scLP += (detector - st.scLP) * bodyAtk;
+    else
+        st.scLP += (detector - st.scLP) * bodyRel;
+
+    const float attackHz = 62.0f + reactDepth * 185.0f + d * 44.0f;
+    const float releaseHz = 0.95f + reactDepth * 2.55f + p * (1.55f + reactDepth * 3.35f);
+    const float atk = detail::onePoleCoeff (attackHz, sr);
+    const float rel = detail::onePoleCoeff (releaseHz, sr);
+    if (detector > st.env)
+        st.env += (detector - st.env) * atk;
+    else
+        st.env += (detector - st.env) * rel;
+
+    const float bridgeDetector = st.env * (0.76f + reactDepth * 0.08f)
+                               + st.scLP * (0.24f - reactDepth * 0.08f);
+    const float threshold = juce::jmap (reactDepth, 0.34f, 0.115f)
+                          * juce::jmap (d, 1.06f, 0.82f);
+    const float ratio = juce::jmap (reactDepth, 1.5f, 6.0f);
+    const float over = bridgeDetector / std::max (threshold, 1.0e-4f);
+    const float knee = detail::smoothStep01 ((over - 0.84f) / 0.72f);
+
+    float compGain = 1.0f;
+    if (over > 1.0f)
+        compGain = std::pow (over, -(ratio - 1.0f) / ratio);
+
+    const float bridgeClamp = detail::smoothStep01 ((reactDepth - 0.68f) / 0.32f)
+                            * detail::smoothStep01 ((over - 1.25f) / 2.25f);
+    compGain *= 1.0f - bridgeClamp * 0.065f;
+    compGain = juce::jlimit (0.30f, 1.0f, juce::jmap (knee, 1.0f, compGain));
+
+    const float makeup = 1.0f + (1.0f - compGain) * (0.025f + p * 0.045f);
+    const float targetGain = juce::jlimit (0.30f, 1.0f, compGain * makeup);
+    const float gainAtk = detail::onePoleCoeff (attackHz * 1.22f, sr);
+    const float gainRel = detail::onePoleCoeff (releaseHz, sr);
+    if (targetGain < st.gain)
+        st.gain += (targetGain - st.gain) * gainAtk;
+    else
+        st.gain += (targetGain - st.gain) * gainRel;
+
+    st.hfEnv += (detector - st.hfEnv) * detail::onePoleCoeff (releaseHz * 0.80f + 0.45f, sr);
+
+    r.sample = x * st.gain;
+    r.amount = 1.0f - st.gain;
+    return r;
+}
+
 inline DynamicsCompResult processTransistorComp (float x, DynamicsCompState& st,
                                                  float react, float drive, float type,
                                                  float sr) noexcept
@@ -3516,7 +3583,7 @@ inline void processBlock (State& state,
                         {
                             const float compDry = x;
                             const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
-                            const DynamicsCompResult comp = processTapeComp (
+                            const DynamicsCompResult comp = processDiodeComp (
                                 x, stageDynamicsComp, react, effDrive, program, sampleRate);
                             const float compMix = detail::compressionBlendMix (react);
                             x = juce::jmap (compMix, compDry, comp.sample);

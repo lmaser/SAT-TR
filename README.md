@@ -43,11 +43,11 @@ Saturation model selector. 6 algorithms:
 | Model | Algorithm | Active Control Labels |
 |-------|-----------|-----------------------|
 | **CLEAN** | 1:1 pass-through | `-` |
-| **TAPE** | Tape-style saturation with fitted family morphing | `DRIVE`, `CHAR`, `FORM`, `BIAS`, `COMP` |
+| **TAPE** | Tape-style saturation with fitted family morphing | `DRIVE`, `CHAR`, `TYPE`, `BIAS`, `COMP` |
 | **TUBE** | Triode / power-tube inspired stage | `DRIVE`, `CHAR`, `TYPE`, `BIAS`, `SAG` |
 | **TRANSISTOR** | BJT <-> FET solid-state preamp / fuzz stage | `GAIN`, `CHAR`, `TYPE`, `BIAS`, `COMP` |
-| **DIODE** | Diode overdrive family (`feedback -> hard -> open`) | `DRIVE`, `COND`, `TYPE`, `SYM`, `COMP` |
-| **CLIPPER** | Broadband / pedal clipper family (`classic -> TS -> Klon`) | `DRIVE`, `KNEE`, `VOICE`, `SYM`, `PEAK` |
+| **DIODE** | Diode overdrive family (`feedback -> hard -> open`) | `DRIVE`, `CHAR`, `TYPE`, `SYM`, `COMP` |
+| **CLIPPER** | Broadband / pedal clipper family (`classic -> TS -> Klon`) | `DRIVE`, `KNEE`, `TYPE`, `SYM`, `PEAK` |
 
 #### DRIVE / GAIN
 
@@ -61,8 +61,7 @@ Primary amount control. The visible label changes with the selected algorithm:
 
 Secondary shape or CHAR control. Its behavior depends on the algorithm:
 
-- **CHAR**: low-mid/CHAR/depth emphasis inside the model
-- **COND**: conditioning before the diode clipper
+- **CHAR**: low-mid/CHAR/depth emphasis inside the model; in `DIODE`, it controls diode conditioning / conduction character
 - **KNEE**: clip softness / transition sharpness
 
 #### TYPE
