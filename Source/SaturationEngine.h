@@ -1713,8 +1713,9 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
     const float shapeDepthCurve = juce::jlimit (0.0f, 1.5f,
                                                 shapeDepth * (0.18f + shapeDepth * 1.18f));
     const float overallscale = sr / 44100.0f;
+    const float fastSagWindowSamples = 2.42f + shapeDepth2 * 30.0f;
     const int offset = juce::jlimit (1, kTriodeSagBufSize - 2,
-                                     (int) std::round (2.42f * overallscale));
+                                     (int) std::round (fastSagWindowSamples * overallscale));
 
     if (st.gcount < 0 || st.gcount >= kTriodeSagBufSize)
         st.gcount = kTriodeSagBufSize - 1;
@@ -3707,6 +3708,10 @@ inline void processBlock (State& state,
                       || model == Model::Diode)
                 {
                     // CHAR/COLOR is already encoded inside these cores.
+                }
+                else if (model == Model::Tube)
+                {
+                    x = applyTriodeGirth (x, girth);
                 }
                 else
                     x = applyGirth (x, girth, state.girthAdaa[sp][ch]);
