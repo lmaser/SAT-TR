@@ -2074,9 +2074,6 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		}
 	}
 
-	// Peak output + clip detection (post output gain)
-	// (removed - profiling disabled for release)
-
 #if SAT_DSP_DIAG
 	// -- Final peak + diagnostics snapshot --
 	{

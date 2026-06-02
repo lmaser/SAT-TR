@@ -311,3 +311,4 @@ Practical note:
 - Added/maintained consistent -INF to +24 dB gain fader behavior with 0 dB centered.
 - Optimized global/per-loader dry-wet mix paths and stable delay processing without changing the intended audio behavior.
 - Optimized Tube bloom memory updates for lower CPU during SAG-heavy use.
+- Refined per-loader FILTER and EXP sidechain HP/LP prompts for consistent Hz/kHz entry.

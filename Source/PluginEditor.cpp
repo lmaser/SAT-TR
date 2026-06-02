@@ -2142,8 +2142,6 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 		g.fillEllipse (cachedInfoGearHole);
 	}
 
-	// (oversampling label removed - now in footer combo)
-
 	// Draw value legends for all bar sliders
 	{
 		g.setFont (kBoldFont40());
@@ -2986,9 +2984,6 @@ void SATTRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 		openInfoPopup();
 		return;
 	}
-
-	// Click on OS label - no longer needed (now a footer combo)
-	// (removed)
 
 	// CHAOS checkboxes: left-click is handled by the button, right-click opens amount/speed prompt.
 	{
