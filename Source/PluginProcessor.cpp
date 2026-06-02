@@ -273,11 +273,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamEnableA, "Enable A", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamHpFreqA, "HP Freq A", 
-		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 1.0f, 0.3f), 
+		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 0.01f, 0.35f),
 		kFilterHpFreqDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamLpFreqA, "LP Freq A", 
-		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 1.0f, 0.3f), 
+		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 0.01f, 0.35f),
 		kFilterLpFreqDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamHpOnA, "HP On A", false));
@@ -399,10 +399,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.01f, 0.3f), kExpRelDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScHpA, "Exp SC HP A",
-		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 1.0f, 0.3f), kExpScHpDefault));
+		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 0.01f, 0.35f), kExpScHpDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScLpA, "Exp SC LP A",
-		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 1.0f, 0.3f), kExpScLpDefault));
+		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 0.01f, 0.35f), kExpScLpDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamExpScHpOnA, "Exp SC HP On A", kExpScHpOnDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -425,11 +425,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamEnableB, "Enable B", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamHpFreqB, "HP Freq B", 
-		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 1.0f, 0.3f), 
+		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 0.01f, 0.35f),
 		kFilterHpFreqDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamLpFreqB, "LP Freq B", 
-		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 1.0f, 0.3f), 
+		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 0.01f, 0.35f),
 		kFilterLpFreqDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamHpOnB, "HP On B", false));
@@ -551,10 +551,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.01f, 0.3f), kExpRelDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScHpB, "Exp SC HP B",
-		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 1.0f, 0.3f), kExpScHpDefault));
+		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 0.01f, 0.35f), kExpScHpDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScLpB, "Exp SC LP B",
-		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 1.0f, 0.3f), kExpScLpDefault));
+		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 0.01f, 0.35f), kExpScLpDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamExpScHpOnB, "Exp SC HP On B", kExpScHpOnDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -577,11 +577,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamEnableC, "Enable C", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamHpFreqC, "HP Freq C", 
-		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 1.0f, 0.3f), 
+		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 0.01f, 0.35f),
 		kFilterHpFreqDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamLpFreqC, "LP Freq C", 
-		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 1.0f, 0.3f), 
+		juce::NormalisableRange<float> (kFilterFreqMin, kFilterFreqMax, 0.01f, 0.35f),
 		kFilterLpFreqDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamHpOnC, "HP On C", false));
@@ -703,10 +703,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::NormalisableRange<float> (kExpRelMin, kExpRelMax, 0.01f, 0.3f), kExpRelDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScHpC, "Exp SC HP C",
-		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 1.0f, 0.3f), kExpScHpDefault));
+		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 0.01f, 0.35f), kExpScHpDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamExpScLpC, "Exp SC LP C",
-		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 1.0f, 0.3f), kExpScLpDefault));
+		juce::NormalisableRange<float> (kExpScFreqMin, kExpScFreqMax, 0.01f, 0.35f), kExpScLpDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamExpScHpOnC, "Exp SC HP On C", kExpScHpOnDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -851,7 +851,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	// Prepare temp buffers (pre-allocated for audio thread)
 	// Use generous size to handle hosts that send variable/larger blocks
 	// (e.g. FL Studio). Runtime guard in processBlock handles anything larger.
-	const int bufAlloc = juce::jmax (samplesPerBlock, 8192);
+	const int bufAlloc = juce::jmax (samplesPerBlock, 32768);
 	oversamplingBlockCapacity_ = bufAlloc;
 	tempBufferA.setSize (2, bufAlloc);
 	tempBufferB.setSize (2, bufAlloc);
