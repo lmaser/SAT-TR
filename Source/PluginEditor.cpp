@@ -5595,6 +5595,66 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		}
 	};
 
+	struct ScFilterUnitInputFilter : juce::TextEditor::InputFilter
+	{
+		float maxValue = 1.0f;
+		int maxLength = 4;
+		bool allowDecimal = true;
+
+		ScFilterUnitInputFilter (float maxVal, int maxLen, bool decimal)
+			: maxValue (maxVal), maxLength (maxLen), allowDecimal (decimal) {}
+
+		juce::String filterNewText (juce::TextEditor& editor, const juce::String& newText) override
+		{
+			const bool existingHasDot = editor.getText().containsChar ('.');
+			bool seenDot = false;
+			juce::String result;
+
+			for (auto c : newText)
+			{
+				if (c == '.')
+				{
+					if (! allowDecimal || seenDot || existingHasDot)
+						continue;
+					seenDot = true;
+					result += c;
+				}
+				else if (juce::CharacterFunctions::isDigit (c))
+				{
+					result += c;
+				}
+
+				if (result.length() >= maxLength)
+					break;
+			}
+
+			juce::String proposed = editor.getText();
+			const int insertPos = editor.getCaretPosition();
+			proposed = proposed.substring (0, insertPos) + result
+			         + proposed.substring (insertPos + editor.getHighlightedText().length());
+
+			if (proposed.length() > maxLength || proposed.getFloatValue() > maxValue)
+				return {};
+
+			if (allowDecimal && proposed.length() > 1 && proposed[0] == '0' && proposed[1] != '.')
+				return {};
+
+			return result;
+		}
+	};
+
+	auto formatScFilterPromptFrequencyValue = [] (float hz)
+	{
+		const float clamped = juce::jlimit (SATTRAudioProcessor::kExpScFreqMin,
+		                                    SATTRAudioProcessor::kExpScFreqMax,
+		                                    hz);
+		if (clamped >= 10000.0f)
+			return juce::String (juce::roundToInt (clamped / 1000.0f));
+		if (clamped >= 1000.0f)
+			return juce::String (clamped / 1000.0f, 1);
+		return juce::String (juce::roundToInt (clamped));
+	};
+
 	const auto& f = kBoldFont40();
 
 	auto* bodyContent = new juce::Component();
@@ -5620,8 +5680,8 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	aw->addTextEditor ("atk", formatExpTimeMsForPromptValue (currentAtk), juce::String());
 	aw->addTextEditor ("rel", formatExpTimeMsForPromptValue (currentRel), juce::String());
 	aw->addTextEditor ("scGain", juce::String (currentScGain, 1), juce::String());
-	aw->addTextEditor ("scHp", juce::String (juce::roundToInt (currentScHp)), juce::String());
-	aw->addTextEditor ("scLp", juce::String (juce::roundToInt (currentScLp)), juce::String());
+	aw->addTextEditor ("scHp", formatScFilterPromptFrequencyValue (currentScHp), juce::String());
+	aw->addTextEditor ("scLp", formatScFilterPromptFrequencyValue (currentScLp), juce::String());
 
 	for (auto* edId : { "thresh", "ratio", "knee", "atk", "rel", "scGain", "scHp", "scLp" })
 		if (auto* te = aw->getTextEditor (edId))
@@ -5687,7 +5747,6 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		{
 			te->setFont (f);
 			te->applyFontToAllText (f);
-			te->setInputRestrictions (5, "0123456789");
 			auto r = te->getBounds();
 			r.setHeight ((int) (f.getHeight() * kPromptEditorHeightScale) + kPromptEditorHeightPadPx);
 			te->setBounds (r);
@@ -5736,6 +5795,8 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	auto* scLpUnitLabel = makePromptLabel ("Hz", juce::Justification::centredLeft);
 	auto* scHpSlopeLabel = makePromptLabel (filterSlopeToText (currentScHpSlope), juce::Justification::centredRight);
 	auto* scLpSlopeLabel = makePromptLabel (filterSlopeToText (currentScLpSlope), juce::Justification::centredRight);
+	scHpUnitLabel->setMinimumHorizontalScale (1.0f);
+	scLpUnitLabel->setMinimumHorizontalScale (1.0f);
 	scHpNameLabel->setInterceptsMouseClicks (true, false);
 	scLpNameLabel->setInterceptsMouseClicks (true, false);
 	scHpSlopeLabel->setInterceptsMouseClicks (true, false);
@@ -5826,8 +5887,6 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	const EnvPromptNumericSpec atkSpec { false, 3, 2, SATTRAudioProcessor::kExpAtkMin, SATTRAudioProcessor::kExpAtkMax, 2 };
 	const EnvPromptNumericSpec relSpec { false, 4, 2, SATTRAudioProcessor::kExpRelMin, SATTRAudioProcessor::kExpRelMax, 2 };
 	const EnvPromptNumericSpec scGainSpec { true, 3, 1, SATTRAudioProcessor::kExpScGainMin, SATTRAudioProcessor::kExpScGainMax, 1 };
-	const EnvPromptNumericSpec scHpSpec { false, 5, 0, SATTRAudioProcessor::kExpScFreqMin, SATTRAudioProcessor::kExpScFreqMax, 0 };
-	const EnvPromptNumericSpec scLpSpec { false, 5, 0, SATTRAudioProcessor::kExpScFreqMin, SATTRAudioProcessor::kExpScFreqMax, 0 };
 
 	auto sanitiseEnvPromptText = [] (juce::String text, const EnvPromptNumericSpec& spec,
 	                                 bool& incompleteOut) -> juce::String
@@ -5906,6 +5965,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	auto* scHpSlopeApvts = audioProcessor.getValueTreeState().getParameter (scHpSlopeParamId);
 	auto* scLpSlopeApvts = audioProcessor.getValueTreeState().getParameter (scLpSlopeParamId);
 	auto* scGainApvts = audioProcessor.getValueTreeState().getParameter (scGainParamId);
+	auto layoutBodyFn = std::make_shared<std::function<void()>>();
 
 	auto orderState = std::make_shared<bool> (currentOrder);
 	struct OrderClickHandler : public juce::MouseListener
@@ -5984,6 +6044,41 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	scLpSlopeHandler->param = scLpSlopeApvts;
 	scLpSlopeLabel->addMouseListener (scLpSlopeHandler, false);
 
+	auto updateScFilterPromptPresentation = [formatScFilterPromptFrequencyValue] (juce::TextEditor* te,
+	                                                                              juce::Label* unitLabel,
+	                                                                              float freqHz,
+	                                                                              bool rewriteText)
+	{
+		if (te == nullptr || unitLabel == nullptr)
+			return;
+
+		const float clamped = juce::jlimit (SATTRAudioProcessor::kExpScFreqMin,
+		                                    SATTRAudioProcessor::kExpScFreqMax,
+		                                    freqHz);
+		const bool useKhz = clamped >= 1000.0f;
+		unitLabel->setText (useKhz ? "kHz" : "Hz", juce::dontSendNotification);
+		te->setInputFilter (new ScFilterUnitInputFilter (useKhz ? 20.0f : 20000.0f,
+		                                                 useKhz ? 4 : 5,
+		                                                 useKhz),
+		                    true);
+		if (rewriteText)
+			te->setText (formatScFilterPromptFrequencyValue (clamped), juce::dontSendNotification);
+	};
+
+	auto parseScFilterPromptFrequency = [] (juce::TextEditor* te, juce::Label* unitLabel, float fallbackHz)
+	{
+		if (te == nullptr || unitLabel == nullptr)
+			return juce::jlimit (SATTRAudioProcessor::kExpScFreqMin,
+			                     SATTRAudioProcessor::kExpScFreqMax,
+			                     fallbackHz);
+
+		const bool useKhz = unitLabel->getText() == "kHz";
+		const float raw = (float) te->getText().getFloatValue();
+		return juce::jlimit (SATTRAudioProcessor::kExpScFreqMin,
+		                     SATTRAudioProcessor::kExpScFreqMax,
+		                     raw * (useKhz ? 1000.0f : 1.0f));
+	};
+
 	ratioBar->onValueChanged = [aw, syncing, ratioApvts] (float v01)
 	{
 		if (*syncing) return;
@@ -6056,7 +6151,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		*syncing = false;
 	};
 
-	scHpBar->onValueChanged = [aw, syncing, scHpApvts, normToFreq, scHpBar, scLpBar] (float v01) mutable
+	scHpBar->onValueChanged = [aw, syncing, scHpApvts, normToFreq, scHpBar, scLpBar,
+	                           layoutBodyFn,
+	                           scHpUnitLabel, updateScFilterPromptPresentation] (float v01) mutable
 	{
 		if (*syncing) return;
 		*syncing = true;
@@ -6066,14 +6163,18 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		const float val = normToFreq (v01);
 		if (auto* te = aw->getTextEditor ("scHp"))
 		{
-			te->setText (juce::String (juce::roundToInt (val)), juce::sendNotification);
+			updateScFilterPromptPresentation (te, scHpUnitLabel, val, true);
 			te->selectAll();
 		}
-		if (scHpApvts) scHpApvts->setValueNotifyingHost (scHpApvts->convertTo0to1 ((float) juce::roundToInt (val)));
+		if (scHpApvts) scHpApvts->setValueNotifyingHost (scHpApvts->convertTo0to1 (val));
 		*syncing = false;
+		if (*layoutBodyFn)
+			(*layoutBodyFn)();
 	};
 
-	scLpBar->onValueChanged = [aw, syncing, scLpApvts, normToFreq, scHpBar, scLpBar] (float v01) mutable
+	scLpBar->onValueChanged = [aw, syncing, scLpApvts, normToFreq, scHpBar, scLpBar,
+	                           layoutBodyFn,
+	                           scLpUnitLabel, updateScFilterPromptPresentation] (float v01) mutable
 	{
 		if (*syncing) return;
 		*syncing = true;
@@ -6083,11 +6184,13 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		const float val = normToFreq (v01);
 		if (auto* te = aw->getTextEditor ("scLp"))
 		{
-			te->setText (juce::String (juce::roundToInt (val)), juce::sendNotification);
+			updateScFilterPromptPresentation (te, scLpUnitLabel, val, true);
 			te->selectAll();
 		}
-		if (scLpApvts) scLpApvts->setValueNotifyingHost (scLpApvts->convertTo0to1 ((float) juce::roundToInt (val)));
+		if (scLpApvts) scLpApvts->setValueNotifyingHost (scLpApvts->convertTo0to1 (val));
 		*syncing = false;
+		if (*layoutBodyFn)
+			(*layoutBodyFn)();
 	};
 
 	scGainBar->onValueChanged = [aw, syncing, scGainApvts, scGainNormRange] (float v01)
@@ -6149,7 +6252,6 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 		const int barX = contentLeft;
 		const int barW = innerW;
-		const auto scValueFont = scHpTe->getFont();
 		const juce::Font scSideFont (juce::FontOptions (24.0f).withStyle ("Bold"));
 		const int scRowH = scHpTe->getHeight();
 		const int scBarH = juce::jmax (10, scRowH / 2);
@@ -6252,7 +6354,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			const int labelOffset = toggleVisualInsetLeft + toggleVisualSide + tglGap;
 
 			name->setFont (scSideFont);
-			unit->setFont (scSideFont);
+			unit->setFont (te->getFont());
 			slope->setFont (scSideFont);
 
 			toggle->setBounds (barX, rowY + (scRowH - toggleSide) / 2, toggleSide, toggleSide);
@@ -6271,15 +6373,15 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			const int midR = slopeX - kSlopeGap;
 			const int midW = midR - midL;
 
-			const int unitW = stringWidth (scSideFont, "Hz") + 2;
-			const int textW = juce::jmax (1, stringWidth (scValueFont, te->getText()));
-			constexpr int kEditorPad = 2;
+			te->setJustification (juce::Justification::centredLeft);
+			const int unitTextW = stringWidth (unit->getFont(), unit->getText());
+			const int unitW = stringWidth (unit->getFont(), "kHz") + 8;
+			constexpr int kEditorPad = 9;
 			constexpr int hzGap = 1;
-			const int desiredEditorW = textW + kEditorPad * 2;
-			const int editorW = desiredEditorW;
-			const int groupW = editorW + hzGap + unitW;
-			const int groupX = juce::jmin (midL + juce::jmax (0, (midW - groupW) / 2),
-			                               juce::jmax (midL, midR - groupW));
+			const int textW = juce::jmax (1, stringWidth (te->getFont(), te->getText()));
+			const int editorW = juce::jmax (28, textW + kEditorPad);
+			const int visualW = editorW + hzGap + unitTextW;
+			const int groupX = midL + juce::jmax (0, (midW - visualW) / 2);
 
 			te->setBounds (groupX, rowY, editorW, scRowH);
 			unit->setBounds (groupX + editorW + hzGap, rowY, unitW, scRowH);
@@ -6315,6 +6417,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 
 		bodyContent->setSize (contentW, y);
 	};
+	*layoutBodyFn = layoutBody;
 
 	auto textToBarRatio = [syncing, ratioApvts] (float raw, PromptBar* bar)
 	{
@@ -6365,21 +6468,10 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		bar->repaint();
 	};
 
-	auto textToBarScHp = [syncing, scHpApvts, freqToNorm] (float raw, PromptBar* bar)
-	{
-		if (*syncing || ! bar) return;
-		bar->value = freqToNorm (raw);
-		if (scHpApvts) scHpApvts->setValueNotifyingHost (scHpApvts->convertTo0to1 (raw));
-		bar->repaint();
-	};
-
-	auto textToBarScLp = [syncing, scLpApvts, freqToNorm] (float raw, PromptBar* bar)
-	{
-		if (*syncing || ! bar) return;
-		bar->value = freqToNorm (raw);
-		if (scLpApvts) scLpApvts->setValueNotifyingHost (scLpApvts->convertTo0to1 (raw));
-		bar->repaint();
-	};
+	if (auto* te = aw->getTextEditor ("scHp"))
+		updateScFilterPromptPresentation (te, scHpUnitLabel, currentScHp, true);
+	if (auto* te = aw->getTextEditor ("scLp"))
+		updateScFilterPromptPresentation (te, scLpUnitLabel, currentScLp, true);
 
 	auto handleEnvPromptText = [syncing, layoutBody, sanitiseEnvPromptText]
 		(juce::TextEditor* te, PromptBar* bar, const EnvPromptNumericSpec& spec, auto&& pushValue) mutable
@@ -6411,45 +6503,37 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		layoutBody();
 	};
 
-	auto handleScFreqText = [syncing, layoutBody, sanitiseEnvPromptText, parseEnvPromptValue,
-	                         scHpSpec, scLpSpec, textToBarScHp, textToBarScLp,
+	auto handleScFreqText = [syncing, layoutBody, parseScFilterPromptFrequency,
+	                         updateScFilterPromptPresentation, freqToNorm,
+	                         scHpUnitLabel, scLpUnitLabel, scHpApvts, scLpApvts,
 	                         aw, scHpBar, scLpBar] (bool isHp) mutable
 	{
 		auto* te = aw->getTextEditor (isHp ? "scHp" : "scLp");
 		auto* otherTe = aw->getTextEditor (isHp ? "scLp" : "scHp");
 		auto* bar = isHp ? scHpBar : scLpBar;
-		const auto& spec = isHp ? scHpSpec : scLpSpec;
 		if (*syncing || te == nullptr || bar == nullptr)
 			return;
 
-		const auto original = te->getText();
-		bool incomplete = false;
-		const auto sanitised = sanitiseEnvPromptText (original, spec, incomplete);
-		if (sanitised != original)
+		*syncing = true;
+		auto* unitLabel = isHp ? scHpUnitLabel : scLpUnitLabel;
+		auto* otherUnit = isHp ? scLpUnitLabel : scHpUnitLabel;
+		const float fallback = isHp ? SATTRAudioProcessor::kExpScHpDefault : SATTRAudioProcessor::kExpScLpDefault;
+		const float otherFallback = isHp ? SATTRAudioProcessor::kExpScLpDefault : SATTRAudioProcessor::kExpScHpDefault;
+		float raw = parseScFilterPromptFrequency (te, unitLabel, fallback);
+		const float other = parseScFilterPromptFrequency (otherTe, otherUnit, otherFallback);
+		raw = isHp ? juce::jmin (raw, other) : juce::jmax (raw, other);
+		updateScFilterPromptPresentation (te, unitLabel, raw, true);
+		bar->value = freqToNorm (raw);
+		bar->repaint();
+		if (isHp)
 		{
-			*syncing = true;
-			te->setText (sanitised, juce::dontSendNotification);
-			*syncing = false;
+			if (scHpApvts) scHpApvts->setValueNotifyingHost (scHpApvts->convertTo0to1 (raw));
 		}
-
-		auto parseText = sanitised;
-		if (parseText.endsWithChar ('.'))
-			parseText = parseText.dropLastCharacters (1);
-
-		if (! incomplete && parseText.isNotEmpty())
+		else
 		{
-			float raw = (float) juce::roundToInt (juce::jlimit (spec.minValue, spec.maxValue, (float) parseText.getDoubleValue()));
-			const float other = parseEnvPromptValue (otherTe, isHp ? scLpSpec : scHpSpec,
-			                                        isHp ? SATTRAudioProcessor::kExpScLpDefault
-			                                             : SATTRAudioProcessor::kExpScHpDefault);
-			raw = isHp ? juce::jmin (raw, (float) juce::roundToInt (other)) : juce::jmax (raw, (float) juce::roundToInt (other));
-			te->setText (juce::String (juce::roundToInt (raw)), juce::dontSendNotification);
-			if (isHp)
-				textToBarScHp (raw, bar);
-			else
-				textToBarScLp (raw, bar);
+			if (scLpApvts) scLpApvts->setValueNotifyingHost (scLpApvts->convertTo0to1 (raw));
 		}
-
+		*syncing = false;
 		layoutBody();
 	};
 
@@ -6492,6 +6576,10 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	preparePromptTextEditor (*aw, "scGain", scheme.bg, scheme.text, scheme.fg, kExpFont, false);
 	preparePromptTextEditor (*aw, "scHp", scheme.bg, scheme.text, scheme.fg, kExpFilterFont, false);
 	preparePromptTextEditor (*aw, "scLp", scheme.bg, scheme.text, scheme.fg, kExpFilterFont, false);
+	if (auto* te = aw->getTextEditor ("scHp"))
+		updateScFilterPromptPresentation (te, scHpUnitLabel, currentScHp, true);
+	if (auto* te = aw->getTextEditor ("scLp"))
+		updateScFilterPromptPresentation (te, scLpUnitLabel, currentScLp, true);
 	layoutBody();
 
 	styleAlertButtons (*aw, lnf);
