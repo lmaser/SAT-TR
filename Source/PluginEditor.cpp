@@ -69,11 +69,11 @@ namespace
 		return juce::String (juce::roundToInt (clamped)) + "Hz";
 	}
 
-	juce::String formatSidechainTooltip (float time, float tone)
+	juce::String formatSidechainTooltip (float smooth, float tone)
 	{
-		return "TIME x" + juce::String (juce::jlimit (SATTRAudioProcessor::kSidechainTimeMin,
-		                                              SATTRAudioProcessor::kSidechainTimeMax,
-		                                              time), 2)
+		return "SMOOTH x" + juce::String (juce::jlimit (SATTRAudioProcessor::kSidechainSmoothMin,
+		                                                SATTRAudioProcessor::kSidechainSmoothMax,
+		                                                smooth), 2)
 		     + " | TONE " + formatSidechainToneText (tone);
 	}
 
@@ -1377,7 +1377,7 @@ const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoad
 		SATTRAudioProcessor::kParamHpFreqA, SATTRAudioProcessor::kParamLpFreqA, SATTRAudioProcessor::kParamInA, SATTRAudioProcessor::kParamOutA, SATTRAudioProcessor::kParamTiltA,
 		SATTRAudioProcessor::kParamSeriesA, SATTRAudioProcessor::kParamPanA,    SATTRAudioProcessor::kParamFredA, SATTRAudioProcessor::kParamPosA, SATTRAudioProcessor::kParamResoA,
 		SATTRAudioProcessor::kParamInvA,    SATTRAudioProcessor::kParamChaosA, SATTRAudioProcessor::kParamChaosFilterA, SATTRAudioProcessor::kParamSidechainA,
-		SATTRAudioProcessor::kParamSidechainTimeA, SATTRAudioProcessor::kParamSidechainToneA,
+		SATTRAudioProcessor::kParamSidechainSmoothA, SATTRAudioProcessor::kParamSidechainToneA,
 		SATTRAudioProcessor::kParamChaosAmtA, SATTRAudioProcessor::kParamChaosSpdA,
 		SATTRAudioProcessor::kParamChaosAmtFilterA, SATTRAudioProcessor::kParamChaosSpdFilterA,
 		SATTRAudioProcessor::kParamModeInA, SATTRAudioProcessor::kParamModeOutA, SATTRAudioProcessor::kParamSumBusA, SATTRAudioProcessor::kParamFilterPosA, SATTRAudioProcessor::kParamMixA,
@@ -1393,7 +1393,7 @@ const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoad
 		SATTRAudioProcessor::kParamHpFreqB, SATTRAudioProcessor::kParamLpFreqB, SATTRAudioProcessor::kParamInB, SATTRAudioProcessor::kParamOutB, SATTRAudioProcessor::kParamTiltB,
 		SATTRAudioProcessor::kParamSeriesB, SATTRAudioProcessor::kParamPanB,    SATTRAudioProcessor::kParamFredB, SATTRAudioProcessor::kParamPosB, SATTRAudioProcessor::kParamResoB,
 		SATTRAudioProcessor::kParamInvB,    SATTRAudioProcessor::kParamChaosB, SATTRAudioProcessor::kParamChaosFilterB, SATTRAudioProcessor::kParamSidechainB,
-		SATTRAudioProcessor::kParamSidechainTimeB, SATTRAudioProcessor::kParamSidechainToneB,
+		SATTRAudioProcessor::kParamSidechainSmoothB, SATTRAudioProcessor::kParamSidechainToneB,
 		SATTRAudioProcessor::kParamChaosAmtB, SATTRAudioProcessor::kParamChaosSpdB,
 		SATTRAudioProcessor::kParamChaosAmtFilterB, SATTRAudioProcessor::kParamChaosSpdFilterB,
 		SATTRAudioProcessor::kParamModeInB, SATTRAudioProcessor::kParamModeOutB, SATTRAudioProcessor::kParamSumBusB, SATTRAudioProcessor::kParamFilterPosB, SATTRAudioProcessor::kParamMixB,
@@ -1409,7 +1409,7 @@ const SATTRAudioProcessorEditor::LoaderParamIds SATTRAudioProcessorEditor::kLoad
 		SATTRAudioProcessor::kParamHpFreqC, SATTRAudioProcessor::kParamLpFreqC, SATTRAudioProcessor::kParamInC, SATTRAudioProcessor::kParamOutC, SATTRAudioProcessor::kParamTiltC,
 		SATTRAudioProcessor::kParamSeriesC, SATTRAudioProcessor::kParamPanC,    SATTRAudioProcessor::kParamFredC, SATTRAudioProcessor::kParamPosC, SATTRAudioProcessor::kParamResoC,
 		SATTRAudioProcessor::kParamInvC,    SATTRAudioProcessor::kParamChaosC, SATTRAudioProcessor::kParamChaosFilterC, SATTRAudioProcessor::kParamSidechainC,
-		SATTRAudioProcessor::kParamSidechainTimeC, SATTRAudioProcessor::kParamSidechainToneC,
+		SATTRAudioProcessor::kParamSidechainSmoothC, SATTRAudioProcessor::kParamSidechainToneC,
 		SATTRAudioProcessor::kParamChaosAmtC, SATTRAudioProcessor::kParamChaosSpdC,
 		SATTRAudioProcessor::kParamChaosAmtFilterC, SATTRAudioProcessor::kParamChaosSpdFilterC,
 		SATTRAudioProcessor::kParamModeInC, SATTRAudioProcessor::kParamModeOutC, SATTRAudioProcessor::kParamSumBusC, SATTRAudioProcessor::kParamFilterPosC, SATTRAudioProcessor::kParamMixC,
@@ -1523,7 +1523,7 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 		const float savedSpdD = audioProcessor.getValueTreeState().getRawParameterValue (chaosSpdId)->load();
 		const float savedAmtF = audioProcessor.getValueTreeState().getRawParameterValue (ids.chaosAmtFilter)->load();
 		const float savedSpdF = audioProcessor.getValueTreeState().getRawParameterValue (ids.chaosSpdFilter)->load();
-		const float savedScTime = audioProcessor.getValueTreeState().getRawParameterValue (ids.sidechainTime)->load();
+		const float savedScSmooth = audioProcessor.getValueTreeState().getRawParameterValue (ids.sidechainSmooth)->load();
 		const float savedScTone = audioProcessor.getValueTreeState().getRawParameterValue (ids.sidechainTone)->load();
 		r.chaos.setTooltip ({});
 		r.chaosFilter.setTooltip ({});
@@ -1546,7 +1546,7 @@ void SATTRAudioProcessorEditor::setupLoaderUI (int loaderIndex, LoaderRefs r,
 		r.sidechainDisp.setText ("", juce::dontSendNotification);
 		r.sidechainDisp.setInterceptsMouseClicks (true, false);
 		r.sidechainDisp.addMouseListener (this, false);
-		r.sidechainDisp.setTooltip (formatSidechainTooltip (savedScTime, savedScTone));
+		r.sidechainDisp.setTooltip (formatSidechainTooltip (savedScSmooth, savedScTone));
 		r.sidechainDisp.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
 		r.sidechainDisp.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
 		r.sidechainDisp.setOpaque (false);
@@ -5121,16 +5121,16 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 		return fallback;
 	};
 
-	const float currentTime = juce::jlimit (SATTRAudioProcessor::kSidechainTimeMin,
-	                                        SATTRAudioProcessor::kSidechainTimeMax,
-	                                        loadParam (ids.sidechainTime, SATTRAudioProcessor::kSidechainTimeDefault));
+	const float currentSmooth = juce::jlimit (SATTRAudioProcessor::kSidechainSmoothMin,
+	                                          SATTRAudioProcessor::kSidechainSmoothMax,
+	                                          loadParam (ids.sidechainSmooth, SATTRAudioProcessor::kSidechainSmoothDefault));
 	const float currentTone = juce::jlimit (SATTRAudioProcessor::kSidechainToneMin,
 	                                        SATTRAudioProcessor::kSidechainToneMax,
 	                                        loadParam (ids.sidechainTone, SATTRAudioProcessor::kSidechainToneDefault));
 
 	auto* aw = new juce::AlertWindow ("", "", juce::AlertWindow::NoIcon);
 	aw->setLookAndFeel (&lnf);
-	aw->addTextEditor ("time", juce::String (currentTime, 2), juce::String());
+	aw->addTextEditor ("smooth", juce::String (currentSmooth, 2), juce::String());
 	aw->addTextEditor ("tone", juce::String (juce::roundToInt (currentTone)), juce::String());
 
 	struct PromptBar : public juce::Component
@@ -5238,9 +5238,9 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 		return l;
 	};
 
-	auto* timeLabel = makeLabel ("sc_time_label", "TIME");
+	auto* smoothLabel = makeLabel ("sc_smooth_label", "SMOOTH");
 	auto* toneLabel = makeLabel ("sc_tone_label", "TONE");
-	auto* timeUnit = makeLabel ("sc_time_unit", "x");
+	auto* smoothUnit = makeLabel ("sc_smooth_unit", "x");
 	auto* toneUnit = makeLabel ("sc_tone_unit", "Hz");
 
 	auto formatSidechainPromptToneValue = [] (float hz)
@@ -5284,12 +5284,12 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 		return std::exp (toneLogMin + juce::jlimit (0.0f, 1.0f, value01) * toneLogRange);
 	};
 
-	auto* timeBar = new PromptBar (scheme, currentTime, SATTRAudioProcessor::kSidechainTimeDefault);
+	auto* smoothBar = new PromptBar (scheme, currentSmooth, SATTRAudioProcessor::kSidechainSmoothDefault);
 	auto* toneBar = new PromptBar (scheme, toneToBar (currentTone), toneToBar (SATTRAudioProcessor::kSidechainToneDefault));
-	aw->addAndMakeVisible (timeBar);
+	aw->addAndMakeVisible (smoothBar);
 	aw->addAndMakeVisible (toneBar);
 
-	if (auto* te = aw->getTextEditor ("time"))
+	if (auto* te = aw->getTextEditor ("smooth"))
 	{
 		te->setFont (f);
 		te->applyFontToAllText (f);
@@ -5315,29 +5315,29 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 			p->setValueNotifyingHost (p->convertTo0to1 (plainValue));
 	};
 
-	auto pushSidechainValues = [safeDisplay, setSidechainParam, ids] (float time, float tone)
+	auto pushSidechainValues = [safeDisplay, setSidechainParam, ids] (float smooth, float tone)
 	{
-		const float clampedTime = juce::jlimit (SATTRAudioProcessor::kSidechainTimeMin,
-		                                        SATTRAudioProcessor::kSidechainTimeMax, time);
+		const float clampedSmooth = juce::jlimit (SATTRAudioProcessor::kSidechainSmoothMin,
+		                                          SATTRAudioProcessor::kSidechainSmoothMax, smooth);
 		const float clampedTone = juce::jlimit (SATTRAudioProcessor::kSidechainToneMin,
 		                                        SATTRAudioProcessor::kSidechainToneMax, tone);
-		setSidechainParam (ids.sidechainTime, clampedTime);
+		setSidechainParam (ids.sidechainSmooth, clampedSmooth);
 		setSidechainParam (ids.sidechainTone, clampedTone);
 		if (safeDisplay != nullptr)
-			safeDisplay->setTooltip (formatSidechainTooltip (clampedTime, clampedTone));
+			safeDisplay->setTooltip (formatSidechainTooltip (clampedSmooth, clampedTone));
 	};
 
-	auto layoutRows = [aw, timeLabel, toneLabel, timeUnit, toneUnit, timeBar, toneBar]()
+	auto layoutRows = [aw, smoothLabel, toneLabel, smoothUnit, toneUnit, smoothBar, toneBar]()
 	{
-		auto* timeTe = aw->getTextEditor ("time");
+		auto* smoothTe = aw->getTextEditor ("smooth");
 		auto* toneTe = aw->getTextEditor ("tone");
-		if (timeTe == nullptr || toneTe == nullptr || timeLabel == nullptr || toneLabel == nullptr
-			|| timeUnit == nullptr || toneUnit == nullptr || timeBar == nullptr || toneBar == nullptr)
+		if (smoothTe == nullptr || toneTe == nullptr || smoothLabel == nullptr || toneLabel == nullptr
+			|| smoothUnit == nullptr || toneUnit == nullptr || smoothBar == nullptr || toneBar == nullptr)
 			return;
 
 		const int buttonsTop = getAlertButtonsTop (*aw);
-		auto er = timeTe->getBounds();
-		er.setHeight ((int) (timeTe->getFont().getHeight() * kPromptEditorHeightScale) + kPromptEditorHeightPadPx);
+		auto er = smoothTe->getBounds();
+		er.setHeight ((int) (smoothTe->getFont().getHeight() * kPromptEditorHeightScale) + kPromptEditorHeightPadPx);
 		const int rowH = er.getHeight();
 		const int barH = juce::jmax (12, rowH / 2);
 		const int barGap = juce::jmax (4, rowH / 4);
@@ -5346,12 +5346,9 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 		const int totalH = rowTotal * 2 + rowGap;
 		const int rowY = juce::jmax (kPromptEditorMinTopPx, (buttonsTop - totalH) / 2);
 
-		const int contentPad = kPromptInnerMargin;
-		const int contentW = aw->getWidth() - contentPad * 2;
-		const int maxLabelW = juce::jmax (stringWidth (timeLabel->getFont(), timeLabel->getText()),
-		                                  stringWidth (toneLabel->getFont(), toneLabel->getText())) + 8;
-		const int labelValueGap = juce::jmax (8, stringWidth (timeTe->getFont(), " "));
-		const int unitGap = 2;
+		const int barX = kPromptInnerMargin;
+		const int barR = aw->getWidth() - kPromptInnerMargin;
+		constexpr int kToneLabelValueGapPx = 20;
 
 		auto placeRow = [&] (juce::TextEditor* te, juce::Label* name, juce::Label* unit,
 		                     PromptBar* bar, int y)
@@ -5361,31 +5358,83 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 			const int worstTextW = stringWidth (te->getFont(), isToneRow
 				? (unit->getText() == "kHz" ? "20.0" : "20000")
 				: "1.00");
-			const int unitW = stringWidth (unit->getFont(), unit->getText()) + 4;
-			const int idealEditorW = juce::jmax (36, juce::jmax (textW, worstTextW) + 10);
-			const int maxEditorW = juce::jmax (36, contentW - maxLabelW - labelValueGap - unitGap - unitW);
-			const int editorW = juce::jmin (idealEditorW, maxEditorW);
-			const int visualW = maxLabelW + labelValueGap + editorW + unitGap + unitW;
-			const int blockLeft = contentPad + (juce::jmax (0, contentW - visualW) / 2);
+			const int labelW = stringWidth (name->getFont(), name->getText()) + 2;
+			const int unitTextW = stringWidth (unit->getFont(), unit->getText());
+			const int unitW = isToneRow ? (stringWidth (unit->getFont(), "kHz") + 4)
+			                            : (unitTextW + 2);
+			const int unitGap = isToneRow ? 2 : 0;
+			const int labelValueGap = isToneRow ? kToneLabelValueGapPx
+			                                    : juce::jmax (2, stringWidth (te->getFont(), " "));
+			constexpr int kEditorTextPadPx = 14;
+			constexpr int kValueTextSafetyPx = 8;
+			constexpr int kMinEditorWidthPx = 24;
+			const int valueTextW = textW + kValueTextSafetyPx;
+			const int idealEditorW = isToneRow
+				? juce::jmax (kMinEditorWidthPx,
+				              juce::jmax (valueTextW, worstTextW) + kEditorTextPadPx * 2)
+				: juce::jlimit (kMinEditorWidthPx, 88, valueTextW + kEditorTextPadPx * 2);
 
-			name->setBounds (blockLeft, y, maxLabelW, rowH);
-			auto textBounds = juce::Rectangle<int> (blockLeft + maxLabelW + labelValueGap, y, editorW, rowH);
-			te->setBounds (textBounds);
-			const int textRightX = textBounds.getX() + ((editorW - textW) / 2) + textW;
+			if (! isToneRow)
+			{
+				const int contentPad = kPromptInlineContentPadPx;
+				const int contentW = aw->getWidth() - contentPad * 2;
+				const int spaceW = juce::jmax (2, stringWidth (te->getFont(), " "));
+				const int editorW = idealEditorW;
+				const int visualW = labelW + spaceW + valueTextW + unitW;
+				const int centerX = contentPad + contentW / 2;
+				int blockLeft = centerX - visualW / 2;
+				blockLeft = juce::jlimit (contentPad,
+				                          juce::jmax (contentPad, contentPad + contentW - visualW),
+				                          blockLeft);
+
+				name->setBounds (blockLeft, y, labelW, rowH);
+
+				int editorX = blockLeft + labelW + spaceW - (editorW - valueTextW) / 2;
+				editorX = juce::jlimit (contentPad,
+				                        juce::jmax (contentPad, contentPad + contentW - editorW),
+				                        editorX);
+				te->setBounds (editorX, y, editorW, rowH);
+
+				const int textRightX = editorX + ((editorW - textW) / 2) + textW;
+				unit->setBounds (textRightX, y, unitW, rowH);
+				bar->setBounds (barX, y + rowH + barGap, barR - barX, barH);
+				return;
+			}
+
+			const int visualW = labelW + labelValueGap + textW + unitGap + unitTextW;
+			const int centerX = barX + (barR - barX) / 2;
+			int blockLeft = centerX - visualW / 2;
+			blockLeft = juce::jlimit (barX,
+			                          juce::jmax (barX, barR - visualW),
+			                          blockLeft);
+
+			const int nameX = blockLeft;
+			const int textLeft = blockLeft + labelW + labelValueGap;
+			const int maxEditorW = juce::jmax (kMinEditorWidthPx,
+			                                   barR - textLeft - unitGap - unitW);
+			const int editorW = juce::jmin (idealEditorW, maxEditorW);
+			int editorX = textLeft - ((editorW - textW) / 2);
+			editorX = juce::jlimit (barX,
+			                        juce::jmax (barX, barR - editorW),
+			                        editorX);
+
+			te->setBounds (editorX, y, editorW, rowH);
+			const int textRightX = editorX + ((editorW - textW) / 2) + textW;
 			unit->setBounds (textRightX + unitGap, y, unitW, rowH);
-			bar->setBounds (contentPad, y + rowH + barGap, contentW, barH);
+			name->setBounds (nameX, y, labelW, rowH);
+			bar->setBounds (barX, y + rowH + barGap, barR - barX, barH);
 		};
 
-		placeRow (timeTe, timeLabel, timeUnit, timeBar, rowY);
+		placeRow (smoothTe, smoothLabel, smoothUnit, smoothBar, rowY);
 		placeRow (toneTe, toneLabel, toneUnit, toneBar, rowY + rowTotal + rowGap);
 	};
 
-	timeBar->onValueChanged = [aw, toneBar, syncing, layoutRows, pushSidechainValues, barToTone] (float value01)
+	smoothBar->onValueChanged = [aw, toneBar, syncing, layoutRows, pushSidechainValues, barToTone] (float value01)
 	{
 		if (*syncing)
 			return;
 		*syncing = true;
-		if (auto* te = aw->getTextEditor ("time"))
+		if (auto* te = aw->getTextEditor ("smooth"))
 		{
 			te->setText (juce::String (value01, 2), juce::sendNotification);
 			te->selectAll();
@@ -5395,7 +5444,7 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 		layoutRows();
 	};
 
-	toneBar->onValueChanged = [aw, timeBar, syncing, layoutRows, pushSidechainValues, barToTone, updateTonePromptPresentation] (float value01)
+	toneBar->onValueChanged = [aw, smoothBar, syncing, layoutRows, pushSidechainValues, barToTone, updateTonePromptPresentation] (float value01)
 	{
 		if (*syncing)
 			return;
@@ -5406,29 +5455,29 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 		if (auto* te = aw->getTextEditor ("tone"))
 			te->selectAll();
 		*syncing = false;
-		pushSidechainValues (timeBar->value01, toneHz);
+		pushSidechainValues (smoothBar->value01, toneHz);
 		layoutRows();
 	};
 
-	if (auto* te = aw->getTextEditor ("time"))
-		te->onTextChange = [aw, timeBar, toneBar, syncing, layoutRows, pushSidechainValues, barToTone]()
+	if (auto* te = aw->getTextEditor ("smooth"))
+		te->onTextChange = [aw, smoothBar, toneBar, syncing, layoutRows, pushSidechainValues, barToTone]()
 		{
 			if (*syncing)
 				return;
 			*syncing = true;
-			float nextTime = SATTRAudioProcessor::kSidechainTimeMin;
-			if (auto* editor = aw->getTextEditor ("time"))
-				nextTime = juce::jlimit (SATTRAudioProcessor::kSidechainTimeMin,
-				                         SATTRAudioProcessor::kSidechainTimeMax,
-				                         editor->getText().getFloatValue());
-			timeBar->setValue (nextTime);
+			float nextSmooth = SATTRAudioProcessor::kSidechainSmoothMin;
+			if (auto* editor = aw->getTextEditor ("smooth"))
+				nextSmooth = juce::jlimit (SATTRAudioProcessor::kSidechainSmoothMin,
+				                           SATTRAudioProcessor::kSidechainSmoothMax,
+				                           editor->getText().getFloatValue());
+			smoothBar->setValue (nextSmooth);
 			*syncing = false;
-			pushSidechainValues (nextTime, barToTone (toneBar->value01));
+			pushSidechainValues (nextSmooth, barToTone (toneBar->value01));
 			layoutRows();
 		};
 
 	if (auto* te = aw->getTextEditor ("tone"))
-		te->onTextChange = [aw, timeBar, toneBar, toneUnit, syncing, layoutRows,
+		te->onTextChange = [aw, smoothBar, toneBar, toneUnit, syncing, layoutRows,
 		                    pushSidechainValues, toneToBar, updateTonePromptPresentation]()
 		{
 			if (*syncing)
@@ -5445,7 +5494,7 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 			}
 			toneBar->setValue (toneToBar (nextTone));
 			*syncing = false;
-			pushSidechainValues (timeBar->value01, nextTone);
+			pushSidechainValues (smoothBar->value01, nextTone);
 			layoutRows();
 		};
 
@@ -5453,7 +5502,7 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 	aw->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 	applyPromptShellSize (*aw);
 	layoutAlertWindowButtons (*aw);
-	preparePromptTextEditor (*aw, "time", scheme.bg, scheme.text, scheme.fg, f, false);
+	preparePromptTextEditor (*aw, "smooth", scheme.bg, scheme.text, scheme.fg, f, false);
 	preparePromptTextEditor (*aw, "tone", scheme.bg, scheme.text, scheme.fg, f, false);
 	layoutRows();
 	styleAlertButtons (*aw, lnf);
@@ -5469,7 +5518,7 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 
 	aw->enterModalState (true,
 		juce::ModalCallbackFunction::create (
-			[safeThis, safeDisplay, aw, ids, savedTime = currentTime, savedTone = currentTone] (int result) mutable
+			[safeThis, safeDisplay, aw, ids, savedSmooth = currentSmooth, savedTone = currentTone] (int result) mutable
 		{
 			std::unique_ptr<juce::AlertWindow> killer (aw);
 			if (safeThis == nullptr)
@@ -5478,23 +5527,23 @@ void SATTRAudioProcessorEditor::openSidechainPrompt (int loaderIndex)
 			auto& state = safeThis->audioProcessor.getValueTreeState();
 			if (result != 1)
 			{
-				if (auto* p = state.getParameter (ids.sidechainTime))
-					p->setValueNotifyingHost (p->convertTo0to1 (savedTime));
+				if (auto* p = state.getParameter (ids.sidechainSmooth))
+					p->setValueNotifyingHost (p->convertTo0to1 (savedSmooth));
 				if (auto* p = state.getParameter (ids.sidechainTone))
 					p->setValueNotifyingHost (p->convertTo0to1 (savedTone));
 				if (safeDisplay != nullptr)
-					safeDisplay->setTooltip (formatSidechainTooltip (savedTime, savedTone));
+					safeDisplay->setTooltip (formatSidechainTooltip (savedSmooth, savedTone));
 			}
 			else
 			{
-				const float newTime = juce::jlimit (SATTRAudioProcessor::kSidechainTimeMin,
-				                                    SATTRAudioProcessor::kSidechainTimeMax,
-				                                    state.getRawParameterValue (ids.sidechainTime)->load());
+				const float newSmooth = juce::jlimit (SATTRAudioProcessor::kSidechainSmoothMin,
+				                                      SATTRAudioProcessor::kSidechainSmoothMax,
+				                                      state.getRawParameterValue (ids.sidechainSmooth)->load());
 				const float newTone = juce::jlimit (SATTRAudioProcessor::kSidechainToneMin,
 				                                    SATTRAudioProcessor::kSidechainToneMax,
 				                                    state.getRawParameterValue (ids.sidechainTone)->load());
 				if (safeDisplay != nullptr)
-					safeDisplay->setTooltip (formatSidechainTooltip (newTime, newTone));
+					safeDisplay->setTooltip (formatSidechainTooltip (newSmooth, newTone));
 			}
 
 			safeThis->setPromptOverlayActive (false);

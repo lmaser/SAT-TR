@@ -331,9 +331,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSidechainA, "Sidechain A", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSidechainTimeA, "Sidechain Time A",
-		juce::NormalisableRange<float> (kSidechainTimeMin, kSidechainTimeMax, 0.01f, 1.0f),
-		kSidechainTimeDefault));
+		kParamSidechainSmoothA, "Sidechain Smooth A",
+		juce::NormalisableRange<float> (kSidechainSmoothMin, kSidechainSmoothMax, 0.01f, 1.0f),
+		kSidechainSmoothDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSidechainToneA, "Sidechain Tone A",
 		juce::NormalisableRange<float> (kSidechainToneMin, kSidechainToneMax, 0.01f, 0.35f),
@@ -493,9 +493,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSidechainB, "Sidechain B", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSidechainTimeB, "Sidechain Time B",
-		juce::NormalisableRange<float> (kSidechainTimeMin, kSidechainTimeMax, 0.01f, 1.0f),
-		kSidechainTimeDefault));
+		kParamSidechainSmoothB, "Sidechain Smooth B",
+		juce::NormalisableRange<float> (kSidechainSmoothMin, kSidechainSmoothMax, 0.01f, 1.0f),
+		kSidechainSmoothDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSidechainToneB, "Sidechain Tone B",
 		juce::NormalisableRange<float> (kSidechainToneMin, kSidechainToneMax, 0.01f, 0.35f),
@@ -655,9 +655,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSidechainC, "Sidechain C", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSidechainTimeC, "Sidechain Time C",
-		juce::NormalisableRange<float> (kSidechainTimeMin, kSidechainTimeMax, 0.01f, 1.0f),
-		kSidechainTimeDefault));
+		kParamSidechainSmoothC, "Sidechain Smooth C",
+		juce::NormalisableRange<float> (kSidechainSmoothMin, kSidechainSmoothMax, 0.01f, 1.0f),
+		kSidechainSmoothDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSidechainToneC, "Sidechain Tone C",
 		juce::NormalisableRange<float> (kSidechainToneMin, kSidechainToneMax, 0.01f, 0.35f),
@@ -1015,9 +1015,9 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pSidechainA = parameters.getRawParameterValue (kParamSidechainA);
 	pSidechainB = parameters.getRawParameterValue (kParamSidechainB);
 	pSidechainC = parameters.getRawParameterValue (kParamSidechainC);
-	pSidechainTimeA = parameters.getRawParameterValue (kParamSidechainTimeA);
-	pSidechainTimeB = parameters.getRawParameterValue (kParamSidechainTimeB);
-	pSidechainTimeC = parameters.getRawParameterValue (kParamSidechainTimeC);
+	pSidechainSmoothA = parameters.getRawParameterValue (kParamSidechainSmoothA);
+	pSidechainSmoothB = parameters.getRawParameterValue (kParamSidechainSmoothB);
+	pSidechainSmoothC = parameters.getRawParameterValue (kParamSidechainSmoothC);
 	pSidechainToneA = parameters.getRawParameterValue (kParamSidechainToneA);
 	pSidechainToneB = parameters.getRawParameterValue (kParamSidechainToneB);
 	pSidechainToneC = parameters.getRawParameterValue (kParamSidechainToneC);
@@ -1389,7 +1389,7 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 	const bool anySidechainEnabled = sidechainA || sidechainB || sidechainC;
 
 	const bool sidechainActive[3] = { sidechainA, sidechainB, sidechainC };
-	std::atomic<float>* sidechainTimeParams[3] = { pSidechainTimeA, pSidechainTimeB, pSidechainTimeC };
+	std::atomic<float>* sidechainSmoothParams[3] = { pSidechainSmoothA, pSidechainSmoothB, pSidechainSmoothC };
 	std::atomic<float>* sidechainToneParams[3] = { pSidechainToneA, pSidechainToneB, pSidechainToneC };
 	auto scBuffer = (anySidechainEnabled && getBusCount (true) > 1)
 		? getBusBuffer (ioBuffer, true, 1)
@@ -1456,8 +1456,8 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 			continue;
 		}
 
-		const float time = juce::jlimit (kSidechainTimeMin, kSidechainTimeMax,
-		                                 loadRelaxed (sidechainTimeParams[loader], kSidechainTimeDefault));
+		const float smooth = juce::jlimit (kSidechainSmoothMin, kSidechainSmoothMax,
+		                                   loadRelaxed (sidechainSmoothParams[loader], kSidechainSmoothDefault));
 		const float tone = juce::jlimit (kSidechainToneMin, kSidechainToneMax,
 		                                 loadRelaxed (sidechainToneParams[loader], kSidechainToneDefault));
 		if (! sidechainBusAvailable)
@@ -1502,16 +1502,16 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 			: 0.0f;
 		const float target = juce::jlimit (0.0f, 1.0f, juce::jmax (rms * 4.0f, peak * 0.75f));
 
-		if (time <= 0.0001f)
+		if (smooth <= 0.0001f)
 		{
 			sidechainEnv_[loader] = target;
 		}
 		else
 		{
-			const float legacyTime = juce::jmin (1.0f, time * 2.0f);
-			const float extendedBlend = juce::jlimit (0.0f, 1.0f, (time - 0.5f) * 2.0f);
-			const float timeShape = (time <= 0.5f) ? legacyTime : (1.0f + 0.5f * extendedBlend);
-			const float tau = 0.001f + timeShape * timeShape * 0.040f;
+			const float legacySmooth = juce::jmin (1.0f, smooth * 2.0f);
+			const float extendedBlend = juce::jlimit (0.0f, 1.0f, (smooth - 0.5f) * 2.0f);
+			const float smoothShape = (smooth <= 0.5f) ? legacySmooth : (1.0f + 0.5f * extendedBlend);
+			const float tau = 0.001f + smoothShape * smoothShape * 0.040f;
 			const float coeff = 1.0f - std::exp (-(float) numSamples / (sr * tau));
 			sidechainEnv_[loader] += (target - sidechainEnv_[loader]) * juce::jlimit (0.0f, 1.0f, coeff);
 		}
@@ -3528,7 +3528,24 @@ void SATTRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 		auto state = juce::ValueTree::fromXml (*xml);
 		if (state.isValid())
 		{
-			parameters.replaceState (state);		}
+			parameters.replaceState (state);
+
+			for (int loader = 0; loader < 3; ++loader)
+			{
+				sidechainEnv_[loader] = 0.0f;
+				sidechainDriveAmount_[loader] = 0.0f;
+				for (int ch = 0; ch < 2; ++ch)
+				{
+					sidechainDcPrevIn_[loader][ch] = 0.0f;
+					sidechainDcPrevOut_[loader][ch] = 0.0f;
+					sidechainToneFilters_[loader][ch].reset();
+				}
+			}
+
+			stateA.lastSidechainPreGain = 1.0f;
+			stateB.lastSidechainPreGain = 1.0f;
+			stateC.lastSidechainPreGain = 1.0f;
+		}
 	}
 }
 

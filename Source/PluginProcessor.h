@@ -37,7 +37,7 @@ public:
 	static constexpr const char* kParamInvA         = "inv_a";
 	static constexpr const char* kParamDelayA       = "delay_a";
 	static constexpr const char* kParamSidechainA   = "sidechain_a";
-	static constexpr const char* kParamSidechainTimeA = "sidechain_time_a";
+	static constexpr const char* kParamSidechainSmoothA = "sidechain_time_a";
 	static constexpr const char* kParamSidechainToneA = "sidechain_tone_a";
 	static constexpr const char* kParamChaosA       = "chaos_a";
 	static constexpr const char* kParamChaosFilterA    = "chaos_filter_a";
@@ -95,7 +95,7 @@ public:
 	static constexpr const char* kParamInvB         = "inv_b";
 	static constexpr const char* kParamDelayB       = "delay_b";
 	static constexpr const char* kParamSidechainB   = "sidechain_b";
-	static constexpr const char* kParamSidechainTimeB = "sidechain_time_b";
+	static constexpr const char* kParamSidechainSmoothB = "sidechain_time_b";
 	static constexpr const char* kParamSidechainToneB = "sidechain_tone_b";
 	static constexpr const char* kParamChaosB       = "chaos_b";
 	static constexpr const char* kParamChaosFilterB    = "chaos_filter_b";
@@ -153,7 +153,7 @@ public:
 	static constexpr const char* kParamInvC         = "inv_c";
 	static constexpr const char* kParamDelayC       = "delay_c";
 	static constexpr const char* kParamSidechainC   = "sidechain_c";
-	static constexpr const char* kParamSidechainTimeC = "sidechain_time_c";
+	static constexpr const char* kParamSidechainSmoothC = "sidechain_time_c";
 	static constexpr const char* kParamSidechainToneC = "sidechain_tone_c";
 	static constexpr const char* kParamChaosC       = "chaos_c";
 	static constexpr const char* kParamChaosFilterC    = "chaos_filter_c";
@@ -279,9 +279,9 @@ public:
 	static constexpr float kDelayDefault        = 0.0f;
 
 	// External sidechain detector (per-loader)
-	static constexpr float kSidechainTimeMin     = 0.0f;
-	static constexpr float kSidechainTimeMax     = 1.0f;
-	static constexpr float kSidechainTimeDefault = 0.25f;
+	static constexpr float kSidechainSmoothMin     = 0.0f;
+	static constexpr float kSidechainSmoothMax     = 1.0f;
+	static constexpr float kSidechainSmoothDefault = 0.25f;
 	static constexpr float kSidechainToneMin     = 250.0f;
 	static constexpr float kSidechainToneMax     = 20000.0f;
 	static constexpr float kSidechainToneDefault = 5000.0f;
@@ -827,9 +827,9 @@ private:
 	std::atomic<float>* pSidechainA = nullptr;
 	std::atomic<float>* pSidechainB = nullptr;
 	std::atomic<float>* pSidechainC = nullptr;
-	std::atomic<float>* pSidechainTimeA = nullptr;
-	std::atomic<float>* pSidechainTimeB = nullptr;
-	std::atomic<float>* pSidechainTimeC = nullptr;
+	std::atomic<float>* pSidechainSmoothA = nullptr;
+	std::atomic<float>* pSidechainSmoothB = nullptr;
+	std::atomic<float>* pSidechainSmoothC = nullptr;
 	std::atomic<float>* pSidechainToneA = nullptr;
 	std::atomic<float>* pSidechainToneB = nullptr;
 	std::atomic<float>* pSidechainToneC = nullptr;

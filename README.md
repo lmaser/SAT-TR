@@ -18,7 +18,7 @@ The saturation engine uses ADAA-backed nonlinear stages where they matter, per-m
 SAT-TR uses a text-based UI with horizontal bar sliders. Loader tabs switch between visible saturation slots at compact widths, and prompts are used for deeper parameter entry and utility configuration.
 
 - **Bar sliders**: Click and drag horizontally. Right-click for numeric entry.
-- **Toggle buttons**: Click to enable/disable (`RAW`, `INV`, `EXP`, `CHAOS D`, `CHAOS F`).
+- **Toggle buttons**: Click to enable/disable (`RAW`, `INV`, `EXP`, `CHAOS D`, `CHAOS F`, `SIDECHAIN`).
 - **Combo boxes**: Click to choose routing, mode, algorithm, oversampling, normalization, and limiter placement.
 - **Loader tabs**: Use the side tabs to switch visible loaders when the window is compact. Wider sizes reveal more loaders at once.
 - **Collapsible IO section**: Click the toggle bar (triangle) to show/hide per-loader I/O controls. State persists across sessions.
@@ -26,7 +26,8 @@ SAT-TR uses a text-based UI with horizontal bar sliders. Loader tabs switch betw
 - **Filter bar**: Click to open the HP/LP filter configuration prompt.
 - **EXP button**: Left-click enables/disables the expander. Right-click opens the expander prompt.
 - **CHAOS buttons**: Left-click enables/disables the target. Right-click opens the amount/speed prompt for delay or filter chaos.
-- **Tooltips**: Toggle tooltips use an opaque palette-background panel with palette text/outline, so `EXP`, `CHAOS D`, and `CHAOS F` match the rest of the TR Series.
+- **SIDECHAIN button**: Left-click enables/disables external drive modulation for the loader. Right-click opens the `SMOOTH` / `TONE` prompt.
+- **Tooltips**: Toggle tooltips use an opaque palette-background panel with palette text/outline, so `EXP`, `CHAOS D`, `CHAOS F`, and `SIDECHAIN` match the rest of the TR Series.
 - **ALIGN button**: Momentary trigger. Auto-sets per-loader delay compensation and invert state from synthetic probe analysis.
 - **Gear icon** (top-right): Opens the info popup with version, credits, and the Graphics prompt.
 - **Graphics popup**: Toggles graphic FX and switches between default/custom colour palettes.
@@ -152,6 +153,15 @@ Per-loader polarity invert.
 #### DELAY (0-5 ms)
 
 Per-loader alignment delay. Manual prompt entry supports up to `5.000 ms` with `0.001 ms` precision, while `ALIGN` can still write fine compensation automatically.
+
+#### SIDECHAIN
+
+Per-loader external sidechain drive modulation. When enabled, the optional sidechain input is analysed and converted into a smooth drive amount for that loader, so the external signal controls how hard the selected saturation model is pushed without being routed directly to the audio output.
+
+Right-click `SIDECHAIN` to open its prompt:
+
+- **SMOOTH** (`x0.00` to `x1.00`): detector smoothing/inertia. Default is `x0.25`; `x0.00` is the fastest response.
+- **TONE** (`250 Hz` to `20 kHz`): sidechain detector tone limit before drive modulation. The prompt supports Hz/kHz entry and display.
 
 ### Expander / Gate
 
@@ -279,6 +289,7 @@ Practical note:
 - **Dynamics**: model-specific dynamics blocks rather than one universal behavior (`SAG`, `COMP`, `PEAK` depend on algorithm).
 - **Tube SAG**: reactive supply/sag behavior with short strike tracking plus longer bloom memory for time-dependent recovery.
 - **Detail**: high-passed clipped-residual sidechain path for detail-preserving saturation, with extra sidechain air emphasis above 50%, shared by the saturation models.
+- **External Sidechain**: optional per-loader sidechain detector with `SMOOTH` and `TONE` controls, used to modulate saturation drive amount without mixing sidechain audio into the output.
 - **Instability**: deterministic component spread plus slow drift, with smoothed gain/bias/shape/asymmetry micro-irregularity and a stronger calibrated ceiling at high settings.
 - **Oversampling**: global `x1` to `x16`, with latency reported to the host.
 - **Filters**: per-loader HP/LP plus tilt filtering with pre/post routing options.
@@ -311,3 +322,4 @@ Practical note:
 - Optimized global/per-loader dry-wet mix paths and stable delay processing without changing the intended audio behavior.
 - Optimized Tube bloom memory updates for lower CPU during SAG-heavy use.
 - Refined per-loader FILTER and EXP sidechain HP/LP prompts for consistent Hz/kHz entry.
+- Added per-loader external `SIDECHAIN` drive modulation with `SMOOTH` / `TONE` prompt.

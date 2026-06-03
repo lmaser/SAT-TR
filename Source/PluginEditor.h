@@ -343,7 +343,7 @@ private:
 		const char* hpFreq;  const char* lpFreq;  const char* in;  const char* out;  const char* tilt;
 		const char* series;  const char* pan;     const char* fred;   const char* pos;   const char* reso;
 		const char* inv;     const char* chaos;  const char* chaosFilter; const char* sidechain;
-		const char* sidechainTime; const char* sidechainTone;
+		const char* sidechainSmooth; const char* sidechainTone;
 		const char* chaosAmt; const char* chaosSpd;
 		const char* chaosAmtFilter; const char* chaosSpdFilter;
 		const char* modeIn;  const char* modeOut; const char* sumBus; const char* filterPos; const char* mix;

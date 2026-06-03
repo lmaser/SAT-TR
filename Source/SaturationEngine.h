@@ -3806,6 +3806,8 @@ inline void processBlock (State& state,
                         x *= getTapeLevelTrim (drive, mod, girth, react);
                     else if (model == Model::Tube)
                         x *= getTriodeLevelTrim (drive, mod, state.currentSeriesCount);
+                    else if (model == Model::Transistor)
+                        x *= 1.9952623f; // +6 dB static output trim.
                 }
 
                 // -- Final safety soft-limiter --
