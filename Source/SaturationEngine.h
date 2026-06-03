@@ -2032,6 +2032,102 @@ inline float getTapeLevelTrim (float drive, float mod, float girth, float react)
     return driveTrim * girthTrim * reactTrim;
 }
 
+inline float getTapeLevelCorrection (float drive, float girth, float mod, int seriesCount) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float m = detail::clampF (mod, 0.0f, 1.0f);
+    const int seriesIndex = juce::jlimit (1, kMaxSeries, seriesCount) - 1;
+
+    static constexpr float trims[4][3][3][5] =
+    {
+        {
+            {
+                { 0.6752f, 0.5677f, 0.6460f, 0.7959f, 0.9966f },
+                { 0.6694f, 0.7421f, 0.9009f, 1.5175f, 2.0841f },
+                { 0.9308f, 1.1343f, 1.4494f, 2.2313f, 2.7029f },
+            },
+            {
+                { 0.7398f, 0.6148f, 0.6673f, 0.7911f, 0.9667f },
+                { 0.6638f, 0.7238f, 0.8608f, 1.4083f, 1.9225f },
+                { 0.8806f, 1.0602f, 1.3422f, 2.0475f, 2.4784f },
+            },
+            {
+                { 0.9441f, 0.7490f, 0.6737f, 0.6802f, 0.7464f },
+                { 0.5781f, 0.5891f, 0.6422f, 0.9211f, 1.2193f },
+                { 0.6336f, 0.7221f, 0.8747f, 1.2759f, 1.5356f },
+            },
+        },
+        {
+            {
+                { 0.3458f, 0.3426f, 0.4693f, 0.6384f, 0.9068f },
+                { 0.4279f, 0.5703f, 0.7997f, 1.4781f, 1.9930f },
+                { 0.8724f, 1.2160f, 1.6867f, 2.1980f, 2.5942f },
+            },
+            {
+                { 0.4078f, 0.3943f, 0.4991f, 0.6335f, 0.8540f },
+                { 0.4380f, 0.5547f, 0.7441f, 1.3515f, 1.8342f },
+                { 0.7774f, 1.0652f, 1.4649f, 1.9968f, 2.3868f },
+            },
+            {
+                { 0.7188f, 0.6181f, 0.5809f, 0.5748f, 0.6214f },
+                { 0.4559f, 0.4763f, 0.5309f, 0.8647f, 1.1735f },
+                { 0.4849f, 0.5970f, 0.7813f, 1.2312f, 1.5029f },
+            },
+        },
+        {
+            {
+                { 0.2958f, 0.2921f, 0.4185f, 0.5766f, 0.8507f },
+                { 0.3181f, 0.4924f, 0.7431f, 1.4531f, 1.9789f },
+                { 0.8234f, 1.2700f, 1.8509f, 2.1835f, 2.5934f },
+            },
+            {
+                { 0.3516f, 0.3416f, 0.4524f, 0.5786f, 0.7931f },
+                { 0.3423f, 0.4857f, 0.6883f, 1.3279f, 1.8239f },
+                { 0.7027f, 1.0578f, 1.5254f, 1.9835f, 2.3867f },
+            },
+            {
+                { 0.6771f, 0.5972f, 0.5689f, 0.5601f, 0.5997f },
+                { 0.4273f, 0.4530f, 0.5070f, 0.8583f, 1.1565f },
+                { 0.4364f, 0.5527f, 0.7431f, 1.2287f, 1.4856f },
+            },
+        },
+        {
+            {
+                { 0.2831f, 0.2786f, 0.4027f, 0.5547f, 0.8159f },
+                { 0.2714f, 0.4557f, 0.7117f, 1.4446f, 1.9765f },
+                { 0.7822f, 1.3070f, 1.9736f, 2.1797f, 2.5930f },
+            },
+            {
+                { 0.3383f, 0.3280f, 0.4400f, 0.5630f, 0.7706f },
+                { 0.3017f, 0.4561f, 0.6619f, 1.3219f, 1.8225f },
+                { 0.6485f, 1.0460f, 1.5564f, 1.9809f, 2.3864f },
+            },
+            {
+                { 0.6719f, 0.5972f, 0.5696f, 0.5595f, 0.5969f },
+                { 0.4218f, 0.4495f, 0.5033f, 0.8578f, 1.1535f },
+                { 0.4194f, 0.5366f, 0.7287f, 1.2280f, 1.4799f },
+            },
+        },
+    };
+
+    auto interpDrive = [d] (const float (&v)[5]) noexcept
+    {
+        return detail::interpDrive5 (d, v[0], v[1], v[2], v[3], v[4]);
+    };
+
+    float charTrim[3];
+    for (int charIndex = 0; charIndex < 3; ++charIndex)
+    {
+        const float trimType0 = interpDrive (trims[seriesIndex][charIndex][0]);
+        const float trimType1 = interpDrive (trims[seriesIndex][charIndex][1]);
+        const float trimType2 = interpDrive (trims[seriesIndex][charIndex][2]);
+        charTrim[charIndex] = detail::morphThreeWay (m, trimType0, trimType1, trimType2);
+    }
+
+    return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
+}
+
 inline float getTriodeLevelTrim (float drive, float mod, int seriesCount) noexcept
 {
     const float d = detail::clampF (drive, 0.0f, 1.0f);
@@ -2046,6 +2142,318 @@ inline float getTriodeLevelTrim (float drive, float mod, int seriesCount) noexce
     const float trimPower = detail::interpDrive5 (d,
                                                   1.08f, 1.06f, 1.03f, 1.00f, 0.97f);
     return juce::jmap (tubeMorph, trim12AX7, trimPower);
+}
+
+inline float getTriodeLevelCorrection (float drive, float girth, float mod, int seriesCount) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float m = detail::clampF (mod, 0.0f, 1.0f);
+    const int seriesIndex = juce::jlimit (1, kMaxSeries, seriesCount) - 1;
+
+    static constexpr float trims[4][3][3][5] =
+    {
+        {
+            {
+                { 0.9932f, 0.9417f, 0.7991f, 0.6025f, 0.5112f },
+                { 1.0132f, 0.9504f, 0.7829f, 0.5830f, 0.4950f },
+                { 1.1283f, 1.0403f, 0.8224f, 0.6070f, 0.5625f },
+            },
+            {
+                { 0.9997f, 0.9489f, 0.8086f, 0.6165f, 0.5320f },
+                { 1.0231f, 0.9611f, 0.7959f, 0.5998f, 0.5168f },
+                { 1.1414f, 1.0542f, 0.8384f, 0.6264f, 0.5851f },
+            },
+            {
+                { 0.9349f, 0.8912f, 0.7717f, 0.6125f, 0.5465f },
+                { 0.9588f, 0.9052f, 0.7641f, 0.6011f, 0.5334f },
+                { 1.0660f, 0.9900f, 0.8041f, 0.6252f, 0.5906f },
+            },
+        },
+        {
+            {
+                { 1.1408f, 1.0205f, 0.7238f, 0.4225f, 0.4135f },
+                { 1.1444f, 1.0039f, 0.6778f, 0.4127f, 0.3974f },
+                { 1.3613f, 1.1559f, 0.7271f, 0.4479f, 0.4605f },
+            },
+            {
+                { 1.1533f, 1.0345f, 0.7421f, 0.4434f, 0.4362f },
+                { 1.1642f, 1.0248f, 0.7016f, 0.4345f, 0.4212f },
+                { 1.3890f, 1.1838f, 0.7553f, 0.4745f, 0.4862f },
+            },
+            {
+                { 1.0050f, 0.9119f, 0.6858f, 0.4604f, 0.4594f },
+                { 1.0200f, 0.9103f, 0.6597f, 0.4552f, 0.4490f },
+                { 1.2065f, 1.0432f, 0.7070f, 0.4907f, 0.5037f },
+            },
+        },
+        {
+            {
+                { 1.3071f, 1.1038f, 0.6584f, 0.3737f, 0.3956f },
+                { 1.2869f, 1.0578f, 0.5936f, 0.3713f, 0.3811f },
+                { 1.6265f, 1.2761f, 0.6523f, 0.3851f, 0.4383f },
+            },
+            {
+                { 1.3252f, 1.1242f, 0.6848f, 0.3927f, 0.4180f },
+                { 1.3168f, 1.0886f, 0.6263f, 0.3912f, 0.4049f },
+                { 1.6707f, 1.3184f, 0.6897f, 0.4090f, 0.4639f },
+            },
+            {
+                { 1.0729f, 0.9296f, 0.6213f, 0.4133f, 0.4431f },
+                { 1.0771f, 0.9132f, 0.5868f, 0.4149f, 0.4354f },
+                { 1.3478f, 1.0903f, 0.6394f, 0.4366f, 0.4868f },
+            },
+        },
+        {
+            {
+                { 1.4943f, 1.1918f, 0.6017f, 0.3533f, 0.3912f },
+                { 1.4411f, 1.1121f, 0.5261f, 0.3551f, 0.3772f },
+                { 1.9244f, 1.4006f, 0.5937f, 0.3660f, 0.4341f },
+            },
+            {
+                { 1.5176f, 1.2182f, 0.6354f, 0.3713f, 0.4132f },
+                { 1.4813f, 1.1524f, 0.5661f, 0.3739f, 0.4010f },
+                { 1.9869f, 1.4574f, 0.6380f, 0.3872f, 0.4596f },
+            },
+            {
+                { 1.1391f, 0.9450f, 0.5725f, 0.3938f, 0.4392f },
+                { 1.1306f, 0.9144f, 0.5355f, 0.3999f, 0.4321f },
+                { 1.4897f, 1.1323f, 0.5918f, 0.4159f, 0.4842f },
+            },
+        },
+    };
+
+    auto interpDrive = [d] (const float (&v)[5]) noexcept
+    {
+        return detail::interpDrive5 (d, v[0], v[1], v[2], v[3], v[4]);
+    };
+
+    float charTrim[3];
+    for (int charIndex = 0; charIndex < 3; ++charIndex)
+    {
+        const float trimType0 = interpDrive (trims[seriesIndex][charIndex][0]);
+        const float trimType1 = interpDrive (trims[seriesIndex][charIndex][1]);
+        const float trimType2 = interpDrive (trims[seriesIndex][charIndex][2]);
+        charTrim[charIndex] = detail::morphThreeWay (m, trimType0, trimType1, trimType2);
+    }
+
+    return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
+}
+
+inline float getTransistorLevelTrim (float drive, float mod, float girth, float react) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
+    const float body = detail::clampF (girth, 0.0f, 1.0f);
+    const float r = detail::clampF (react, 0.0f, 1.0f);
+    const float bodyCurve = 1.0f - std::pow (1.0f - body, 1.35f);
+
+    const float trimBjt = detail::interpDrive5 (d,
+                                                6.988f, 2.598f, 0.946f, 0.885f, 1.148f);
+    const float trimFet = detail::interpDrive5 (d,
+                                                5.791f, 2.459f, 1.040f, 0.738f, 0.837f);
+    const float driveTrim = juce::jmap (type, trimBjt, trimFet);
+
+    const float bodyTrim = 1.0f / (1.0f + bodyCurve
+                                          * (0.06f + 0.10f * d)
+                                          * juce::jmap (type, 1.0f, 0.75f));
+    const float reactTrim = 1.0f / (1.0f + r
+                                           * (0.04f + 0.08f * d)
+                                           * juce::jmap (type, 1.0f, 0.85f));
+
+    return driveTrim * bodyTrim * reactTrim;
+}
+
+inline float getTransistorLevelCorrection (float drive, float girth, float mod, int seriesCount) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float t = detail::clampF (mod, 0.0f, 1.0f);
+    const int seriesIndex = juce::jlimit (1, kMaxSeries, seriesCount) - 1;
+
+    static constexpr float trims[4][3][3][5] =
+    {
+        {
+            {
+                { 1.0051f, 0.9688f, 1.0042f, 1.0315f, 1.0226f },
+                { 0.9920f, 0.9634f, 1.0109f, 1.0327f, 1.0065f },
+                { 1.0052f, 0.9685f, 1.0491f, 1.0766f, 1.0450f },
+            },
+            {
+                { 0.8875f, 0.9162f, 1.0785f, 1.1807f, 1.1921f },
+                { 0.8976f, 0.9162f, 1.0534f, 1.1474f, 1.1445f },
+                { 0.9267f, 0.9281f, 1.0676f, 1.1603f, 1.1590f },
+            },
+            {
+                { 0.8524f, 0.9183f, 1.1596f, 1.3103f, 1.2852f },
+                { 0.8680f, 0.9142f, 1.1080f, 1.2462f, 1.2384f },
+                { 0.9008f, 0.9241f, 1.1015f, 1.2339f, 1.2516f },
+            },
+        },
+        {
+            {
+                { 1.0102f, 0.9408f, 0.9638f, 0.9864f, 1.0076f },
+                { 0.9841f, 0.9312f, 0.9852f, 0.9813f, 0.9793f },
+                { 1.0104f, 0.9403f, 1.0586f, 1.0483f, 1.0026f },
+            },
+            {
+                { 0.7877f, 0.8534f, 1.0432f, 1.1429f, 1.1811f },
+                { 0.8059f, 0.8516f, 1.0312f, 1.1004f, 1.1219f },
+                { 0.8590f, 0.8699f, 1.0763f, 1.1353f, 1.1210f },
+            },
+            {
+                { 0.7267f, 0.8579f, 1.1318f, 1.2758f, 1.2752f },
+                { 0.7538f, 0.8495f, 1.0957f, 1.2032f, 1.2173f },
+                { 0.8119f, 0.8639f, 1.1206f, 1.2154f, 1.2156f },
+            },
+        },
+        {
+            {
+                { 1.0154f, 0.9158f, 0.9334f, 0.9785f, 1.0079f },
+                { 0.9763f, 0.9029f, 0.9586f, 0.9634f, 0.9781f },
+                { 1.0156f, 0.9151f, 1.0541f, 1.0246f, 0.9946f },
+            },
+            {
+                { 0.6993f, 0.8061f, 1.0175f, 1.1378f, 1.1815f },
+                { 0.7238f, 0.8018f, 1.0064f, 1.0865f, 1.1213f },
+                { 0.7965f, 0.8229f, 1.0685f, 1.1145f, 1.1147f },
+            },
+            {
+                { 0.6197f, 0.8130f, 1.1092f, 1.2714f, 1.2756f },
+                { 0.6549f, 0.8007f, 1.0745f, 1.1908f, 1.2168f },
+                { 0.7321f, 0.8162f, 1.1174f, 1.1969f, 1.2097f },
+            },
+        },
+        {
+            {
+                { 1.0206f, 0.8936f, 0.9162f, 0.9776f, 1.0081f },
+                { 0.9686f, 0.8782f, 0.9386f, 0.9588f, 0.9781f },
+                { 1.0208f, 0.8927f, 1.0451f, 1.0119f, 0.9936f },
+            },
+            {
+                { 0.6210f, 0.7704f, 1.0053f, 1.1373f, 1.1818f },
+                { 0.6504f, 0.7633f, 0.9894f, 1.0836f, 1.1213f },
+                { 0.7388f, 0.7849f, 1.0573f, 1.1042f, 1.1140f },
+            },
+            {
+                { 0.5288f, 0.7797f, 1.0988f, 1.2709f, 1.2760f },
+                { 0.5694f, 0.7638f, 1.0596f, 1.1882f, 1.2168f },
+                { 0.6606f, 0.7784f, 1.1087f, 1.1877f, 1.2091f },
+            },
+        },
+    };
+
+    auto interpDrive = [d] (const float (&v)[5]) noexcept
+    {
+        return detail::interpDrive5 (d, v[0], v[1], v[2], v[3], v[4]);
+    };
+
+    float charTrim[3];
+    for (int charIndex = 0; charIndex < 3; ++charIndex)
+    {
+        const float trimType0 = interpDrive (trims[seriesIndex][charIndex][0]);
+        const float trimType1 = interpDrive (trims[seriesIndex][charIndex][1]);
+        const float trimType2 = interpDrive (trims[seriesIndex][charIndex][2]);
+        charTrim[charIndex] = detail::morphThreeWay (t, trimType0, trimType1, trimType2);
+    }
+
+    return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
+}
+
+inline float getDiodeLevelTrim (float drive, float girth, float mod, int seriesCount) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float t = detail::clampF (mod, 0.0f, 1.0f);
+    const int seriesIndex = juce::jlimit (1, kMaxSeries, seriesCount) - 1;
+
+    static constexpr float trims[4][3][3][5] =
+    {
+        {
+            {
+                { 0.7965f, 0.6278f, 0.4468f, 0.3956f, 0.3874f },
+                { 0.7014f, 0.4599f, 0.4073f, 0.3931f, 0.3912f },
+                { 0.6589f, 0.4874f, 0.3937f, 0.3683f, 0.3601f },
+            },
+            {
+                { 1.0822f, 0.8208f, 0.4876f, 0.4030f, 0.3903f },
+                { 0.9560f, 0.5219f, 0.4185f, 0.3965f, 0.3926f },
+                { 0.8834f, 0.6168f, 0.4133f, 0.3749f, 0.3633f },
+            },
+            {
+                { 1.1852f, 0.8987f, 0.5129f, 0.4064f, 0.3917f },
+                { 1.0438f, 0.5636f, 0.4228f, 0.3978f, 0.3930f },
+                { 0.9578f, 0.6706f, 0.4217f, 0.3772f, 0.3642f },
+            },
+        },
+        {
+            {
+                { 0.6485f, 0.4622f, 0.3910f, 0.3780f, 0.3801f },
+                { 0.5160f, 0.3979f, 0.3825f, 0.3833f, 0.3811f },
+                { 0.4654f, 0.3757f, 0.3440f, 0.3377f, 0.3331f },
+            },
+            {
+                { 1.1737f, 0.6705f, 0.4025f, 0.3789f, 0.3804f },
+                { 0.9135f, 0.4229f, 0.3847f, 0.3830f, 0.3809f },
+                { 0.7781f, 0.4244f, 0.3512f, 0.3380f, 0.3363f },
+            },
+            {
+                { 1.4110f, 0.8057f, 0.4108f, 0.3795f, 0.3805f },
+                { 1.0898f, 0.4357f, 0.3857f, 0.3828f, 0.3807f },
+                { 0.9165f, 0.4564f, 0.3539f, 0.3376f, 0.3353f },
+            },
+        },
+        {
+            {
+                { 0.5511f, 0.4258f, 0.3854f, 0.3765f, 0.3785f },
+                { 0.4460f, 0.3832f, 0.3815f, 0.3791f, 0.3807f },
+                { 0.3941f, 0.3483f, 0.3359f, 0.3318f, 0.3305f },
+            },
+            {
+                { 1.2760f, 0.5480f, 0.3906f, 0.3770f, 0.3786f },
+                { 0.8725f, 0.3949f, 0.3813f, 0.3786f, 0.3804f },
+                { 0.6831f, 0.3753f, 0.3368f, 0.3304f, 0.3301f },
+            },
+            {
+                { 1.6865f, 0.7204f, 0.3939f, 0.3773f, 0.3786f },
+                { 1.1384f, 0.4020f, 0.3811f, 0.3782f, 0.3801f },
+                { 0.8761f, 0.3917f, 0.3370f, 0.3291f, 0.3289f },
+            },
+        },
+        {
+            {
+                { 0.4973f, 0.4241f, 0.3887f, 0.3761f, 0.3774f },
+                { 0.4177f, 0.3804f, 0.3822f, 0.3784f, 0.3807f },
+                { 0.3669f, 0.3387f, 0.3355f, 0.3301f, 0.3303f },
+            },
+            {
+                { 1.3899f, 0.4729f, 0.3983f, 0.3765f, 0.3775f },
+                { 0.8330f, 0.3845f, 0.3817f, 0.3780f, 0.3804f },
+                { 0.5974f, 0.3547f, 0.3345f, 0.3287f, 0.3292f },
+            },
+            {
+                { 2.0224f, 0.6420f, 0.4022f, 0.3767f, 0.3776f },
+                { 1.1895f, 0.3880f, 0.3813f, 0.3777f, 0.3801f },
+                { 0.8366f, 0.3652f, 0.3334f, 0.3274f, 0.3279f },
+            },
+        },
+    };
+
+    auto interpDrive = [d] (const float (&v)[5]) noexcept
+    {
+        return detail::interpDrive5 (d, v[0], v[1], v[2], v[3], v[4]);
+    };
+
+    float charTrim[3];
+    for (int charIndex = 0; charIndex < 3; ++charIndex)
+    {
+        const float trimType0 = interpDrive (trims[seriesIndex][charIndex][0]);
+        const float trimType1 = interpDrive (trims[seriesIndex][charIndex][1]);
+        const float trimType2 = interpDrive (trims[seriesIndex][charIndex][2]);
+        charTrim[charIndex] = detail::morphThreeWay (t, trimType0, trimType1, trimType2);
+    }
+
+    return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
 }
 
 // ----------------------------------------------------------------
@@ -3799,15 +4207,27 @@ inline void processBlock (State& state,
                 if (diagCollector != nullptr && isLast && ch == 0)
                     diagCollector->feedDc (x);
 
-                // -- Final level trim (per series pass) --
-                if (isLast)
+                // -- Model level trim --
+                // Transistor is calibrated per black-box stage so SERIES feeds
+                // each repeated stage at a stable nominal level. Tape/Tube keep
+                // their existing final-chain trim because their stages are
+                // internally level-calibrated.
+                if (model == Model::Transistor)
+                {
+                    x *= getTransistorLevelTrim (drive, mod, girth, react);
+                    if (isLast)
+                        x *= getTransistorLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount);
+                }
+                else if (isLast)
                 {
                     if (model == Model::Tape)
-                        x *= getTapeLevelTrim (drive, mod, girth, react);
+                        x *= getTapeLevelTrim (drive, mod, girth, react)
+                           * getTapeLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount);
                     else if (model == Model::Tube)
-                        x *= getTriodeLevelTrim (drive, mod, state.currentSeriesCount);
-                    else if (model == Model::Transistor)
-                        x *= 1.9952623f; // +6 dB static output trim.
+                        x *= getTriodeLevelTrim (drive, mod, state.currentSeriesCount)
+                           * getTriodeLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount);
+                    else if (model == Model::Diode)
+                        x *= getDiodeLevelTrim (detailDrive, girth, mod, state.currentSeriesCount);
                 }
 
                 // -- Final safety soft-limiter --
