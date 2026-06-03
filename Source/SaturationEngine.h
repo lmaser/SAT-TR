@@ -1237,6 +1237,16 @@ namespace detail
         return t * t * (3.0f - 2.0f * t);
     }
 
+    inline float hotDetectorMagnitude (float x) noexcept
+    {
+        const float mag = std::abs (x);
+        if (mag <= 1.0f)
+            return mag;
+
+        constexpr float kHotCurve = 1.5f;
+        return 1.0f + adaa::fastLog1p ((mag - 1.0f) * kHotCurve) / kHotCurve;
+    }
+
     inline float compressionBlendMix (float react) noexcept
     {
         const float t = clampF (react / 0.58f, 0.0f, 1.0f);
@@ -1448,8 +1458,11 @@ inline DynamicsCompResult processTapeComp (float x, DynamicsCompState& st,
     const float low  = st.scLP;
     const float high = x - low;
     const float highWeight = 1.15f + react * 1.85f;
-    const float detSq = low * low * (0.42f + react * 0.10f)
-                      + high * high * highWeight;
+    const bool hotInput = std::abs (x) > 1.0f;
+    const float lowDet  = hotInput ? detail::hotDetectorMagnitude (low)  : std::abs (low);
+    const float highDet = hotInput ? detail::hotDetectorMagnitude (high) : std::abs (high);
+    const float detSq = lowDet * lowDet * (0.42f + react * 0.10f)
+                      + highDet * highDet * highWeight;
     const float detector = std::sqrt (std::max (detSq, 0.0f) + 1.0e-12f);
 
     const float attackHz  = 55.0f + react * 180.0f + drive * 70.0f;
@@ -1462,7 +1475,7 @@ inline DynamicsCompResult processTapeComp (float x, DynamicsCompState& st,
     else
         st.env += (detector - st.env) * rel;
 
-    const float hfDet = std::abs (high) * (1.0f + react * 1.2f);
+    const float hfDet = highDet * (1.0f + react * 1.2f);
     const float hfAtk = std::min (1.0f, atk * 1.35f);
     const float hfRel = detail::onePoleCoeff (releaseHz * 1.7f + 1.0f, sr);
     if (hfDet > st.hfEnv)
@@ -1518,7 +1531,7 @@ inline DynamicsCompResult processDiodeComp (float x, DynamicsCompState& st,
     const float reactDepth = detail::clampF (react, 0.0f, 1.0f);
     const float d = detail::clampF (drive, 0.0f, 1.0f);
     const float p = detail::clampF (program, 0.0f, 1.0f);
-    const float detector = std::abs (x) * (1.0f + d * 0.08f);
+    const float detector = detail::hotDetectorMagnitude (x) * (1.0f + d * 0.08f);
 
     // Diode-bridge style compression is full-wave and feedback-like: a fast
     // control path catches level changes while a slower body reference keeps
@@ -1582,7 +1595,7 @@ inline DynamicsCompResult processTransistorComp (float x, DynamicsCompState& st,
     if (react <= 0.0001f)
         return r;
 
-    const float det = std::abs (x);
+    const float det = detail::hotDetectorMagnitude (x);
     const float detectorTilt = juce::jmap (type, 1.05f, 1.10f);
     const float detector = det * detectorTilt;
 
@@ -1649,7 +1662,9 @@ inline DynamicsCompResult processTransistorPeakCatch (float x, float detectorInp
 
     const float reactDepth = detail::clampF (react, 0.0f, 1.0f);
     const float d = detail::clampF (drive, 0.0f, 1.0f);
-    const float absX = std::abs (detectorInput);
+    const float absX = (std::abs (x) > 1.0f)
+        ? detail::hotDetectorMagnitude (detectorInput)
+        : std::abs (detectorInput);
 
     // FET-style catch: nearly immediate peak detector over nominal 0 dB,
     // with a slower body reference so sustained material releases naturally.
@@ -1706,7 +1721,7 @@ inline ClipperPeakResult processClipperPeak (float x, ClipperPeakState& st,
     if (react <= 0.0001f)
         return r;
 
-    const float absX = std::abs (x);
+    const float absX = detail::hotDetectorMagnitude (x);
 
     const float peakAtk = detail::onePoleCoeff (1800.0f + react * 5200.0f, sr);
     const float peakRel = detail::onePoleCoeff (48.0f + react * 120.0f + drive * 60.0f, sr);

@@ -37,7 +37,7 @@ public:
 	static constexpr const char* kParamInvA         = "inv_a";
 	static constexpr const char* kParamDelayA       = "delay_a";
 	static constexpr const char* kParamSidechainA   = "sidechain_a";
-	static constexpr const char* kParamSidechainSmoothA = "sidechain_time_a";
+	static constexpr const char* kParamSidechainSmoothA = "sidechain_smooth_a";
 	static constexpr const char* kParamSidechainToneA = "sidechain_tone_a";
 	static constexpr const char* kParamChaosA       = "chaos_a";
 	static constexpr const char* kParamChaosFilterA    = "chaos_filter_a";
@@ -95,7 +95,7 @@ public:
 	static constexpr const char* kParamInvB         = "inv_b";
 	static constexpr const char* kParamDelayB       = "delay_b";
 	static constexpr const char* kParamSidechainB   = "sidechain_b";
-	static constexpr const char* kParamSidechainSmoothB = "sidechain_time_b";
+	static constexpr const char* kParamSidechainSmoothB = "sidechain_smooth_b";
 	static constexpr const char* kParamSidechainToneB = "sidechain_tone_b";
 	static constexpr const char* kParamChaosB       = "chaos_b";
 	static constexpr const char* kParamChaosFilterB    = "chaos_filter_b";
@@ -153,7 +153,7 @@ public:
 	static constexpr const char* kParamInvC         = "inv_c";
 	static constexpr const char* kParamDelayC       = "delay_c";
 	static constexpr const char* kParamSidechainC   = "sidechain_c";
-	static constexpr const char* kParamSidechainSmoothC = "sidechain_time_c";
+	static constexpr const char* kParamSidechainSmoothC = "sidechain_smooth_c";
 	static constexpr const char* kParamSidechainToneC = "sidechain_tone_c";
 	static constexpr const char* kParamChaosC       = "chaos_c";
 	static constexpr const char* kParamChaosFilterC    = "chaos_filter_c";
