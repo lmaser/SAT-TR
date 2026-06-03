@@ -2456,6 +2456,325 @@ inline float getDiodeLevelTrim (float drive, float girth, float mod, int seriesC
     return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
 }
 
+inline float getHotInputReferenceCorrection (Model model, float drive, float girth,
+                                             float mod, int seriesCount) noexcept
+{
+    int modelIndex = -1;
+    switch (model)
+    {
+        case Model::Tape:       modelIndex = 0; break;
+        case Model::Tube:       modelIndex = 1; break;
+        case Model::Transistor: modelIndex = 2; break;
+        case Model::Diode:      modelIndex = 3; break;
+        default: return 1.0f;
+    }
+
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float m = detail::clampF (mod, 0.0f, 1.0f);
+    const int seriesIndex = juce::jlimit (1, kMaxSeries, seriesCount) - 1;
+
+    static constexpr float trims[4][4][3][3][5] =
+    {
+        {
+            {
+                {
+                    { 1.2508f, 1.4269f, 1.5606f, 1.5683f, 1.6320f },
+                    { 1.1587f, 1.3656f, 1.5456f, 1.9202f, 1.9689f },
+                    { 1.1576f, 1.4698f, 1.6821f, 1.9676f, 1.9884f },
+                },
+                {
+                    { 1.3231f, 1.4891f, 1.6125f, 1.6124f, 1.6543f },
+                    { 1.2444f, 1.4228f, 1.5745f, 1.9209f, 1.9689f },
+                    { 1.2170f, 1.4923f, 1.6890f, 1.9675f, 1.9884f },
+                },
+                {
+                    { 1.6996f, 1.7920f, 1.8411f, 1.8075f, 1.7585f },
+                    { 1.6597f, 1.6884f, 1.7068f, 1.9244f, 1.9688f },
+                    { 1.4988f, 1.5973f, 1.7218f, 1.9677f, 1.9882f },
+                },
+            },
+            {
+                {
+                    { 1.7904f, 1.7931f, 1.8526f, 1.8321f, 1.7834f },
+                    { 1.4133f, 1.6482f, 1.7614f, 1.9611f, 1.9869f },
+                    { 1.2845f, 1.6166f, 1.7751f, 1.9854f, 1.9977f },
+                },
+                {
+                    { 1.8100f, 1.8226f, 1.8800f, 1.8697f, 1.8224f },
+                    { 1.5283f, 1.7152f, 1.8003f, 1.9666f, 1.9891f },
+                    { 1.3928f, 1.6619f, 1.7962f, 1.9875f, 1.9984f },
+                },
+                {
+                    { 1.9350f, 1.9592f, 1.9730f, 1.9699f, 1.9585f },
+                    { 1.9067f, 1.9269f, 1.9305f, 1.9878f, 1.9970f },
+                    { 1.8023f, 1.8465f, 1.8937f, 1.9961f, 1.9785f },
+                },
+            },
+            {
+                {
+                    { 1.9400f, 1.9361f, 1.9495f, 1.9403f, 1.8795f },
+                    { 1.6683f, 1.8165f, 1.8733f, 1.9871f, 1.9977f },
+                    { 1.3906f, 1.7005f, 1.8241f, 1.9961f, 1.9994f },
+                },
+                {
+                    { 1.9501f, 1.9476f, 1.9637f, 1.9620f, 1.9198f },
+                    { 1.7514f, 1.8681f, 1.9074f, 1.9913f, 1.9987f },
+                    { 1.5347f, 1.7597f, 1.8540f, 1.9974f, 1.9993f },
+                },
+                {
+                    { 1.9908f, 1.9982f, 2.0005f, 1.9975f, 1.9940f },
+                    { 1.9793f, 1.9868f, 1.9879f, 1.9994f, 2.0000f },
+                    { 1.9259f, 1.9429f, 1.9605f, 1.9993f, 1.9923f },
+                },
+            },
+            {
+                {
+                    { 1.9832f, 1.9835f, 1.9861f, 1.9821f, 1.9513f },
+                    { 1.8307f, 1.9072f, 1.9354f, 1.9963f, 1.9996f },
+                    { 1.4811f, 1.7576f, 1.8569f, 1.9991f, 2.0004f },
+                },
+                {
+                    { 1.9886f, 1.9887f, 1.9919f, 1.9903f, 1.9660f },
+                    { 1.8804f, 1.9426f, 1.9605f, 1.9981f, 1.9998f },
+                    { 1.6473f, 1.8249f, 1.8923f, 1.9997f, 2.0005f },
+                },
+                {
+                    { 1.9984f, 2.0008f, 2.0013f, 2.0012f, 2.0006f },
+                    { 1.9981f, 1.9990f, 1.9986f, 1.9972f, 2.0001f },
+                    { 1.9751f, 1.9817f, 1.9876f, 2.0006f, 2.0001f },
+                },
+            },
+        },
+        {
+            {
+                {
+                    { 1.0227f, 1.0268f, 1.0544f, 1.3006f, 1.6764f },
+                    { 1.0313f, 1.0386f, 1.0903f, 1.3636f, 1.6817f },
+                    { 1.0402f, 1.0533f, 1.1207f, 1.3770f, 1.6781f },
+                },
+                {
+                    { 1.0406f, 1.0461f, 1.0804f, 1.3284f, 1.6972f },
+                    { 1.0492f, 1.0580f, 1.1159f, 1.3888f, 1.6993f },
+                    { 1.0561f, 1.0708f, 1.1429f, 1.3993f, 1.6906f },
+                },
+                {
+                    { 1.1229f, 1.1347f, 1.1871f, 1.4246f, 1.7447f },
+                    { 1.1316f, 1.1475f, 1.2222f, 1.4782f, 1.7501f },
+                    { 1.1288f, 1.1512f, 1.2417f, 1.4878f, 1.7378f },
+                },
+            },
+            {
+                {
+                    { 1.0418f, 1.0504f, 1.1196f, 1.7198f, 1.9389f },
+                    { 1.0593f, 1.0737f, 1.1976f, 1.7826f, 1.9438f },
+                    { 1.0756f, 1.0992f, 1.2367f, 1.7096f, 1.9225f },
+                },
+                {
+                    { 1.0726f, 1.0848f, 1.1492f, 1.7204f, 1.9414f },
+                    { 1.0901f, 1.1083f, 1.2206f, 1.7819f, 1.9461f },
+                    { 1.1013f, 1.1285f, 1.2724f, 1.7051f, 1.9241f },
+                },
+                {
+                    { 1.2115f, 1.2377f, 1.3368f, 1.7703f, 1.9511f },
+                    { 1.2286f, 1.2621f, 1.3944f, 1.8210f, 1.9594f },
+                    { 1.2184f, 1.2615f, 1.4343f, 1.7655f, 1.9455f },
+                },
+            },
+            {
+                {
+                    { 1.0579f, 1.0714f, 1.1915f, 1.8654f, 1.9853f },
+                    { 1.0850f, 1.1062f, 1.3142f, 1.9069f, 1.9879f },
+                    { 1.1092f, 1.1404f, 1.3460f, 1.9022f, 1.9856f },
+                },
+                {
+                    { 1.0979f, 1.1175f, 1.2176f, 1.8653f, 1.9827f },
+                    { 1.1251f, 1.1525f, 1.3240f, 1.9059f, 1.9886f },
+                    { 1.1411f, 1.1779f, 1.3885f, 1.8933f, 1.9855f },
+                },
+                {
+                    { 1.2786f, 1.3197f, 1.4651f, 1.8967f, 1.9864f },
+                    { 1.3040f, 1.3545f, 1.5380f, 1.9298f, 1.9913f },
+                    { 1.2864f, 1.3476f, 1.5840f, 1.9086f, 1.9911f },
+                },
+            },
+            {
+                {
+                    { 1.0716f, 1.0903f, 1.2683f, 1.9268f, 1.9940f },
+                    { 1.1091f, 1.1364f, 1.4361f, 1.9569f, 1.9966f },
+                    { 1.1428f, 1.1785f, 1.4463f, 1.9628f, 1.9974f },
+                },
+                {
+                    { 1.1184f, 1.1456f, 1.2849f, 1.9266f, 1.9888f },
+                    { 1.1560f, 1.1920f, 1.4241f, 1.9574f, 1.9959f },
+                    { 1.1789f, 1.2218f, 1.4905f, 1.9602f, 1.9975f },
+                },
+                {
+                    { 1.3315f, 1.3866f, 1.5725f, 1.9488f, 1.9938f },
+                    { 1.3651f, 1.4310f, 1.6532f, 1.9718f, 1.9968f },
+                    { 1.3417f, 1.4175f, 1.6984f, 1.9702f, 1.9986f },
+                },
+            },
+        },
+        {
+            {
+                {
+                    { 1.0019f, 1.2557f, 1.7586f, 1.9250f, 1.9761f },
+                    { 1.0028f, 1.2155f, 1.6722f, 1.8891f, 1.9574f },
+                    { 1.0037f, 1.1768f, 1.5639f, 1.8320f, 1.9278f },
+                },
+                {
+                    { 1.0023f, 1.3468f, 1.8323f, 1.9456f, 1.9837f },
+                    { 1.0036f, 1.2812f, 1.7555f, 1.9149f, 1.9681f },
+                    { 1.0049f, 1.2210f, 1.6456f, 1.8661f, 1.9417f },
+                },
+                {
+                    { 1.0023f, 1.3987f, 1.8604f, 1.9545f, 1.9859f },
+                    { 1.0039f, 1.3193f, 1.7913f, 1.9260f, 1.9722f },
+                    { 1.0057f, 1.2467f, 1.6841f, 1.8803f, 1.9481f },
+                },
+            },
+            {
+                {
+                    { 1.0038f, 1.4115f, 1.8799f, 1.9860f, 2.0003f },
+                    { 1.0056f, 1.3604f, 1.8137f, 1.9630f, 1.9978f },
+                    { 1.0074f, 1.3051f, 1.7151f, 1.9164f, 1.9857f },
+                },
+                {
+                    { 1.0055f, 1.5373f, 1.9227f, 1.9921f, 2.0001f },
+                    { 1.0080f, 1.4601f, 1.8690f, 1.9753f, 1.9990f },
+                    { 1.0104f, 1.3784f, 1.7794f, 1.9365f, 1.9898f },
+                },
+                {
+                    { 1.0060f, 1.5933f, 1.9368f, 1.9938f, 2.0001f },
+                    { 1.0091f, 1.5073f, 1.8889f, 1.9795f, 1.9993f },
+                    { 1.0123f, 1.4146f, 1.8056f, 1.9440f, 1.9911f },
+                },
+            },
+            {
+                {
+                    { 1.0055f, 1.5235f, 1.9414f, 1.9983f, 2.0002f },
+                    { 1.0084f, 1.4700f, 1.8906f, 1.9906f, 2.0001f },
+                    { 1.0110f, 1.4066f, 1.8036f, 1.9615f, 1.9982f },
+                },
+                {
+                    { 1.0097f, 1.6653f, 1.9676f, 1.9992f, 2.0001f },
+                    { 1.0136f, 1.5897f, 1.9296f, 1.9948f, 2.0000f },
+                    { 1.0168f, 1.5005f, 1.8561f, 1.9730f, 1.9988f },
+                },
+                {
+                    { 1.0115f, 1.7172f, 1.9747f, 1.9994f, 2.0001f },
+                    { 1.0162f, 1.6377f, 1.9418f, 1.9958f, 2.0000f },
+                    { 1.0204f, 1.5412f, 1.8748f, 1.9768f, 1.9990f },
+                },
+            },
+            {
+                {
+                    { 1.0073f, 1.6095f, 1.9733f, 1.9997f, 2.0003f },
+                    { 1.0113f, 1.5570f, 1.9368f, 1.9980f, 2.0001f },
+                    { 1.0145f, 1.4899f, 1.8624f, 1.9836f, 1.9998f },
+                },
+                {
+                    { 1.0154f, 1.7566f, 1.9878f, 1.9999f, 2.0001f },
+                    { 1.0204f, 1.6875f, 1.9638f, 1.9990f, 2.0001f },
+                    { 1.0240f, 1.5982f, 1.9056f, 1.9895f, 1.9998f },
+                },
+                {
+                    { 1.0196f, 1.8021f, 1.9909f, 2.0000f, 2.0000f },
+                    { 1.0256f, 1.7326f, 1.9711f, 1.9993f, 2.0001f },
+                    { 1.0299f, 1.6399f, 1.9192f, 1.9911f, 1.9998f },
+                },
+            },
+        },
+        {
+            {
+                {
+                    { 1.1765f, 1.3659f, 1.7763f, 1.9366f, 1.9735f },
+                    { 1.2750f, 1.7732f, 1.9194f, 1.9665f, 1.9801f },
+                    { 1.2390f, 1.5609f, 1.8241f, 1.8996f, 1.9266f },
+                },
+                {
+                    { 0.9838f, 1.1088f, 1.6644f, 1.9143f, 1.9642f },
+                    { 1.0314f, 1.6128f, 1.8877f, 1.9553f, 1.9744f },
+                    { 1.0133f, 1.2855f, 1.7649f, 1.8763f, 1.9126f },
+                },
+                {
+                    { 0.9721f, 1.0438f, 1.5983f, 1.9040f, 1.9597f },
+                    { 0.9957f, 1.5115f, 1.8753f, 1.9504f, 1.9723f },
+                    { 0.9835f, 1.2012f, 1.7376f, 1.8660f, 1.9064f },
+                },
+            },
+            {
+                {
+                    { 1.4101f, 1.8028f, 1.9649f, 1.9951f, 1.9978f },
+                    { 1.6232f, 1.9384f, 1.9949f, 1.9788f, 1.9992f },
+                    { 1.6037f, 1.8631f, 1.9650f, 1.9913f, 1.9935f },
+                },
+                {
+                    { 0.9611f, 1.3213f, 1.9389f, 1.9935f, 1.9985f },
+                    { 1.0639f, 1.8644f, 1.9853f, 1.9790f, 1.9992f },
+                    { 1.0765f, 1.7156f, 1.9362f, 1.9841f, 1.9697f },
+                },
+                {
+                    { 0.9477f, 1.1405f, 1.9181f, 1.9919f, 1.9985f },
+                    { 0.9877f, 1.8280f, 1.9806f, 1.9782f, 1.9989f },
+                    { 0.9804f, 1.6215f, 1.9232f, 1.9806f, 1.9694f },
+                },
+            },
+            {
+                {
+                    { 1.6943f, 2.0156f, 2.0132f, 1.9991f, 1.9978f },
+                    { 1.8160f, 1.9874f, 2.0007f, 1.9963f, 1.9999f },
+                    { 1.8071f, 1.9483f, 1.9987f, 1.9993f, 1.9999f },
+                },
+                {
+                    { 0.9355f, 1.6466f, 2.0354f, 1.9987f, 1.9976f },
+                    { 1.1067f, 1.9461f, 1.9998f, 1.9970f, 1.9999f },
+                    { 1.1738f, 1.8595f, 1.9874f, 1.9975f, 1.9949f },
+                },
+                {
+                    { 0.9269f, 1.2871f, 2.0432f, 1.9982f, 1.9976f },
+                    { 0.9791f, 1.9228f, 1.9994f, 1.9973f, 2.0000f },
+                    { 0.9922f, 1.8058f, 1.9806f, 1.9967f, 1.9946f },
+                },
+            },
+            {
+                {
+                    { 1.8874f, 2.0302f, 2.0131f, 1.9992f, 1.9991f },
+                    { 1.9155f, 1.9997f, 1.9999f, 1.9991f, 1.9998f },
+                    { 1.8888f, 1.9855f, 1.9989f, 1.9997f, 2.0003f },
+                },
+                {
+                    { 0.9112f, 1.9290f, 2.0047f, 1.9988f, 1.9989f },
+                    { 1.1598f, 1.9838f, 2.0009f, 1.9996f, 1.9998f },
+                    { 1.2994f, 1.9224f, 1.9992f, 2.0000f, 1.9991f },
+                },
+                {
+                    { 0.9089f, 1.4648f, 2.0032f, 1.9987f, 1.9985f },
+                    { 0.9709f, 1.9710f, 2.0014f, 1.9996f, 1.9999f },
+                    { 1.0126f, 1.8852f, 1.9986f, 1.9999f, 1.9991f },
+                },
+            },
+        },
+    };
+
+    auto interpDrive = [d] (const float (&v)[5]) noexcept
+    {
+        return detail::interpDrive5 (d, v[0], v[1], v[2], v[3], v[4]);
+    };
+
+    float charTrim[3];
+    for (int charIndex = 0; charIndex < 3; ++charIndex)
+    {
+        const float trimType0 = interpDrive (trims[modelIndex][seriesIndex][charIndex][0]);
+        const float trimType1 = interpDrive (trims[modelIndex][seriesIndex][charIndex][1]);
+        const float trimType2 = interpDrive (trims[modelIndex][seriesIndex][charIndex][2]);
+        charTrim[charIndex] = detail::morphThreeWay (m, trimType0, trimType1, trimType2);
+    }
+
+    return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
+}
+
 // ----------------------------------------------------------------
 //  CHAR -- post-waveshaper fold + sharpen
 // ----------------------------------------------------------------
@@ -4216,18 +4535,22 @@ inline void processBlock (State& state,
                 {
                     x *= getTransistorLevelTrim (drive, mod, girth, react);
                     if (isLast)
-                        x *= getTransistorLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount);
+                        x *= getTransistorLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount)
+                           * getHotInputReferenceCorrection (model, detailDrive, girth, mod, state.currentSeriesCount);
                 }
                 else if (isLast)
                 {
                     if (model == Model::Tape)
                         x *= getTapeLevelTrim (drive, mod, girth, react)
-                           * getTapeLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount);
+                           * getTapeLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount)
+                           * getHotInputReferenceCorrection (model, detailDrive, girth, mod, state.currentSeriesCount);
                     else if (model == Model::Tube)
                         x *= getTriodeLevelTrim (drive, mod, state.currentSeriesCount)
-                           * getTriodeLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount);
+                           * getTriodeLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount)
+                           * getHotInputReferenceCorrection (model, detailDrive, girth, mod, state.currentSeriesCount);
                     else if (model == Model::Diode)
-                        x *= getDiodeLevelTrim (detailDrive, girth, mod, state.currentSeriesCount);
+                        x *= getDiodeLevelTrim (detailDrive, girth, mod, state.currentSeriesCount)
+                           * getHotInputReferenceCorrection (model, detailDrive, girth, mod, state.currentSeriesCount);
                 }
 
                 // -- Final safety soft-limiter --

@@ -52,9 +52,14 @@ namespace juce
 Set-Content -Path (Join-Path $stubDir "JuceHeader.h") -Value $juceStub -Encoding ASCII
 
 $harnessPath = Join-Path $workDir "sat_level_harness.cpp"
+$objPath = Join-Path $workDir "sat_level_harness.obj"
 $exePath = Join-Path $workDir "sat_level_harness.exe"
 $csvForCpp = $OutCsv.Replace('\', '\\')
 $sourceForCpp = $sourceDir.Replace('\', '\\')
+$inputPeakForCpp = ([double] $InputPeak).ToString("R", [System.Globalization.CultureInfo]::InvariantCulture)
+if ($inputPeakForCpp -notmatch '[\.eE]') {
+    $inputPeakForCpp += ".0"
+}
 
 $harness = @"
 #define SAT_DSP_DIAG 0
@@ -159,12 +164,12 @@ int main()
                     for (int series : seriesValues)
                     {
                         const Stats s = measure (m.model, drive, character, type, 0.0f, 0.0f, series,
-                                                 $SampleRate, $ToneHz, $InputPeak,
-                                                 $WarmupSamples, $MeasureSamples);
+                                             $SampleRate, $ToneHz, $inputPeakForCpp,
+                                             $WarmupSamples, $MeasureSamples);
                         const double deltaDb = db (s.rmsOut / s.rmsIn);
                         const double peakDeltaDb = db (s.peakOut / s.peakIn);
                         std::fprintf (f, "%s,%.2f,%.2f,%.2f,0.00,0.00,%d,%.6f,%.9f,%.9f,%.4f,%.9f,%.9f,%.4f\n",
-                                      m.name, drive, character, type, series, $InputPeak,
+                                      m.name, drive, character, type, series, $inputPeakForCpp,
                                       s.rmsIn, s.rmsOut, deltaDb,
                                       s.peakIn, s.peakOut, peakDeltaDb);
                     }
@@ -194,7 +199,7 @@ if (-not (Test-Path $vcvars)) {
     throw "vcvars64.bat not found at $vcvars"
 }
 
-$cmd = "`"$vcvars`" >nul && cl /nologo /std:c++17 /EHsc /O2 /DNOMINMAX /I`"$stubDir`" /I`"$sourceDir`" `"$harnessPath`" /Fe:`"$exePath`""
+$cmd = "`"$vcvars`" >nul && cl /nologo /std:c++17 /EHsc /O2 /DNOMINMAX /I`"$stubDir`" /I`"$sourceDir`" `"$harnessPath`" /Fo:`"$objPath`" /Fe:`"$exePath`""
 cmd.exe /c $cmd
 if ($LASTEXITCODE -ne 0) {
     throw "Harness compilation failed."
