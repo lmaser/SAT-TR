@@ -12,6 +12,7 @@ SAT-TR does not use one generic waveshaper for every mode. It combines physicall
 Three independent loader slots can each run their own saturation model alongside per-loader gain staging, tilt, filters, expander/gate, chaos modulation, delay compensation, and Mid/Side bus routing. Loaders are routed through one of six topologies (series, parallel, or hybrid), with optional global wet limiting, normalization, oversampling, and auto-alignment.
 
 The saturation engine uses ADAA-backed nonlinear stages where they matter, per-model dynamics blocks (`SAG`, `COMP`, `PEAK` depending on algorithm), analog-style instability/drift, and multi-pass series processing for denser amplifier-style stacking.
+The saturation models use measured static output calibration so `TAPE`, `TUBE`, `TRANSISTOR`, `DIODE`, and `CLIPPER` stay more consistent against hot 0 dBFS reference material while preserving each model's nonlinear character.
 
 ## Interface
 
@@ -287,6 +288,7 @@ Practical note:
 - **ADAA**: used on the main nonlinear stages where needed; exact placement varies by model.
 - **Series Processing**: up to 4 internal passes per loader.
 - **Dynamics**: model-specific dynamics blocks rather than one universal behavior (`SAG`, `COMP`, `PEAK` depend on algorithm).
+- **Level calibration**: measured static model trims keep `TAPE`, `TUBE`, `TRANSISTOR`, `DIODE`, and `CLIPPER` level-consistent against hot reference input without adding dynamic auto-gain.
 - **Tube SAG**: reactive supply/sag behavior with short strike tracking plus longer bloom memory for time-dependent recovery.
 - **Detail**: high-passed clipped-residual sidechain path for detail-preserving saturation, with extra sidechain air emphasis above 50%, shared by the saturation models.
 - **External Sidechain**: optional per-loader sidechain detector with `SMOOTH` and `TONE` controls, used to modulate saturation drive amount without mixing sidechain audio into the output.
@@ -323,3 +325,4 @@ Practical note:
 - Optimized Tube bloom memory updates for lower CPU during SAG-heavy use.
 - Refined per-loader FILTER and EXP sidechain HP/LP prompts for consistent Hz/kHz entry.
 - Added per-loader external `SIDECHAIN` drive modulation with `SMOOTH` / `TONE` prompt.
+- Added measured static level calibration across the saturation models, including `CLIPPER`, for more consistent output at hot input levels.
