@@ -2456,6 +2456,102 @@ inline float getDiodeLevelTrim (float drive, float girth, float mod, int seriesC
     return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
 }
 
+inline float getClipperLevelCorrection (float drive, float girth, float mod, int seriesCount) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float m = detail::clampF (mod, 0.0f, 1.0f);
+    const int seriesIndex = juce::jlimit (1, kMaxSeries, seriesCount) - 1;
+
+    static constexpr float trims[4][3][3][5] =
+    {
+        {
+            {
+                { 1.1947f, 1.0844f, 0.9598f, 0.8698f, 0.8194f },
+                { 1.4078f, 1.2698f, 1.1015f, 0.9591f, 0.9067f },
+                { 1.1973f, 1.1136f, 0.9961f, 0.8773f, 0.8273f },
+            },
+            {
+                { 1.1257f, 1.0160f, 0.9191f, 0.8560f, 0.8145f },
+                { 1.3509f, 1.1967f, 1.0350f, 0.9401f, 0.9018f },
+                { 1.1605f, 1.0632f, 0.9437f, 0.8600f, 0.8224f },
+            },
+            {
+                { 1.1040f, 0.9803f, 0.9068f, 0.8511f, 0.8127f },
+                { 1.3488f, 1.1747f, 1.0087f, 0.9337f, 0.9001f },
+                { 1.1595f, 1.0510f, 0.9192f, 0.8541f, 0.8206f },
+            },
+        },
+        {
+            {
+                { 1.3685f, 1.1336f, 0.9154f, 0.8092f, 0.7848f },
+                { 1.9093f, 1.5390f, 1.1710f, 0.9515f, 0.8880f },
+                { 1.4052f, 1.2139f, 0.9844f, 0.8123f, 0.7752f },
+            },
+            {
+                { 1.2469f, 1.0163f, 0.8622f, 0.8028f, 0.7837f },
+                { 1.8220f, 1.4076f, 1.0570f, 0.9240f, 0.8822f },
+                { 1.3456f, 1.1227f, 0.9007f, 0.7970f, 0.7729f },
+            },
+            {
+                { 1.2189f, 0.9581f, 0.8544f, 0.8009f, 0.7834f },
+                { 1.8192f, 1.3800f, 1.0187f, 0.9135f, 0.8804f },
+                { 1.3445f, 1.1046f, 0.8708f, 0.7931f, 0.7722f },
+            },
+        },
+        {
+            {
+                { 1.5370f, 1.1649f, 0.8800f, 0.7844f, 0.7817f },
+                { 2.5751f, 1.8311f, 1.2350f, 0.9764f, 0.8893f },
+                { 1.6344f, 1.3069f, 0.9715f, 0.7797f, 0.7618f },
+            },
+            {
+                { 1.3767f, 1.0108f, 0.8277f, 0.7810f, 0.7816f },
+                { 2.4575f, 1.6535f, 1.0845f, 0.9439f, 0.8806f },
+                { 1.5603f, 1.1819f, 0.8695f, 0.7665f, 0.7610f },
+            },
+            {
+                { 1.3457f, 0.9394f, 0.8226f, 0.7800f, 0.7815f },
+                { 2.4537f, 1.6212f, 1.0381f, 0.9297f, 0.8777f },
+                { 1.5590f, 1.1610f, 0.8376f, 0.7639f, 0.7608f },
+            },
+        },
+        {
+            {
+                { 1.7088f, 1.1851f, 0.8540f, 0.7750f, 0.7811f },
+                { 3.4730f, 2.1560f, 1.2804f, 0.9844f, 0.8924f },
+                { 1.8955f, 1.3964f, 0.9611f, 0.7633f, 0.7596f },
+            },
+            {
+                { 1.5199f, 1.0029f, 0.8053f, 0.7728f, 0.7808f },
+                { 3.3146f, 1.9424f, 1.1022f, 0.9508f, 0.8813f },
+                { 1.8092f, 1.2427f, 0.8479f, 0.7513f, 0.7593f },
+            },
+            {
+                { 1.4857f, 0.9233f, 0.8015f, 0.7722f, 0.7807f },
+                { 3.3095f, 1.9045f, 1.0515f, 0.9344f, 0.8771f },
+                { 1.8077f, 1.2202f, 0.8132f, 0.7493f, 0.7592f },
+            },
+        },
+    };
+
+    auto interpDrive = [d] (const float (&v)[5]) noexcept
+    {
+        return detail::interpDrive5 (d, v[0], v[1], v[2], v[3], v[4]);
+    };
+
+    float charTrim[3];
+    for (int charIndex = 0; charIndex < 3; ++charIndex)
+    {
+        const float trimType0 = interpDrive (trims[seriesIndex][charIndex][0]);
+        const float trimType1 = interpDrive (trims[seriesIndex][charIndex][1]);
+        const float trimType2 = interpDrive (trims[seriesIndex][charIndex][2]);
+        charTrim[charIndex] = detail::morphThreeWay (m, trimType0, trimType1, trimType2);
+    }
+
+    return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
+}
+
 inline float getHotInputReferenceCorrection (Model model, float drive, float girth,
                                              float mod, int seriesCount) noexcept
 {
@@ -4551,6 +4647,8 @@ inline void processBlock (State& state,
                     else if (model == Model::Diode)
                         x *= getDiodeLevelTrim (detailDrive, girth, mod, state.currentSeriesCount)
                            * getHotInputReferenceCorrection (model, detailDrive, girth, mod, state.currentSeriesCount);
+                    else if (model == Model::Clipper)
+                        x *= getClipperLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount);
                 }
 
                 // -- Final safety soft-limiter --

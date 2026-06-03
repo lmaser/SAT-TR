@@ -145,7 +145,8 @@ int main()
         { SatEngine::Model::Tape, "Tape" },
         { SatEngine::Model::Tube, "Tube" },
         { SatEngine::Model::Transistor, "Transistor" },
-        { SatEngine::Model::Diode, "Diode" }
+        { SatEngine::Model::Diode, "Diode" },
+        { SatEngine::Model::Clipper, "Clipper" }
     };
 
     const float drives[] = { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f };
