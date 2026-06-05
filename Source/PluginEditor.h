@@ -359,7 +359,7 @@ private:
 	// ══════════════════════════════════════════════════════════════
 	//  UI Components — Loader A
 	// ══════════════════════════════════════════════════════════════
-	juce::ToggleButton enableButtonA;
+	PromptToggleButton enableButtonA;
 
 	BarSlider hpFreqSliderA;
 	BarSlider lpFreqSliderA;
@@ -373,7 +373,7 @@ private:
 	BarSlider fredSliderA;
 	BarSlider posSliderA;
 
-	juce::ToggleButton invButtonA;
+	PromptToggleButton invButtonA;
 	PromptToggleButton chaosButtonA;
 	PromptToggleButton chaosFilterButtonA;
 	PromptToggleButton sidechainButtonA;
@@ -416,7 +416,7 @@ private:
 	BarSlider satBiasSliderA;
 	BarSlider satSagSliderA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> satTypeAttachA;
-	juce::ToggleButton rawButtonA;
+	PromptToggleButton rawButtonA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> rawAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satDriveAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satCharAttachA;
@@ -429,7 +429,7 @@ private:
 	// ══════════════════════════════════════════════════════════════
 	//  UI Components — Loader B
 	// ══════════════════════════════════════════════════════════════
-	juce::ToggleButton enableButtonB;
+	PromptToggleButton enableButtonB;
 
 	BarSlider hpFreqSliderB;
 	BarSlider lpFreqSliderB;
@@ -443,7 +443,7 @@ private:
 	BarSlider fredSliderB;
 	BarSlider posSliderB;
 
-	juce::ToggleButton invButtonB;
+	PromptToggleButton invButtonB;
 	PromptToggleButton chaosButtonB;
 	PromptToggleButton chaosFilterButtonB;
 	PromptToggleButton sidechainButtonB;
@@ -486,7 +486,7 @@ private:
 	BarSlider satBiasSliderB;
 	BarSlider satSagSliderB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> satTypeAttachB;
-	juce::ToggleButton rawButtonB;
+	PromptToggleButton rawButtonB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> rawAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satDriveAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satCharAttachB;
@@ -499,7 +499,7 @@ private:
 	// ══════════════════════════════════════════════════════════════
 	//  UI Components — Loader C
 	// ══════════════════════════════════════════════════════════════
-	juce::ToggleButton enableButtonC;
+	PromptToggleButton enableButtonC;
 
 	BarSlider hpFreqSliderC;
 	BarSlider lpFreqSliderC;
@@ -513,7 +513,7 @@ private:
 	BarSlider fredSliderC;
 	BarSlider posSliderC;
 
-	juce::ToggleButton invButtonC;
+	PromptToggleButton invButtonC;
 	PromptToggleButton chaosButtonC;
 	PromptToggleButton chaosFilterButtonC;
 	PromptToggleButton sidechainButtonC;
@@ -556,7 +556,7 @@ private:
 	BarSlider satBiasSliderC;
 	BarSlider satSagSliderC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> satTypeAttachC;
-	juce::ToggleButton rawButtonC;
+	PromptToggleButton rawButtonC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> rawAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satDriveAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satCharAttachC;
@@ -632,7 +632,7 @@ private:
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> limThresholdAttach;
 
 	// Auto-align
-	juce::ToggleButton alignButton;
+	PromptToggleButton alignButton;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAttach;
 
 	// ══════════════════════════════════════════════════════════════

@@ -4682,13 +4682,13 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	aw->addAndMakeVisible (lpBar);
 
 	// HP on/off toggle
-	auto* hpToggle = new juce::ToggleButton ("");
+	auto* hpToggle = new PromptToggleButton ("");
 	hpToggle->setToggleState (hpOn, juce::dontSendNotification);
 	hpToggle->setLookAndFeel (&lnf);
 	aw->addAndMakeVisible (hpToggle);
 
 	// LP on/off toggle
-	auto* lpToggle = new juce::ToggleButton ("");
+	auto* lpToggle = new PromptToggleButton ("");
 	lpToggle->setToggleState (lpOn, juce::dontSendNotification);
 	lpToggle->setLookAndFeel (&lnf);
 	aw->addAndMakeVisible (lpToggle);
@@ -4836,8 +4836,10 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 		std::function<juce::String (int)> toText;
 		std::function<void()> push;
 		std::shared_ptr<std::function<void()>> layout;
-		void mouseDown (const juce::MouseEvent&) override
+		void mouseDown (const juce::MouseEvent& e) override
 		{
+			if (e.mods.isPopupMenu())
+				return;
 			*val = (*val + 1) % 3;
 			label->setText (toText (*val), juce::dontSendNotification);
 			push();
@@ -4939,9 +4941,9 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 	struct ToggleForwarder : public juce::MouseListener
 	{
 		juce::ToggleButton* toggle = nullptr;
-		void mouseDown (const juce::MouseEvent&) override
+		void mouseDown (const juce::MouseEvent& e) override
 		{
-			if (toggle != nullptr)
+			if (! e.mods.isPopupMenu() && toggle != nullptr)
 				toggle->setToggleState (! toggle->getToggleState(), juce::sendNotification);
 		}
 	};
@@ -6295,12 +6297,12 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	scFilterLabel->setFont (f);
 	bodyContent->addAndMakeVisible (scFilterLabel);
 
-	auto* scHpToggle = new juce::ToggleButton ("");
+	auto* scHpToggle = new PromptToggleButton ("");
 	scHpToggle->setToggleState (currentScHpOn, juce::dontSendNotification);
 	scHpToggle->setLookAndFeel (&lnf);
 	bodyContent->addAndMakeVisible (scHpToggle);
 
-	auto* scLpToggle = new juce::ToggleButton ("");
+	auto* scLpToggle = new PromptToggleButton ("");
 	scLpToggle->setToggleState (currentScLpOn, juce::dontSendNotification);
 	scLpToggle->setLookAndFeel (&lnf);
 	bodyContent->addAndMakeVisible (scLpToggle);
@@ -6500,8 +6502,10 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		juce::Label* label = nullptr;
 		std::shared_ptr<bool> state;
 		juce::RangedAudioParameter* param = nullptr;
-		void mouseDown (const juce::MouseEvent&) override
+		void mouseDown (const juce::MouseEvent& e) override
 		{
+			if (e.mods.isPopupMenu())
+				return;
 			*state = !(*state);
 			label->setText (*state ? "POST" : "PRE", juce::dontSendNotification);
 			if (param != nullptr) param->setValueNotifyingHost (*state ? 1.0f : 0.0f);
@@ -6516,9 +6520,9 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 	struct ToggleLabelForwarder : public juce::MouseListener
 	{
 		juce::ToggleButton* toggle = nullptr;
-		void mouseDown (const juce::MouseEvent&) override
+		void mouseDown (const juce::MouseEvent& e) override
 		{
-			if (toggle != nullptr)
+			if (! e.mods.isPopupMenu() && toggle != nullptr)
 			{
 				toggle->setToggleState (! toggle->getToggleState(), juce::dontSendNotification);
 				if (toggle->onClick)
@@ -6549,8 +6553,10 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 		std::shared_ptr<int> state;
 		juce::Label* label = nullptr;
 		juce::RangedAudioParameter* param = nullptr;
-		void mouseDown (const juce::MouseEvent&) override
+		void mouseDown (const juce::MouseEvent& e) override
 		{
+			if (e.mods.isPopupMenu())
+				return;
 			*state = (*state + 1) % 3;
 			if (label != nullptr)
 				label->setText (filterSlopeToText (*state), juce::dontSendNotification);
@@ -7491,13 +7497,13 @@ void SATTRAudioProcessorEditor::openGraphicsPopup()
 		return label;
 	};
 
-	auto* defaultToggle = new juce::ToggleButton ("");
+	auto* defaultToggle = new PromptToggleButton ("");
 	defaultToggle->setComponentID ("paletteDefaultToggle");
 	aw->addAndMakeVisible (defaultToggle);
 
 	auto* defaultLabel = addPopupLabel ("paletteDefaultLabel", "DFLT", labelFont);
 
-	auto* customToggle = new juce::ToggleButton ("");
+	auto* customToggle = new PromptToggleButton ("");
 	customToggle->setComponentID ("paletteCustomToggle");
 	aw->addAndMakeVisible (customToggle);
 
@@ -7520,7 +7526,7 @@ void SATTRAudioProcessorEditor::openGraphicsPopup()
 		aw->addAndMakeVisible (custom);
 	}
 
-	auto* fxToggle = new juce::ToggleButton ("");
+	auto* fxToggle = new PromptToggleButton ("");
 	fxToggle->setComponentID ("fxToggle");
 	fxToggle->setToggleState (crtEnabled, juce::dontSendNotification);
 	fxToggle->onClick = [safeThis, fxToggle]()

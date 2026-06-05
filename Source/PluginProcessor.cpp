@@ -2968,9 +2968,15 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	if (model != SatEngine::Model::Clean)
 	{
 		constexpr float kSidechainPreDriveMaxDb = 24.0f;
+		constexpr float kSidechainDriveBoostMax = 0.0f; //0.33f;
+		const float sidechainDriveAmount = sidechainEnabled
+			? juce::jlimit (0.0f, 1.0f, sidechainDriveAmount_[loaderIndex])
+			: 0.0f;
 		const float sidechainPreGain = sidechainEnabled
-			? fastDecibelsToGain (juce::jlimit (0.0f, 1.0f, sidechainDriveAmount_[loaderIndex]) * kSidechainPreDriveMaxDb)
+			? fastDecibelsToGain (sidechainDriveAmount * kSidechainPreDriveMaxDb)
 			: 1.0f;
+		const float effectiveSatDrive = juce::jlimit (kSatDriveMin, kSatDriveMax,
+			satDrive + sidechainDriveAmount * kSidechainDriveBoostMax);
 		if (std::abs (sidechainPreGain - state.lastSidechainPreGain) > 1.0e-5f
 		 || std::abs (sidechainPreGain - 1.0f) > 1.0e-5f)
 		{
@@ -3002,7 +3008,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			const float osSr = (float) currentSampleRate * (float) os.getOversamplingFactor();
 
 			SatEngine::processBlock (state.satState, osL, osR, osNumSamples,
-			                         model, satDrive, satChar, satTypeCtrl, satBias, satSag, satDetail,
+			                         model, effectiveSatDrive, satChar, satTypeCtrl, satBias, satSag, satDetail,
 			                         instabilityAmt, osSr, seriesCount, false, satRaw, diagCollectorPtr);
 
 			os.processSamplesDown (block);
@@ -3013,7 +3019,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			float* dataR = numChannels > 1 ? buffer.getWritePointer (1) : dataL;
 
 			SatEngine::processBlock (state.satState, dataL, dataR, numSamples,
-			                         model, satDrive, satChar, satTypeCtrl, satBias, satSag, satDetail, instabilityAmt,
+			                         model, effectiveSatDrive, satChar, satTypeCtrl, satBias, satSag, satDetail, instabilityAmt,
 			                         (float) currentSampleRate, seriesCount, true, satRaw, diagCollectorPtr);
 		}
 
