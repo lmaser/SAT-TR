@@ -1111,6 +1111,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 		const float sr = static_cast<float> (sampleRate);
 		cachedTiltSmoothCoeff_ = 1.0f - std::exp (-1.0f / (sr * 0.03f));
 		cachedDcBlockR_        = 1.0f - (juce::MathConstants<float>::twoPi * 5.0f / sr);
+		cachedOutputDcBlockR_  = 1.0f - (juce::MathConstants<float>::twoPi * 2.0f / sr);
 		// NORM AGC: per-block coefficients depend on numSamples, but the base tau is fixed.
 		// We store the per-sample versions; processBlock scales by numSamples.
 		cachedNormFastCoeff_   = 1.0f - std::exp (-1.0f / (sr * 0.01f)); // 10ms ramp-down
@@ -1380,9 +1381,6 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 	const auto satTypeA = static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeA));
 	const auto satTypeB = static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeB));
 	const auto satTypeC = static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeC));
-	const bool satRawA = loadRelaxedBool (pSatRawA);
-	const bool satRawB = loadRelaxedBool (pSatRawB);
-	const bool satRawC = loadRelaxedBool (pSatRawC);
 	const bool sidechainA = activeA && loadRelaxedBool (pSidechainA);
 	const bool sidechainB = activeB && loadRelaxedBool (pSidechainB);
 	const bool sidechainC = activeC && loadRelaxedBool (pSidechainC);
@@ -2108,14 +2106,9 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 			(activeA && mixA > 0.001f && satTypeA != SatEngine::Model::Clean) ||
 			(activeB && mixB > 0.001f && satTypeB != SatEngine::Model::Clean) ||
 			(activeC && mixC > 0.001f && satTypeC != SatEngine::Model::Clean);
-		const bool wetAllRaw =
-			(!activeA || mixA <= 0.001f || satTypeA == SatEngine::Model::Clean || satRawA) &&
-			(!activeB || mixB <= 0.001f || satTypeB == SatEngine::Model::Clean || satRawB) &&
-			(!activeC || mixC <= 0.001f || satTypeC == SatEngine::Model::Clean || satRawC);
-
-		if (wetAudible && wetHasSaturation && !wetAllRaw)
+		if (wetAudible && wetHasSaturation)
 		{
-			const float R = cachedDcBlockR_;
+			const float R = cachedOutputDcBlockR_;
 			for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 			{
 				auto* data = buffer.getWritePointer (ch);
