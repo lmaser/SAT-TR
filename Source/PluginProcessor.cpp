@@ -3033,7 +3033,6 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 		// clean here. Re-entering a nonlinear model will then reset model
 		// memory instead of resuming stale Tube/Instability state.
 		state.satState.lastModel = SatEngine::Model::Clean;
-		state.satState.instabilitySignalEnv = 0.0f;
 	}
 
 	// -- POST-saturation: apply tilt/filter if not already applied --

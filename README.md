@@ -80,7 +80,7 @@ Model-specific voicing or topology morph:
 Operating-point or asymmetry control, depending on the model:
 
 - **BIAS**: stage bias / operating point
-- **SYM**: positive/negative clipping symmetry
+- **SYM**: positive/negative clipping symmetry; `DIODE` uses an extended internal symmetry range for stronger diode-branch mismatch at the extremes
 
 #### DYN / COMP / SAG / PEAK
 
@@ -109,7 +109,7 @@ the saturation models after the internal `SERIES` stack and remains inactive in
 
 #### Instability (0-100%)
 
-Analog-style tolerance / drift control. Adds deterministic per-instance spread, slow thermal movement, and smoothed micro-irregularity on gain, bias, shape, and channel asymmetry. Lower settings stay subtle; higher settings increase the instability ceiling for a more clearly unstable analog unit without turning into tempo-style modulation.
+Analog-style tolerance / drift control. Adds deterministic per-instance spread and slow continuous thermal movement. Lower settings stay subtle; higher settings increase the instability ceiling for a more clearly unstable analog unit without turning into tempo-style modulation. In `TUBE`, instability is kept out of the bias-sensitive core operating point and applied after the tube coupling/DC path for safer high-bias behavior.
 
 #### RAW
 
@@ -293,7 +293,7 @@ Practical note:
 - **Tube SAG**: reactive supply/sag behavior with short strike tracking plus longer bloom memory for time-dependent recovery.
 - **Detail**: high-passed clipped-residual sidechain path for detail-preserving saturation, with extra sidechain air emphasis above 50%, shared by the saturation models.
 - **External Sidechain**: optional per-loader sidechain detector with `SMOOTH` and `TONE` controls, used to modulate saturation drive amount without mixing sidechain audio into the output.
-- **Instability**: deterministic component spread plus slow drift, with smoothed gain/bias/shape/asymmetry micro-irregularity and a stronger calibrated ceiling at high settings.
+- **Instability**: deterministic component spread plus slow continuous drift, with Tube handled through a bias-safe post-coupling path and a stronger calibrated ceiling at high settings.
 - **Oversampling**: global `x1` to `x16`, with latency reported to the host.
 - **Filters**: per-loader HP/LP plus tilt filtering with pre/post routing options.
 - **Alignment**: synthetic probe analysis used to estimate per-loader compensation delay and invert state.
@@ -320,7 +320,8 @@ Practical note:
 
 - Refined model-specific dynamics, including Tube SAG bloom/recovery and COMP behavior in compression-based models.
 - Added `DETAIL` clipped-detail preservation for the saturation models.
-- Refined `Instability` behavior with deterministic analog spread, slow drift, smoothed gain/bias/shape/asymmetry micro-irregularity, and a stronger calibrated high-range ceiling.
+- Refined `Instability` behavior with deterministic analog spread, slow continuous drift, Tube-safe post-coupling handling, and a stronger calibrated high-range ceiling.
+- Extended `DIODE` `SYM` response internally for stronger positive/negative clipping asymmetry at the extremes.
 - Added/maintained consistent -INF to +24 dB gain fader behavior with 0 dB centered.
 - Optimized global/per-loader dry-wet mix paths and stable delay processing without changing the intended audio behavior.
 - Optimized Tube bloom memory updates for lower CPU during SAG-heavy use.

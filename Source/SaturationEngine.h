@@ -11,7 +11,7 @@
 //    ADAA (1st-order antiderivative anti-aliasing)
 //    REACT (Airwindows-inspired energy tracking -> parameter modulation)
 //    CHAR (post-waveshaper wavefolding + sharpen)
-//    Instability (analog drift via Hermite S&H)
+//    Instability (component tolerance + slow continuous thermal drift)
 //    MOD (input-domain power warp + model-specific secondary)
 //    Internal emphasis / de-emphasis EQ per model
 //    Safety LPF for x1 (no oversampling) mode
@@ -510,14 +510,15 @@ struct MultibandSagResult
 
 struct DynamicsCompState
 {
-    float scLP  = 0.0f;
-    float env   = 0.0f;
-    float hfEnv = 0.0f;
-    float gain  = 1.0f;
+    float scLP    = 0.0f;
+    float env     = 0.0f;
+    float hfEnv   = 0.0f;
+    float bodyEnv = 0.0f;
+    float gain    = 1.0f;
 
     void reset() noexcept
     {
-        scLP = env = hfEnv = 0.0f;
+        scLP = env = hfEnv = bodyEnv = 0.0f;
         gain = 1.0f;
     }
 };
@@ -672,7 +673,6 @@ inline MultibandSagResult multibandReactProcess (
 //  Instability -- analog component tolerance + slow thermal drift
 //  Static tolerance (dominant): per-instance hash -> fixed offset
 //  Thermal drift: 3 incommensurate sub-Hz sines
-//  Micro-wander: very small high-range movement for extra analog instability
 // ----------------------------------------------------------------
 struct DriftOsc
 {
@@ -716,151 +716,23 @@ struct DriftOsc
     void reset() noexcept { phase1 = phase2 = phase3 = 0.0f; dynamic = 0.0f; output = 0.0f; }
 };
 
-struct MicroWanderOsc
-{
-    float phase1 = 0.0f;
-    float phase2 = 0.0f;
-    float basePhase1 = 0.0f;
-    float basePhase2 = 0.0f;
-    float output = 0.0f;
-
-    void initPhase (uint32_t seed, int paramIdx) noexcept
-    {
-        uint32_t h = seed ^ (uint32_t (paramIdx) * 2246822519u);
-        h = ((h >> 15) ^ h) * 0x2c1b3c6du;
-        h = ((h >> 12) ^ h) * 0x297a2d39u;
-        h = (h >> 15) ^ h;
-
-        basePhase1 = float (h & 0xFFFFu) / 65536.0f;
-        basePhase2 = float ((h >> 16) & 0xFFFFu) / 65536.0f;
-        phase1 = basePhase1;
-        phase2 = basePhase2;
-    }
-
-    void advance (float rate, float depth, float sampleRate) noexcept
-    {
-        const float sr = juce::jmax (1.0f, sampleRate);
-        phase1 += rate / sr;
-        phase2 += rate * 1.618034f / sr;
-
-        if (phase1 >= 1.0f) phase1 -= std::floor (phase1);
-        if (phase2 >= 1.0f) phase2 -= std::floor (phase2);
-
-        const float wander = std::sin (phase1 * kTwoPi) * 0.6f
-                           + std::sin (phase2 * kTwoPi) * 0.4f;
-        output = wander * depth;
-    }
-
-    void reset() noexcept
-    {
-        phase1 = basePhase1;
-        phase2 = basePhase2;
-        output = 0.0f;
-    }
-};
-
-struct SmoothSampleHoldOsc
-{
-    float curr = 0.0f;
-    float next = 0.0f;
-    float phase = 0.0f;
-    float output = 0.0f;
-    uint32_t baseSeed = 1u;
-    uint32_t state = 1u;
-
-    static uint32_t scramble (uint32_t v) noexcept
-    {
-        v ^= v >> 16;
-        v *= 0x7feb352du;
-        v ^= v >> 15;
-        v *= 0x846ca68bu;
-        v ^= v >> 16;
-        return v == 0u ? 1u : v;
-    }
-
-    static float toBipolar (uint32_t v) noexcept
-    {
-        return (float ((scramble (v) >> 8) & 0x00FFFFFFu) * (2.0f / 16777216.0f)) - 1.0f;
-    }
-
-    uint32_t nextHash() noexcept
-    {
-        state = state * 1664525u + 1013904223u;
-        return scramble (state);
-    }
-
-    void initSeed (uint32_t seed, int paramIdx) noexcept
-    {
-        baseSeed = scramble (seed ^ (uint32_t (paramIdx) * 3266489917u));
-        reset();
-    }
-
-    void reset() noexcept
-    {
-        state = baseSeed;
-        phase = 0.0f;
-        curr = toBipolar (nextHash());
-        next = toBipolar (nextHash());
-        output = curr;
-    }
-
-    void advance (float rate, float depth, float sampleRate) noexcept
-    {
-        const float sr = juce::jmax (1.0f, sampleRate);
-        phase += juce::jmax (0.0f, rate) / sr;
-
-        while (phase >= 1.0f)
-        {
-            phase -= 1.0f;
-            curr = next;
-            next = toBipolar (nextHash());
-        }
-
-        const float t = juce::jlimit (0.0f, 1.0f, phase);
-        const float t2 = t * t;
-        const float t3 = t2 * t;
-        const float smooth = t3 * (t * (t * 6.0f - 15.0f) + 10.0f);
-        output = (curr + (next - curr) * smooth) * depth;
-    }
-};
-
 struct InstabilityState
 {
     DriftOsc gainDrift;
-    DriftOsc biasDrift;
     DriftOsc shapeDrift;
-    DriftOsc asymDrift;
-    SmoothSampleHoldOsc gainSH;
-    SmoothSampleHoldOsc shapeSH;
-    MicroWanderOsc driveWander;
-    MicroWanderOsc shapeWander;
-    float shMix = 0.0f;
     bool     tolerancesReady = false;
 
     void initTolerances (uint32_t seed) noexcept
     {
         gainDrift.initTolerance  (seed, 0);
-        biasDrift.initTolerance  (seed, 1);
         shapeDrift.initTolerance (seed, 2);
-        asymDrift.initTolerance  (seed, 3);
-        gainSH.initSeed          (seed, 6);
-        shapeSH.initSeed         (seed, 8);
-        driveWander.initPhase    (seed, 4);
-        shapeWander.initPhase    (seed, 5);
         tolerancesReady = true;
     }
 
     void reset() noexcept
     {
         gainDrift.reset();
-        biasDrift.reset();
         shapeDrift.reset();
-        asymDrift.reset();
-        gainSH.reset();
-        shapeSH.reset();
-        driveWander.reset();
-        shapeWander.reset();
-        shMix = 0.0f;
     }
 };
 
@@ -942,6 +814,7 @@ struct State
     float tapeStressEnv[kMaxSeries][2] = {}; // high-level magnetic stress / drag
     float triodeBodyPreLP[kMaxSeries][2] = {};
     float triodeBodyPostLP[kMaxSeries][2] = {};
+    float triodeCouplingDc[kMaxSeries][2] = {};
 
     // Internal emphasis/de-emphasis (per-stage / per-channel)
     EmphasisState emphasis[kMaxSeries][2];
@@ -962,7 +835,6 @@ struct State
     // Instability drift
     InstabilityState instability;
     uint32_t instabilitySeed = 0;
-    float instabilitySignalEnv = 0.0f;
 
     // Multiband REACT (per-stage / per-channel)
     MultibandReactState mbReact[kMaxSeries][2];
@@ -1041,6 +913,7 @@ struct State
                 tapeStressEnv[sp][ch] = 0.0f;
                 triodeBodyPreLP[sp][ch] = 0.0f;
                 triodeBodyPostLP[sp][ch] = 0.0f;
+                triodeCouplingDc[sp][ch] = 0.0f;
                 triodeAdaa[sp][ch].reset();
                 transistorCoreAdaa[sp][ch].reset();
                 tapeAdaa[sp][ch].reset();
@@ -1068,7 +941,6 @@ struct State
         currentSeriesCount = 1;
         lastModel = Model::Clean;
         instability.reset();
-        instabilitySignalEnv = 0.0f;
         sDrive = sDetailDrive = sGirth = sBias = sReact = sMod = sDetail = sInstability = 0.0f;
         lastTapeDrive = 0.0f;
         tapeWasActive = false;
@@ -1151,9 +1023,9 @@ struct State
                 fl (tapeStressEnv[sp][ch]);
                 fl (triodeBodyPreLP[sp][ch]);
                 fl (triodeBodyPostLP[sp][ch]);
+                fl (triodeCouplingDc[sp][ch]);
             }
         }
-        fl (instabilitySignalEnv);
     }
 };
 
@@ -1465,19 +1337,28 @@ inline DynamicsCompResult processTapeComp (float x, DynamicsCompState& st,
                       + highDet * highDet * highWeight;
     const float detector = std::sqrt (std::max (detSq, 0.0f) + 1.0e-12f);
 
-    const float attackHz  = 55.0f + react * 180.0f + drive * 70.0f;
-    const float releaseHz = 1.9f + program * (3.5f + react * 6.0f);
+    const float optoAmount = detail::smoothStep01 (react);
+    const float attackHz  = 18.0f + optoAmount * 38.0f + drive * 14.0f;
+    const float fastReleaseHz = 2.1f + program * (1.3f + react * 1.6f);
+    const float slowReleaseHz = 0.16f + react * 0.16f + program * 0.26f;
     const float atk = detail::onePoleCoeff (attackHz, sr);
-    const float rel = detail::onePoleCoeff (releaseHz, sr);
+    const float rel = detail::onePoleCoeff (fastReleaseHz, sr);
 
     if (detector > st.env)
         st.env += (detector - st.env) * atk;
     else
         st.env += (detector - st.env) * rel;
 
+    const float bodyAtk = detail::onePoleCoeff (6.0f + react * 10.0f, sr);
+    const float bodyRel = detail::onePoleCoeff (slowReleaseHz, sr);
+    if (detector > st.bodyEnv)
+        st.bodyEnv += (detector - st.bodyEnv) * bodyAtk;
+    else
+        st.bodyEnv += (detector - st.bodyEnv) * bodyRel;
+
     const float hfDet = highDet * (1.0f + react * 1.2f);
-    const float hfAtk = std::min (1.0f, atk * 1.35f);
-    const float hfRel = detail::onePoleCoeff (releaseHz * 1.7f + 1.0f, sr);
+    const float hfAtk = detail::onePoleCoeff (80.0f + react * 190.0f + drive * 45.0f, sr);
+    const float hfRel = detail::onePoleCoeff (2.4f + react * 4.8f + program * 3.2f, sr);
     if (hfDet > st.hfEnv)
         st.hfEnv += (hfDet - st.hfEnv) * hfAtk;
     else
@@ -1485,9 +1366,14 @@ inline DynamicsCompResult processTapeComp (float x, DynamicsCompState& st,
 
     const float threshold = juce::jmap (react, 0.34f, 0.14f)
                           * juce::jmap (drive, 1.04f, 0.90f);
-    const float ratio = juce::jmap (react, 1.25f, 3.8f);
-    const float over = st.env / std::max (threshold, 1.0e-4f);
-    const float knee = detail::smoothStep01 ((over - 0.85f) / 0.75f);
+    const float ratio = juce::jmap (optoAmount, 1.18f, 3.2f);
+    const float bodyRef = st.bodyEnv * (0.92f + program * 0.06f);
+    const float transient = std::max (0.0f, st.env - bodyRef);
+    const float transientNorm = detail::smoothStep01 (transient / std::max (st.env + 1.0e-4f, 1.0e-4f));
+    const float programBlend = juce::jlimit (0.0f, 0.86f, 0.35f + transientNorm * 0.40f + optoAmount * 0.10f);
+    const float programEnv = st.bodyEnv + (st.env - st.bodyEnv) * programBlend;
+    const float over = programEnv / std::max (threshold, 1.0e-4f);
+    const float knee = detail::smoothStep01 ((over - 0.78f) / 0.92f);
 
     float compGain = 1.0f;
     if (over > 1.0f)
@@ -1502,10 +1388,12 @@ inline DynamicsCompResult processTapeComp (float x, DynamicsCompState& st,
     hfGain = juce::jlimit (0.46f, 1.0f, juce::jmap (hfKnee, 1.0f, hfGain));
 
     const float makeup = 1.0f + (1.0f - compGain)
-                                   * (0.08f + 0.10f * program + 0.05f * react);
+                                   * (0.05f + 0.06f * program + 0.04f * react);
     const float targetGain = juce::jlimit (0.35f, 1.0f, compGain * makeup);
-    const float gainAtk = detail::onePoleCoeff (90.0f + react * 170.0f, sr);
-    const float gainRel = detail::onePoleCoeff (4.0f + program * (4.0f + react * 5.0f), sr);
+    const float gainAtk = detail::onePoleCoeff (22.0f + react * 58.0f, sr);
+    const float gainReleaseHz = slowReleaseHz + (fastReleaseHz - slowReleaseHz)
+                              * (0.30f + transientNorm * 0.42f + program * 0.12f);
+    const float gainRel = detail::onePoleCoeff (gainReleaseHz, sr);
 
     if (targetGain < st.gain)
         st.gain += (targetGain - st.gain) * gainAtk;
@@ -1513,7 +1401,7 @@ inline DynamicsCompResult processTapeComp (float x, DynamicsCompState& st,
         st.gain += (targetGain - st.gain) * gainRel;
 
     r.sample = (low + high * hfGain) * st.gain;
-    r.driveLift = 1.0f + (1.0f - compGain) * react * (0.06f + 0.06f * program);
+    r.driveLift = 1.0f + (1.0f - compGain) * react * (0.04f + 0.04f * program);
     r.amount = 1.0f - compGain;
     return r;
 }
@@ -1599,42 +1487,67 @@ inline DynamicsCompResult processTransistorComp (float x, DynamicsCompState& st,
     const float detectorTilt = juce::jmap (type, 1.05f, 1.10f);
     const float detector = det * detectorTilt;
 
+    const float allButtons = detail::smoothStep01 ((react - 0.82f) / 0.18f) * type;
     const float attackHz = juce::jmap (type,
-                                       1200.0f + react * 2500.0f,
-                                       1350.0f + react * 2800.0f);
-    const float releaseHz = juce::jmap (type,
-                                        1.8f + react * 6.8f,
-                                        1.9f + react * 7.4f)
-                          + detector * juce::jmap (type, 2.8f, 3.2f);
+                                       1150.0f + react * 2500.0f,
+                                       1350.0f + react * 3000.0f)
+                         * (1.0f + allButtons * 0.12f);
+    const float releaseFastHz = juce::jmap (type,
+                                            1.45f + react * 5.2f,
+                                            1.65f + react * 6.2f)
+                              + detector * juce::jmap (type, 1.8f, 2.3f);
+    const float releaseSlowHz = juce::jmap (type,
+                                            0.58f + react * 1.35f,
+                                            0.72f + react * 1.65f);
     const float atk = detail::onePoleCoeff (attackHz, sr);
-    const float rel = detail::onePoleCoeff (releaseHz, sr);
+    const float rel = detail::onePoleCoeff (releaseFastHz, sr);
 
     if (detector > st.env)
         st.env += (detector - st.env) * atk;
     else
         st.env += (detector - st.env) * rel;
 
+    const float bodyAtk = detail::onePoleCoeff (28.0f + react * 72.0f, sr);
+    const float bodyRel = detail::onePoleCoeff (releaseSlowHz, sr);
+    if (detector > st.hfEnv)
+        st.hfEnv += (detector - st.hfEnv) * bodyAtk;
+    else
+        st.hfEnv += (detector - st.hfEnv) * bodyRel;
+
     const float threshold = juce::jmap (type,
                                         juce::jmap (react, 0.36f, 0.095f),
                                         juce::jmap (react, 0.35f, 0.090f))
                           * juce::jmap (drive, 1.02f, 0.78f);
-    const float ratio = juce::jmap (type,
-                                    juce::jmap (react, 7.0f, 13.5f),
-                                    juce::jmap (react, 7.5f, 14.0f));
-    const float over = st.env / std::max (threshold, 1.0e-4f);
+    const float ratioNorm = detail::smoothStep01 (react);
+    const float ratioBlackface = 4.0f + ratioNorm * ratioNorm * 8.0f;
+    const float ratioBlueStripe = 4.5f + ratioNorm * ratioNorm * 9.5f;
+    const float baseRatio = juce::jmap (type, ratioBlackface, ratioBlueStripe);
+    const float ratio = juce::jlimit (4.0f, 20.0f, baseRatio + allButtons * 6.0f);
+    const float bodyRef = st.hfEnv * (0.80f + react * 0.16f);
+    const float transient = std::max (0.0f, st.env - bodyRef);
+    const float transientNorm = detail::smoothStep01 (transient / std::max (st.env + 1.0e-4f, 1.0e-4f));
+    const float programBlend = juce::jlimit (0.0f, 1.0f, 0.54f + transientNorm * 0.34f + allButtons * 0.10f);
+    const float programEnv = st.hfEnv + (st.env - st.hfEnv) * programBlend;
+    const float over = programEnv / std::max (threshold, 1.0e-4f);
 
     float compGain = 1.0f;
     if (over > 1.0f)
-        compGain = std::pow (over, -(ratio - 1.0f) / ratio);
+    {
+        const float knee = 0.22f - allButtons * 0.06f;
+        const float kneeBlend = detail::smoothStep01 ((over - 1.0f) / std::max (knee, 1.0e-4f));
+        const float hardGain = std::pow (over, -(ratio - 1.0f) / ratio);
+        compGain = juce::jmap (kneeBlend, 1.0f, hardGain);
+    }
 
-    const float allButtons = detail::smoothStep01 ((react - 0.82f) / 0.18f) * type;
-    compGain *= 1.0f - allButtons * detail::smoothStep01 ((over - 1.0f) / 1.8f) * 0.10f;
+    compGain *= 1.0f - allButtons * detail::smoothStep01 ((over - 1.0f) / 1.6f) * 0.14f;
     compGain = juce::jlimit (0.18f, 1.0f, compGain);
 
     const float makeup = 1.0f + (1.0f - compGain) * juce::jmap (type, 0.00f, 0.02f);
     const float targetGain = juce::jlimit (0.18f, 1.0f, compGain * makeup);
     const float gainAtk = detail::onePoleCoeff (attackHz * juce::jmap (type, 1.35f, 1.55f), sr);
-    const float gainRel = detail::onePoleCoeff (releaseHz, sr);
+    const float gainReleaseHz = releaseSlowHz + (releaseFastHz - releaseSlowHz)
+                              * (0.28f + transientNorm * 0.60f + allButtons * 0.12f);
+    const float gainRel = detail::onePoleCoeff (gainReleaseHz, sr);
 
     if (targetGain < st.gain)
         st.gain += (targetGain - st.gain) * gainAtk;
@@ -1642,7 +1555,6 @@ inline DynamicsCompResult processTransistorComp (float x, DynamicsCompState& st,
         st.gain += (targetGain - st.gain) * gainRel;
 
     st.scLP = detector;
-    st.hfEnv += (detector - st.hfEnv) * detail::onePoleCoeff (releaseHz * 0.7f + 0.5f, sr);
 
     r.sample = x * st.gain;
     r.amount = 1.0f - st.gain;
@@ -3155,8 +3067,6 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     const float b = detail::clampF (bias, -1.0f, 1.0f);
     const float tubeMorph = detail::smoothStep01 (m);
     const float tubeMorph2 = tubeMorph * tubeMorph;
-    const float signalPresence = detail::smoothStep01 (
-        juce::jlimit (0.0f, 1.0f, state.instabilitySignalEnv));
     auto& triodeSag = state.triodeReact[sp][ch];
     auto& bodyPreLp = state.triodeBodyPreLP[sp][ch];
     auto& bodyPostLp = state.triodeBodyPostLP[sp][ch];
@@ -3270,8 +3180,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
                                - supplyCore * 0.040f - burnBiasShift;
     const float stageBiasPower = bEff * 0.028f - sagCore * 0.072f
                                - supplyCore * 0.055f - burnBiasShift * 1.25f;
-    const float stageBias = juce::jmap (tubeMorph, stageBias12AX7, stageBiasPower)
-                          * signalPresence;
+    const float stageBias = juce::jmap (tubeMorph, stageBias12AX7, stageBiasPower);
     const float cathodeDepth12AX7 = bodyCurve * (0.040f + d * 0.050f);
     const float cathodeDepthPower = bodyCurve * (0.026f + d * 0.032f);
     const float cathodeDepth = juce::jmap (tubeMorph, cathodeDepth12AX7, cathodeDepthPower);
@@ -3351,6 +3260,12 @@ inline float processTriode (float x, float drive, float girth, float bias, float
         const float satNorm = detail::normalizeSmallSignal (satRaw, 0.0f, satK * satDrive);
         const float powerMix = tubeMorph * (0.35f + 0.35f * d);
         s = juce::jmap (powerMix, s, satNorm);
+    }
+
+    {
+        float& couplingDc = state.triodeCouplingDc[sp][ch];
+        couplingDc += (s - couplingDc) * detail::onePoleCoeff (2.0f, sr);
+        s -= couplingDc;
     }
 
     if (!rawMode && overallscale > 1.9f)
@@ -3598,6 +3513,7 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
     const float d = detail::clampF (drive, 0.0f, 1.0f);
     const float c = detail::clampF (girth, 0.0f, 1.0f);
     const float s = detail::clampF (bias, -1.0f, 1.0f);
+    const float diodeSym = s * 2.0f;
     const float t = detail::clampF (mod, 0.0f, 1.0f);
 
     const float condCurve = 1.0f - std::pow (1.0f - c, 1.7f);
@@ -3644,10 +3560,10 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
     const float threshold = condThreshold * thresholdMul;
     const float knee = std::max (1.0e-4f, condKnee * kneeMul);
 
-    const float thresholdPos = detail::clampF (threshold * (1.0f + s * symRange), 0.22f, 1.65f);
-    const float thresholdNeg = detail::clampF (threshold * (1.0f - s * symRange), 0.22f, 1.65f);
-    const float kneePos = std::max (1.0e-4f, knee * (1.0f - s * 0.18f));
-    const float kneeNeg = std::max (1.0e-4f, knee * (1.0f + s * 0.18f));
+    const float thresholdPos = detail::clampF (threshold * (1.0f + diodeSym * symRange), 0.22f, 1.65f);
+    const float thresholdNeg = detail::clampF (threshold * (1.0f - diodeSym * symRange), 0.22f, 1.65f);
+    const float kneePos = std::max (1.0e-4f, knee * (1.0f - diodeSym * 0.18f));
+    const float kneeNeg = std::max (1.0e-4f, knee * (1.0f + diodeSym * 0.18f));
 
     float clipIn = x * driveGain * condDrive;
     clipIn += x * std::abs (x) * edgeShape;
@@ -3974,6 +3890,7 @@ inline void processBlock (State& state,
                 state.tapeStressEnv[sp][ch] = 0.0f;
                 state.triodeBodyPreLP[sp][ch] = 0.0f;
                 state.triodeBodyPostLP[sp][ch] = 0.0f;
+                state.triodeCouplingDc[sp][ch] = 0.0f;
                 state.interStageLPF[sp][ch] = 0.0f;
                 state.interStageDCx[sp][ch] = 0.0f;
                 state.interStageDCy[sp][ch] = 0.0f;
@@ -3993,7 +3910,6 @@ inline void processBlock (State& state,
             }
         }
         state.lastModel = model;
-        state.instabilitySignalEnv = 0.0f;
     }
 
     // Sample-rate-aware parameter smoothing (~15ms time constant at any SR).
@@ -4003,9 +3919,6 @@ inline void processBlock (State& state,
 
     // DC blocker coefficient
     const float dcR = 1.0f - (kTwoPi * 5.0f / sampleRate);
-    const float instabilityPresenceAttack = detail::onePoleCoeff (400.0f, sampleRate);
-    const float instabilityPresenceRelease = detail::onePoleCoeff (8.0f, sampleRate);
-
     // REACT window size (model-dependent base, scaled by react amount)
     int reactBaseWindow = 1024;
     switch (model)
@@ -4212,6 +4125,7 @@ inline void processBlock (State& state,
                 state.triodeReact[sp][ch].reset();
                 state.triodeBodyPreLP[sp][ch] = 0.0f;
                 state.triodeBodyPostLP[sp][ch] = 0.0f;
+                state.triodeCouplingDc[sp][ch] = 0.0f;
                 state.emphasis[sp][ch].reset();
                 state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
                 state.triodeAdaa[sp][ch].reset();
@@ -4259,20 +4173,11 @@ inline void processBlock (State& state,
         const float react = state.sReact;
         const float detailAmount = state.sDetail;
         const float instabilityAmount = state.sInstability;
-        const float inputPeak = std::max (std::abs (left[i]), std::abs (right[i]));
-        const float presenceTarget = detail::smoothStep01 (
-            detail::clampF ((inputPeak - 1.0e-5f) / (5.0e-4f - 1.0e-5f), 0.0f, 1.0f));
-        const float presenceCoeff = presenceTarget > state.instabilitySignalEnv
-                                  ? instabilityPresenceAttack
-                                  : instabilityPresenceRelease;
-        state.instabilitySignalEnv += (presenceTarget - state.instabilitySignalEnv) * presenceCoeff;
-        const float instabilitySignalScale = state.instabilitySignalEnv;
 
         // -- Instability: analog component tolerance + slow thermal drift --
         // Static tolerance (per-instance hash): each "unit" has unique character.
-        // Thermal drift (sub-Hz sines): very slow cathode/plate temp changes.
-        // Micro-wander only appears at high instability and stays intentionally subtle.
-        float driveMod = 1.0f, biasMod = 0.0f, shapeMod = 0.0f, asymMod = 0.0f;
+        // Thermal drift stays continuous and only touches AC-safe controls.
+        float driveMod = 1.0f, shapeMod = 0.0f;
         if (instabilityAmount > 0.001f)
         {
             // Init static tolerances once per loader instance.
@@ -4287,29 +4192,10 @@ inline void processBlock (State& state,
             // Very slow thermal drift: 0.03x0.15 Hz (one full cycle per 7x33 seconds)
             const float rate = 0.03f + instabilityAmount * 0.12f;
             state.instability.gainDrift.advance  (rate,         instabilityAmount, sampleRate);
-            state.instability.biasDrift.advance  (rate * 0.37f, instabilityAmount, sampleRate);
             state.instability.shapeDrift.advance (rate * 1.43f, instabilityAmount, sampleRate);
-            state.instability.asymDrift.advance  (rate * 0.61f, instabilityAmount, sampleRate);
 
-            // Smooth S&H adds a small non-periodic thermal/mechanical wrinkle
-            // inside the existing dynamic component. It remains deterministic
-            // and much smaller than the fixed component tolerance.
-            state.instability.gainSH.advance  (rate * 2.10f, 1.0f, sampleRate);
-            state.instability.shapeSH.advance (rate * 2.80f, 1.0f, sampleRate);
-            constexpr float kInstabilityShOnset = 0.15f;
-            constexpr float kInstabilityShMaxWeight = 0.10f;
-            const float shTarget = detail::smoothStep01 (
-                detail::clampF ((instabilityAmount - kInstabilityShOnset) / (1.0f - kInstabilityShOnset), 0.0f, 1.0f));
-            state.instability.shMix += (shTarget - state.instability.shMix)
-                                   * detail::onePoleCoeff (5.0f, sampleRate);
-            const float shWeight = state.instability.shMix * kInstabilityShMaxWeight;
-            const float oscWeight = 1.0f - shWeight;
-            const float gainDynamic  = state.instability.gainDrift.dynamic  * oscWeight
-                                     + state.instability.gainSH.output      * shWeight;
-            const float biasDynamic  = state.instability.biasDrift.dynamic;
-            const float shapeDynamic = state.instability.shapeDrift.dynamic * oscWeight
-                                     + state.instability.shapeSH.output     * shWeight;
-            const float asymDynamic  = state.instability.asymDrift.dynamic;
+            const float gainDynamic  = state.instability.gainDrift.dynamic;
+            const float shapeDynamic = state.instability.shapeDrift.dynamic;
             constexpr float kInstabilityDynamicBase = 0.30f;
             constexpr float kInstabilityDynamicLift = 0.12f;
             const float dynamicBlend = detail::smoothStep01 (
@@ -4317,19 +4203,7 @@ inline void processBlock (State& state,
             const float dynamicWeight = kInstabilityDynamicBase + kInstabilityDynamicLift * dynamicBlend;
             const float staticWeight = 1.0f - dynamicWeight;
             const float gainInstability  = (state.instability.gainDrift.staticTol  * staticWeight + gainDynamic  * dynamicWeight) * instabilityAmount;
-            const float biasInstability  = (state.instability.biasDrift.staticTol  * staticWeight + biasDynamic  * dynamicWeight) * instabilityAmount;
             const float shapeInstability = (state.instability.shapeDrift.staticTol * staticWeight + shapeDynamic * dynamicWeight) * instabilityAmount;
-            const float asymInstability  = (state.instability.asymDrift.staticTol  * staticWeight + asymDynamic  * dynamicWeight) * instabilityAmount;
-
-            const float wanderNorm = detail::smoothStep01 (
-                detail::clampF ((instabilityAmount - 0.70f) / 0.30f, 0.0f, 1.0f));
-            const float wanderDepth = wanderNorm * wanderNorm;
-            if (wanderDepth > 0.0f)
-            {
-                const float wanderRate = 0.45f + wanderDepth * 3.55f;
-                state.instability.driveWander.advance (wanderRate,         wanderDepth, sampleRate);
-                state.instability.shapeWander.advance (wanderRate * 1.37f, wanderDepth, sampleRate);
-            }
 
             const float ceilingScale = 1.0f + instabilityAmount;
 
@@ -4337,15 +4211,7 @@ inline void processBlock (State& state,
             // Scale the whole range uniformly so INST remains subtle at low values
             // but reaches a clearly unstable unit at 100%.
             driveMod = 1.0f + gainInstability  * (0.08f  * ceilingScale); // +/-8..16% gain (tube gm + resistor dividers)
-            biasMod  =        biasInstability  * (0.04f  * ceilingScale); // +/-4..8% bias (cathode R + grid leak)
             shapeMod =        shapeInstability * (0.02f  * ceilingScale); // +/-2..4% shape (plate Rp instability)
-            asymMod  =        asymInstability  * (0.025f * ceilingScale); // +/-2.5..5% L/R (matched pair mismatch)
-            driveMod += state.instability.driveWander.output * (0.015f * ceilingScale); // high-instability +/-1.5..3%
-            shapeMod += state.instability.shapeWander.output * (0.005f * ceilingScale); // high-instability +/-0.5..1%
-        }
-        else
-        {
-            state.instability.shMix = 0.0f;
         }
 
         const float detailChainInput[2] = { left[i], right[i] };
@@ -4381,12 +4247,12 @@ inline void processBlock (State& state,
                     x = processSafetyLPF (state.safetyLpf[ch], x, safetyCoeffs);
 
 
-                // -- Apply Instability per-channel (L/R asymmetry decorrelation) --
-                const float scaledDriveMod = 1.0f + (driveMod - 1.0f) * instabilitySignalScale;
-                float effDrive = drive * scaledDriveMod;
-                const float instabilityBias = (biasMod + (ch == 0 ? asymMod : -asymMod)) * instabilitySignalScale;
-                float effBias  = bias + instabilityBias;
-                float effMod   = detail::clampF (mod + shapeMod * instabilitySignalScale, 0.0f, 1.0f);
+                // Tube bias is DC-sensitive, so instability stays out of its core
+                // operating point and is applied post-coupling instead.
+                const bool tubeCoreInstabilitySafe = model == Model::Tube;
+                float effDrive = tubeCoreInstabilitySafe ? drive : drive * driveMod;
+                float effBias  = bias;
+                float effMod   = tubeCoreInstabilitySafe ? mod : detail::clampF (mod + shapeMod, 0.0f, 1.0f);
 
                 // -- INTERNAL PRE-EMPHASIS (per series pass, unless rawMode) --
                 if (!rawMode && model != Model::Transistor)
@@ -4463,6 +4329,7 @@ inline void processBlock (State& state,
                     stageDynamicsComp.gain = 1.0f;
                     stageDynamicsComp.env *= 0.5f;
                     stageDynamicsComp.hfEnv *= 0.5f;
+                    stageDynamicsComp.bodyEnv *= 0.5f;
                     stageSagEnvelope = 0.0f;
                 }
                 else if (model == Model::Diode)
@@ -4470,6 +4337,7 @@ inline void processBlock (State& state,
                     stageDynamicsComp.gain = 1.0f;
                     stageDynamicsComp.env *= 0.5f;
                     stageDynamicsComp.hfEnv *= 0.5f;
+                    stageDynamicsComp.bodyEnv *= 0.5f;
                     stageSagEnvelope = 0.0f;
                 }
                 else if (model == Model::Clipper)
@@ -4633,6 +4501,9 @@ inline void processBlock (State& state,
                     stageDcY = dcOut;
                     x = dcOut;
                 }
+
+                if (model == Model::Tube && isLast)
+                    x *= driveMod;
 
                 if (diagCollector != nullptr && isLast && ch == 0)
                     diagCollector->feedDc (x);
