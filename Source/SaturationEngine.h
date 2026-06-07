@@ -537,6 +537,22 @@ struct ClipperPeakState
     }
 };
 
+struct ClipperKlonState
+{
+    float cleanLP = 0.0f;
+    float dirtyLowLP = 0.0f;
+    float dirtyLP = 0.0f;
+    adaa::StableTanhADAA softAdaa;
+
+    void reset() noexcept
+    {
+        cleanLP = 0.0f;
+        dirtyLowLP = 0.0f;
+        dirtyLP = 0.0f;
+        softAdaa.reset();
+    }
+};
+
 struct TransistorPeakCatchState
 {
     float peakEnv = 0.0f;
@@ -796,6 +812,7 @@ struct State
     float sagEnvelope[kMaxSeries][2] = {};
     DynamicsCompState dynamicsComp[kMaxSeries][2];
     ClipperPeakState clipperPeak[kMaxSeries][2];
+    ClipperKlonState clipperKlon[kMaxSeries][2];
     TransistorPeakCatchState transistorPeakCatch[kMaxSeries][2];
     TriodeReactState triodeReact[kMaxSeries][2];
 
@@ -906,6 +923,7 @@ struct State
                 sagEnvelope[sp][ch] = 0.0f;
                 dynamicsComp[sp][ch].reset();
                 clipperPeak[sp][ch].reset();
+                clipperKlon[sp][ch].reset();
                 transistorPeakCatch[sp][ch].reset();
                 triodeReact[sp][ch].reset();
                 dcX[sp][ch] = dcY[sp][ch] = 0.0f;
@@ -984,6 +1002,9 @@ struct State
                 fl (dynamicsComp[sp][ch].gain);
                 fl (clipperPeak[sp][ch].peakEnv);
                 fl (clipperPeak[sp][ch].bodyEnv);
+                fl (clipperKlon[sp][ch].cleanLP);
+                fl (clipperKlon[sp][ch].dirtyLowLP);
+                fl (clipperKlon[sp][ch].dirtyLP);
                 fl (transistorPeakCatch[sp][ch].peakEnv);
                 fl (transistorPeakCatch[sp][ch].bodyEnv);
                 fl (transistorPeakCatch[sp][ch].gain);
@@ -2962,9 +2983,9 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
                 return juce::jmap (t, x, ts);
             }
             const float u = detail::smoothStep01 ((voice - 0.5f) * 2.0f);
-            const float lowRetain = 0.28f + drive * 0.12f;
+            const float lowRetain = 0.64f + drive * 0.20f;
             const float klon = juce::jmap (lowRetain, x, hp)
-                             + edge * (0.012f + drive * 0.035f);
+                             + edge * (0.0015f + drive * 0.0045f);
             return juce::jmap (u, ts, klon);
         }
         case Model::Tape:
@@ -3033,9 +3054,9 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
                 return juce::jmap (t, y, ts);
             }
             const float u = detail::smoothStep01 ((voice - 0.5f) * 2.0f);
-            const float klonBase = y + (st.postLP - y) * (0.08f + drive * 0.16f);
+            const float klonBase = y + (st.postLP - y) * (0.34f + drive * 0.42f);
             const float bright = y - st.postLP;
-            const float klon = klonBase + bright * (0.010f + (1.0f - drive) * 0.015f);
+            const float klon = klonBase + bright * ((1.0f - drive) * 0.002f);
             return juce::jmap (u, ts, klon);
         }
         case Model::Tape:
@@ -3631,6 +3652,7 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
 // CLIPPER: threshold-driven clipper with continuous soft->hard knee control
 // and a voice morph from broadband classic -> TS-style -> Klon-style.
 inline float processClipper (float x, float drive, float girth, float bias, float mod,
+                             bool rawMode, State& state, int ch, float sr,
                              adaa::ClipperADAA& adaaState) noexcept
 {
     const float d = detail::clampF (drive, 0.0f, 1.0f);
@@ -3645,8 +3667,9 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
                                                   1.08f, 0.92f, 0.72f, 0.48f, 0.24f);
 
     float voiceScale = 1.0f;
-    float cleanBlend = 0.0f;
+    float legacyCleanBlend = 0.0f;
     float voiceLift = 1.0f;
+    float klonVoice = 0.0f;
     if (m <= 0.5f)
     {
         const float t = detail::smoothStep01 (m * 2.0f);
@@ -3654,19 +3677,30 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     }
     else
     {
-        const float u = detail::smoothStep01 ((m - 0.5f) * 2.0f);
-        voiceScale = juce::jmap (u, 1.08f, 0.92f); // Klon opens back up
-        cleanBlend = 0.18f * u;
-        voiceLift = juce::jmap (u, 1.0f, 1.12f);
+        klonVoice = detail::smoothStep01 ((m - 0.5f) * 2.0f);
+        voiceScale = juce::jmap (klonVoice, 1.08f, 0.92f); // Klon opens back up
+        legacyCleanBlend = 0.18f * klonVoice * (1.0f - klonVoice);
+        voiceLift = juce::jmap (klonVoice, 1.0f, 1.12f);
     }
 
-    const float clipIn = x * (voiceScale / std::max (threshold, 0.05f));
+    const float legacyClipIn = x * (voiceScale / std::max (threshold, 0.05f));
+    const float klonDriveGain = detail::interpDrive5 (d,
+                                                      0.90f, 2.15f, 7.20f, 32.00f, 160.0f);
+    const float clipIn = juce::jmap (klonVoice, legacyClipIn, x * klonDriveGain);
 
     // BIAS becomes symmetry / mismatch: shifts positive and negative clip
     // thresholds independently, but keep their mean around unity.
-    const float thresholdPos = detail::clampF (1.0f + b * 0.45f, 0.45f, 1.55f);
-    const float thresholdNeg = detail::clampF (1.0f - b * 0.45f, 0.45f, 1.55f);
-    const float kneeSoft = 0.01f + (1.0f - k) * 0.56f;
+    const float klonDiodeHeadroom = juce::jmap (k, 0.74f, 0.60f);
+    const float klonBiasRange = 0.26f + (1.0f - k) * 0.06f;
+    const float legacyThresholdPos = detail::clampF (1.0f + b * 0.45f, 0.45f, 1.55f);
+    const float legacyThresholdNeg = detail::clampF (1.0f - b * 0.45f, 0.45f, 1.55f);
+    const float klonThresholdPos = detail::clampF (klonDiodeHeadroom * (1.0f + b * klonBiasRange), 0.30f, 1.35f);
+    const float klonThresholdNeg = detail::clampF (klonDiodeHeadroom * (1.0f - b * klonBiasRange), 0.30f, 1.35f);
+    const float thresholdPos = juce::jmap (klonVoice, legacyThresholdPos, klonThresholdPos);
+    const float thresholdNeg = juce::jmap (klonVoice, legacyThresholdNeg, klonThresholdNeg);
+    const float legacyKneeSoft = 0.01f + (1.0f - k) * 0.56f;
+    const float klonKneeSoft = 0.045f + (1.0f - k) * 0.34f;
+    const float kneeSoft = juce::jmap (klonVoice, legacyKneeSoft, klonKneeSoft);
     const float kneePos = std::max (1.0e-4f, thresholdPos * kneeSoft);
     const float kneeNeg = std::max (1.0e-4f, thresholdNeg * kneeSoft);
 
@@ -3677,13 +3711,52 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     const float outputScale = 2.0f / (thresholdPos + thresholdNeg);
     clipped *= outputScale;
 
-    if (cleanBlend > 0.0001f)
+    if (klonVoice > 0.0001f)
     {
-        const float clean = detail::clampF (x * (0.90f + 0.10f * voiceScale), -1.25f, 1.25f);
-        clipped = juce::jmap (cleanBlend, clipped, clean);
+        auto& klonState = state.clipperKlon[state.currentSeriesPass][ch];
+        const float klonSoftIn = x * klonDriveGain * juce::jmap (k, 0.82f, 1.00f);
+        const float klonSoftK = 0.48f + k * 0.38f;
+        const float klonSoft = klonState.softAdaa.process (klonSoftIn, klonSoftK)
+                             * juce::jmap (k, 0.88f, 1.04f);
+        const float klonSoftBlend = klonVoice * 0.70f;
+        clipped = juce::jmap (klonSoftBlend, clipped, klonSoft);
     }
 
-    const float finalTrim = voiceLift * juce::jmap (d, 0.98f, 0.92f);
+    if (legacyCleanBlend > 0.0001f)
+    {
+        const float clean = detail::clampF (x * (0.90f + 0.10f * voiceScale), -1.25f, 1.25f);
+        clipped = juce::jmap (legacyCleanBlend, clipped, clean);
+    }
+
+    if (klonVoice > 0.0001f && ! rawMode)
+    {
+        auto& klonState = state.clipperKlon[state.currentSeriesPass][ch];
+
+        const float cleanHz = 452.0f + d * 78.0f;
+        const float cleanCoeff = detail::onePoleCoeff (cleanHz, sr);
+        klonState.cleanLP += (x - klonState.cleanLP) * cleanCoeff;
+
+        const float dirtyLowHz = 170.0f + d * 70.0f;
+        const float dirtyLowCoeff = detail::onePoleCoeff (dirtyLowHz, sr);
+        klonState.dirtyLowLP += (clipped - klonState.dirtyLowLP) * dirtyLowCoeff;
+
+        const float dirtyHz = 900.0f + d * 520.0f;
+        const float dirtyCoeff = detail::onePoleCoeff (dirtyHz, sr);
+        klonState.dirtyLP += (clipped - klonState.dirtyLP) * dirtyCoeff;
+
+        const float cleanPath = klonState.cleanLP * juce::jmap (d, 1.10f, 0.86f);
+        const float dirtyToneMix = 0.86f + (1.0f - d) * 0.06f;
+        const float dirtyFiltered = clipped + (klonState.dirtyLP - clipped) * dirtyToneMix;
+        const float dirtyPath = dirtyFiltered - klonState.dirtyLowLP * (0.24f + d * 0.16f);
+
+        const float cleanAmount = 0.46f * std::pow (1.0f - d, 2.65f);
+        const float dirtyAmount = 1.0f - cleanAmount * 0.42f;
+        const float klonSum = dirtyPath * dirtyAmount + cleanPath * cleanAmount;
+        clipped = juce::jmap (klonVoice, clipped, klonSum);
+    }
+
+    const float klonMakeup = juce::jmap (klonVoice, 1.0f, 1.0f + d * 0.44f);
+    const float finalTrim = voiceLift * juce::jmap (d, 0.98f, 0.92f) * klonMakeup;
 
     return clipped * finalTrim;
 }
@@ -4482,6 +4555,7 @@ inline void processBlock (State& state,
                     case Model::Clipper:
                     {
                         x = processClipper (x, effDrive, girth, effBias, effMod,
+                                            rawMode, state, ch, sampleRate,
                                             state.clipperAdaa[sp][ch]);
                         break;
                     }
