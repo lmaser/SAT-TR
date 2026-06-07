@@ -572,6 +572,7 @@ struct TriodeReactState
     float supplyDrop = 0.0f;
     float strikeEnv = 0.0f;
     float bloomEnv = 0.0f;
+    float bloomDemandEnv = 0.0f;
     float burnFast = 0.0f;
     float burnSlow = 0.0f;
     float burnEnv = 0.0f;
@@ -597,6 +598,7 @@ struct TriodeReactState
         supplyDrop = 0.0f;
         strikeEnv = 0.0f;
         bloomEnv = 0.0f;
+        bloomDemandEnv = 0.0f;
         burnFast = 0.0f;
         burnSlow = 0.0f;
         burnEnv = 0.0f;
@@ -995,6 +997,7 @@ struct State
                 fl (triodeReact[sp][ch].supplyDrop);
                 fl (triodeReact[sp][ch].strikeEnv);
                 fl (triodeReact[sp][ch].bloomEnv);
+                fl (triodeReact[sp][ch].bloomDemandEnv);
                 fl (triodeReact[sp][ch].burnFast);
                 fl (triodeReact[sp][ch].burnSlow);
                 fl (triodeReact[sp][ch].burnEnv);
@@ -1744,13 +1747,26 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
     st.supplyEnv += (supplyTarget - st.supplyEnv) * supplyCoeff;
     st.supplyDrop = juce::jlimit (0.0f, 1.0f, st.supplyEnv);
 
-    // Bloom remembers both hot input and sustained supply collapse.
+    // Bloom remembers hot input, sustained supply collapse and current demand.
+    // Demand starts around -6 dBFS and curves toward +24 dBFS, so hot playing
+    // gets a supply-recovery bloom without changing the Tube waveshaper core.
     const float hotOverDb = std::max (0.0f, senseDb);
     const float hotTarget = (1.0f - adaa::fastExp (-hotOverDb / (10.0f - reactDepth * 3.0f)))
                           * reactDepth;
+    const float demandOverDb = std::max (0.0f, senseDb + 6.0f);
+    const float demandCurve = detail::smoothStep01 (juce::jlimit (0.0f, 1.0f,
+                                                                  demandOverDb / 30.0f));
+    const float demandTarget = demandCurve * sagDepth;
+    const float demandAttackHz = 8.0f + reactDepth * 10.0f;       // ~20 ms -> ~9 ms
+    const float demandReleaseHz = juce::jmap (reactDepth, 0.62f, 0.132f); // ~257 ms -> ~1.2 s
+    const float demandCoeff = detail::onePoleCoeff (
+        demandTarget > st.bloomDemandEnv ? demandAttackHz : demandReleaseHz, sr);
+    st.bloomDemandEnv += (demandTarget - st.bloomDemandEnv) * demandCoeff;
+    st.bloomDemandEnv = juce::jlimit (0.0f, 1.0f, st.bloomDemandEnv);
     const float bloomInputTarget = juce::jlimit (
         0.0f, 1.0f,
-        std::max (hotTarget, supplyTarget * (0.25f + reactDepth * 0.50f)));
+        std::max (std::max (hotTarget, supplyTarget * (0.25f + reactDepth * 0.50f)),
+                  st.bloomDemandEnv * (0.48f + reactDepth * 0.72f)));
     const float strikeAttackHz = 40.0f + reactDepth * 45.0f;     // ~4 ms -> ~2 ms
     const float strikeReleaseHz = 2.3f + reactDepth * 1.8f;      // ~70 ms -> ~39 ms
     const float strikeCoeff = detail::onePoleCoeff (
@@ -3070,6 +3086,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     auto& triodeSag = state.triodeReact[sp][ch];
     auto& bodyPreLp = state.triodeBodyPreLP[sp][ch];
     auto& bodyPostLp = state.triodeBodyPostLP[sp][ch];
+    const float sagInput = x;
     float xStage = x;
     float bEff = b;
     float bodyControl = g;
@@ -3096,7 +3113,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
 
     if (react > 0.0001f)
     {
-        const float sagSense = getTriodeSagSenseInput (xStage);
+        const float sagSense = getTriodeSagSenseInput (sagInput);
         const TriodeReactResult triodeComp = processTriodeReact (
             xStage, sagSense, triodeSag, react, sr, triodeBloomSamplesPerSlot);
         xStage = triodeComp.sample;
@@ -3111,6 +3128,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
         triodeSag.supplyDrop *= 0.5f;
         triodeSag.strikeEnv *= 0.5f;
         triodeSag.bloomEnv *= 0.5f;
+        triodeSag.bloomDemandEnv *= 0.5f;
         triodeSag.burnFast *= 0.5f;
         triodeSag.burnSlow *= 0.5f;
         triodeSag.burnEnv *= 0.5f;
@@ -3142,6 +3160,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
         juce::jlimit (0.0f, 1.0f, triodeSag.strikeEnv));
     const float bloomCore = detail::smoothStep01 (
         juce::jlimit (0.0f, 1.0f, triodeSag.bloomEnv)) * (1.0f - strikeCore * 0.18f);
+    const float bloomRecoveryCore = bloomCore * (supplyCore + (1.0f - supplyCore) * 0.55f);
     const float burnCore = juce::jlimit (-1.0f, 1.0f, triodeSag.burnEnv);
     const float burnPress = std::max (0.0f, burnCore);
     const float atrophyCore = detail::smoothStep01 (
@@ -3184,7 +3203,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     const float cathodeDepth12AX7 = bodyCurve * (0.040f + d * 0.050f);
     const float cathodeDepthPower = bodyCurve * (0.026f + d * 0.032f);
     const float cathodeDepth = juce::jmap (tubeMorph, cathodeDepth12AX7, cathodeDepthPower);
-    const float bloomHeadroomRecovery = bloomCore * supplyCore * (0.066f + tubeMorph * 0.154f);
+    const float bloomHeadroomRecovery = bloomRecoveryCore * (0.066f + tubeMorph * 0.154f);
 
     const float headroom12AX7 = juce::jlimit (0.54f, 1.0f,
                                               1.0f - sagCore * 0.40f
@@ -3231,7 +3250,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
         const float idleBias = 0.010f + hotness * (0.012f + d * 0.010f);
         const float crossover = 0.010f + (1.0f - hotness) * (0.012f + d * 0.008f);
         const float bloomPower = juce::jlimit (0.0f, 1.0f,
-                                               bloomCore * supplyCore * (0.65f + tubeMorph * 1.05f));
+                                               bloomRecoveryCore * (0.65f + tubeMorph * 1.05f));
         const float supplyPowerLoss = juce::jlimit (
             0.0f, 1.0f,
             1.0f - supplyCore * (0.08f + tubeMorph * 0.10f)
@@ -3508,6 +3527,7 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
 }
 
 inline float processDiodeStage (float x, float drive, float girth, float bias, float mod,
+                                float reactColor,
                                 adaa::ClipperADAA& adaaState) noexcept
 {
     const float d = detail::clampF (drive, 0.0f, 1.0f);
@@ -3515,6 +3535,7 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
     const float s = detail::clampF (bias, -1.0f, 1.0f);
     const float diodeSym = s * 2.0f;
     const float t = detail::clampF (mod, 0.0f, 1.0f);
+    const float bridgeWork = detail::smoothStep01 (detail::clampF (reactColor * 1.75f, 0.0f, 1.0f));
 
     const float condCurve = 1.0f - std::pow (1.0f - c, 1.7f);
     const float condDriveCurve = 1.0f - std::pow (1.0f - c, 1.35f);
@@ -3556,6 +3577,9 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
         symRange = juce::jmap (u, 0.36f, 0.32f);
         edgeShape = juce::jmap (u, 0.03f, 0.06f);
     }
+
+    thresholdMul *= 1.0f - bridgeWork * 0.065f;
+    kneeMul      *= 1.0f - bridgeWork * 0.045f;
 
     const float threshold = condThreshold * thresholdMul;
     const float knee = std::max (1.0e-4f, condKnee * kneeMul);
@@ -4262,6 +4286,7 @@ inline void processBlock (State& state,
                 float sagPre  = 1.0f;
                 float sagPost = 1.0f;
                 float sagBias = 0.0f;
+                float diodeReactColor = 0.0f;
                 MultibandSagResult mbSag;
                 bool useMbSag = false;
 
@@ -4291,6 +4316,7 @@ inline void processBlock (State& state,
                                 x, stageDynamicsComp, react, effDrive, program, sampleRate);
                             const float compMix = detail::compressionBlendMix (react);
                             x = juce::jmap (compMix, compDry, comp.sample);
+                            diodeReactColor = detail::clampF (comp.amount * compMix, 0.0f, 1.0f);
                             sagPre = 1.0f;
                             sagPost = 1.0f;
                             stageSagEnvelope = comp.amount;
@@ -4360,6 +4386,7 @@ inline void processBlock (State& state,
                     stageTriodeReact.supplyDrop *= 0.5f;
                     stageTriodeReact.strikeEnv *= 0.5f;
                     stageTriodeReact.bloomEnv *= 0.5f;
+                    stageTriodeReact.bloomDemandEnv *= 0.5f;
                     stageTriodeReact.burnFast *= 0.5f;
                     stageTriodeReact.burnSlow *= 0.5f;
                     stageTriodeReact.burnEnv *= 0.5f;
@@ -4419,6 +4446,7 @@ inline void processBlock (State& state,
                     case Model::Diode:
                     {
                         x = processDiodeStage (x, effDrive, girth, effBias, effMod,
+                                               diodeReactColor,
                                                state.clipperAdaa[sp][ch]);
                         break;
                     }

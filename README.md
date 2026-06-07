@@ -86,7 +86,7 @@ Operating-point or asymmetry control, depending on the model:
 
 Model-dependent dynamics control:
 
-- **COMP**: dynamics conditioning before or inside the stage
+- **COMP**: dynamics conditioning before or inside the stage; in `DIODE`, gain reduction also adds a small diode-bridge conduction color
 - **SAG**: tube-style reactive compression / supply behavior
 - **PEAK**: pre-clip transient shaving in `CLIPPER`
 - **DYN**: generic fallback label when no model-specific dynamics name applies
@@ -290,7 +290,7 @@ Practical note:
 - **Dynamics**: model-specific dynamics blocks rather than one universal behavior (`SAG`, `COMP`, `PEAK` depend on algorithm).
 - **Level calibration**: measured static model trims keep `TAPE`, `TUBE`, `TRANSISTOR`, `DIODE`, and `CLIPPER` level-consistent against hot reference input without adding dynamic auto-gain.
 - **DC protection**: model wrapper DC filtering is bypassed by `RAW` where appropriate, while the final wet-only 2 Hz DC blocker remains active for audible saturation.
-- **Tube SAG**: reactive supply/sag behavior with short strike tracking plus longer bloom memory for time-dependent recovery.
+- **Tube SAG**: reactive supply/sag behavior with short strike tracking, hot-input demand detection and longer bloom memory for time-dependent recovery.
 - **Detail**: high-passed clipped-residual sidechain path for detail-preserving saturation, with extra sidechain air emphasis above 50%, shared by the saturation models.
 - **External Sidechain**: optional per-loader sidechain detector with `SMOOTH` and `TONE` controls, used to modulate saturation drive amount without mixing sidechain audio into the output.
 - **Instability**: deterministic component spread plus slow continuous drift, with Tube handled through a bias-safe post-coupling path and a stronger calibrated ceiling at high settings.
