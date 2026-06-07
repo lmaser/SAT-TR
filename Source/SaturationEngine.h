@@ -2983,9 +2983,9 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
                 return juce::jmap (t, x, ts);
             }
             const float u = detail::smoothStep01 ((voice - 0.5f) * 2.0f);
-            const float lowRetain = 0.68f + drive * 0.22f;
+            const float lowRetain = 0.74f + drive * 0.20f;
             const float klon = juce::jmap (lowRetain, x, hp)
-                             + edge * (0.0015f + drive * 0.0045f);
+                             + edge * (0.0008f + drive * 0.0014f);
             return juce::jmap (u, ts, klon);
         }
         case Model::Tape:
@@ -3054,7 +3054,7 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
                 return juce::jmap (t, y, ts);
             }
             const float u = detail::smoothStep01 ((voice - 0.5f) * 2.0f);
-            const float klonBase = y + (st.postLP - y) * (0.44f + drive * 0.46f);
+            const float klonBase = y + (st.postLP - y) * (0.42f + drive * 0.45f);
             const float bright = y - st.postLP;
             const float klon = klonBase + bright * ((1.0f - drive) * 0.002f);
             return juce::jmap (u, ts, klon);
@@ -3718,7 +3718,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
         const float klonSoftK = 0.48f + k * 0.38f;
         const float klonSoft = klonState.softAdaa.process (klonSoftIn, klonSoftK)
                              * juce::jmap (k, 0.88f, 1.04f);
-        const float klonSoftBlend = klonVoice * 0.90f;
+        const float klonSoftBlend = klonVoice * 0.97f;
         clipped = juce::jmap (klonSoftBlend, clipped, klonSoft);
     }
 
@@ -3745,7 +3745,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
         klonState.dirtyLP += (clipped - klonState.dirtyLP) * dirtyCoeff;
 
         const float cleanPath = klonState.cleanLP * juce::jmap (d, 1.10f, 0.86f);
-        const float dirtyToneMix = 0.94f + (1.0f - d) * 0.03f;
+        const float dirtyToneMix = 0.95f + (1.0f - d) * 0.025f;
         const float dirtyFiltered = clipped + (klonState.dirtyLP - clipped) * dirtyToneMix;
         const float dirtyPath = dirtyFiltered - klonState.dirtyLowLP * (0.30f + d * 0.20f);
 
