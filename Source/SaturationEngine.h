@@ -572,6 +572,7 @@ struct TriodeReactState
     float supplyDrop = 0.0f;
     float strikeEnv = 0.0f;
     float bloomEnv = 0.0f;
+    float bloomFastDemandEnv = 0.0f;
     float bloomDemandEnv = 0.0f;
     float burnFast = 0.0f;
     float burnSlow = 0.0f;
@@ -598,6 +599,7 @@ struct TriodeReactState
         supplyDrop = 0.0f;
         strikeEnv = 0.0f;
         bloomEnv = 0.0f;
+        bloomFastDemandEnv = 0.0f;
         bloomDemandEnv = 0.0f;
         burnFast = 0.0f;
         burnSlow = 0.0f;
@@ -997,6 +999,7 @@ struct State
                 fl (triodeReact[sp][ch].supplyDrop);
                 fl (triodeReact[sp][ch].strikeEnv);
                 fl (triodeReact[sp][ch].bloomEnv);
+                fl (triodeReact[sp][ch].bloomFastDemandEnv);
                 fl (triodeReact[sp][ch].bloomDemandEnv);
                 fl (triodeReact[sp][ch].burnFast);
                 fl (triodeReact[sp][ch].burnSlow);
@@ -1757,16 +1760,29 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
     const float demandCurve = detail::smoothStep01 (juce::jlimit (0.0f, 1.0f,
                                                                   demandOverDb / 30.0f));
     const float demandTarget = demandCurve * sagDepth;
-    const float demandAttackHz = 8.0f + reactDepth * 10.0f;       // ~20 ms -> ~9 ms
-    const float demandReleaseHz = juce::jmap (reactDepth, 0.62f, 0.132f); // ~257 ms -> ~1.2 s
+    const float fastDemandAttackHz = 24.0f + reactDepth * 48.0f;  // ~7 ms -> ~2 ms
+    const float fastDemandReleaseHz = 2.6f + reactDepth * 1.4f;   // ~61 ms -> ~40 ms
+    const float fastDemandCoeff = detail::onePoleCoeff (
+        demandTarget > st.bloomFastDemandEnv ? fastDemandAttackHz : fastDemandReleaseHz, sr);
+    st.bloomFastDemandEnv += (demandTarget - st.bloomFastDemandEnv) * fastDemandCoeff;
+    st.bloomFastDemandEnv = juce::jlimit (0.0f, 1.0f, st.bloomFastDemandEnv);
+
+    const float demandAttackHz = juce::jmap (reactDepth, 5.3f, 2.9f); // ~30 ms -> ~55 ms
+    const float demandReleaseHz = juce::jmap (reactDepth, 0.45f, 0.099f); // ~350 ms -> ~1.6 s
     const float demandCoeff = detail::onePoleCoeff (
         demandTarget > st.bloomDemandEnv ? demandAttackHz : demandReleaseHz, sr);
     st.bloomDemandEnv += (demandTarget - st.bloomDemandEnv) * demandCoeff;
     st.bloomDemandEnv = juce::jlimit (0.0f, 1.0f, st.bloomDemandEnv);
+    const float demandRecovery = juce::jlimit (
+        0.0f, 1.0f,
+        std::max (0.0f, st.bloomDemandEnv - st.bloomFastDemandEnv * 0.35f)
+            + st.bloomDemandEnv * 0.22f);
+    const float demandBloomTarget = juce::jlimit (0.0f, 1.0f,
+                                                  demandRecovery * (0.58f + reactDepth * 0.92f));
     const float bloomInputTarget = juce::jlimit (
         0.0f, 1.0f,
         std::max (std::max (hotTarget, supplyTarget * (0.25f + reactDepth * 0.50f)),
-                  st.bloomDemandEnv * (0.48f + reactDepth * 0.72f)));
+                  demandBloomTarget));
     const float strikeAttackHz = 40.0f + reactDepth * 45.0f;     // ~4 ms -> ~2 ms
     const float strikeReleaseHz = 2.3f + reactDepth * 1.8f;      // ~70 ms -> ~39 ms
     const float strikeCoeff = detail::onePoleCoeff (
@@ -1774,13 +1790,13 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
     st.strikeEnv += (hotTarget - st.strikeEnv) * strikeCoeff;
     st.strikeEnv = juce::jlimit (0.0f, 1.0f, st.strikeEnv);
 
-    const float bloomWindowMs = 35.0f + (reactDepth * reactDepth) * 515.0f;
+    const float bloomWindowMs = 45.0f + (reactDepth * reactDepth) * 905.0f;
     const int targetBloomWindowSlots = juce::jlimit (1, kTriodeBloomSlotCount - 2,
                                                      (int) std::round (bloomWindowMs));
 
     // Airwindows-style bloom memory: a real time window, stored in 1 ms slots
     // so the musical recovery length stays consistent at any host SR or
-    // oversampling factor. React 100% now reaches a long ~500 ms bloom tail.
+    // oversampling factor. React 100% now reaches a long ~950 ms bloom tail.
     if (! st.bloomActive)
     {
         std::memset (st.bloomBuf, 0, sizeof (st.bloomBuf));
@@ -1851,8 +1867,8 @@ inline TriodeReactResult processTriodeReact (float sample, float sense,
                                                      st.bloomWindowSlots);
     const float bloomTarget = juce::jlimit (0.0f, 1.0f,
                                             st.bloomSum / (float) activeBloomWindowSlots);
-    const float bloomRiseHz = 8.0f + reactDepth * 6.0f;
-    const float bloomFallHz = 1.6f - reactDepth * 1.0f;
+    const float bloomRiseHz = 4.8f + reactDepth * 3.6f;
+    const float bloomFallHz = juce::jmap (reactDepth, 0.55f, 0.227f); // ~290 ms -> ~700 ms
     const float bloomCoeff = detail::onePoleCoeff (
         bloomTarget > st.bloomEnv ? bloomRiseHz : bloomFallHz, sr);
     st.bloomEnv += (bloomTarget - st.bloomEnv) * bloomCoeff;
@@ -3128,6 +3144,7 @@ inline float processTriode (float x, float drive, float girth, float bias, float
         triodeSag.supplyDrop *= 0.5f;
         triodeSag.strikeEnv *= 0.5f;
         triodeSag.bloomEnv *= 0.5f;
+        triodeSag.bloomFastDemandEnv *= 0.5f;
         triodeSag.bloomDemandEnv *= 0.5f;
         triodeSag.burnFast *= 0.5f;
         triodeSag.burnSlow *= 0.5f;
@@ -3165,11 +3182,15 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     const float burnPress = std::max (0.0f, burnCore);
     const float atrophyCore = detail::smoothStep01 (
         juce::jlimit (0.0f, 1.0f, triodeSag.atrophyEnv)) * (0.45f + supplyCore * 0.55f);
-    const float atrophyDb = atrophyCore * juce::jmap (tubeMorph, 4.5f, 7.5f);
+    const float bloomAtrophyRelief = 1.0f - bloomRecoveryCore * (0.16f + tubeMorph * 0.10f);
+    const float atrophyDb = atrophyCore * juce::jmap (tubeMorph, 4.5f, 7.5f)
+                          * juce::jlimit (0.70f, 1.0f, bloomAtrophyRelief);
     const float reservoirCore = detail::smoothStep01 (
         juce::jlimit (0.0f, 1.0f, triodeSag.reservoirDrainEnv))
         * (0.35f + supplyCore * 0.65f);
-    const float reservoirDb = reservoirCore * juce::jmap (tubeMorph, 1.6f, 2.5f);
+    const float bloomReservoirRelief = 1.0f - bloomRecoveryCore * (0.10f + tubeMorph * 0.08f);
+    const float reservoirDb = reservoirCore * juce::jmap (tubeMorph, 1.6f, 2.5f)
+                            * juce::jlimit (0.78f, 1.0f, bloomReservoirRelief);
     const float atrophyGain = adaa::fastExp (-(atrophyDb + reservoirDb) * 0.11512925465f);
 
     // Tube2ustyle stage inside the black box. MOD/CHAR stay mostly outside
@@ -4386,6 +4407,7 @@ inline void processBlock (State& state,
                     stageTriodeReact.supplyDrop *= 0.5f;
                     stageTriodeReact.strikeEnv *= 0.5f;
                     stageTriodeReact.bloomEnv *= 0.5f;
+                    stageTriodeReact.bloomFastDemandEnv *= 0.5f;
                     stageTriodeReact.bloomDemandEnv *= 0.5f;
                     stageTriodeReact.burnFast *= 0.5f;
                     stageTriodeReact.burnSlow *= 0.5f;
