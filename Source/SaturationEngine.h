@@ -3054,7 +3054,7 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
                 return juce::jmap (t, y, ts);
             }
             const float u = detail::smoothStep01 ((voice - 0.5f) * 2.0f);
-            const float klonBase = y + (st.postLP - y) * (0.40f + drive * 0.44f);
+            const float klonBase = y + (st.postLP - y) * (0.44f + drive * 0.46f);
             const float bright = y - st.postLP;
             const float klon = klonBase + bright * ((1.0f - drive) * 0.002f);
             return juce::jmap (u, ts, klon);
@@ -3718,7 +3718,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
         const float klonSoftK = 0.48f + k * 0.38f;
         const float klonSoft = klonState.softAdaa.process (klonSoftIn, klonSoftK)
                              * juce::jmap (k, 0.88f, 1.04f);
-        const float klonSoftBlend = klonVoice * 0.80f;
+        const float klonSoftBlend = klonVoice * 0.90f;
         clipped = juce::jmap (klonSoftBlend, clipped, klonSoft);
     }
 
@@ -3740,12 +3740,12 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
         const float dirtyLowCoeff = detail::onePoleCoeff (dirtyLowHz, sr);
         klonState.dirtyLowLP += (clipped - klonState.dirtyLowLP) * dirtyLowCoeff;
 
-        const float dirtyHz = 820.0f + d * 300.0f;
+        const float dirtyHz = 760.0f + d * 220.0f;
         const float dirtyCoeff = detail::onePoleCoeff (dirtyHz, sr);
         klonState.dirtyLP += (clipped - klonState.dirtyLP) * dirtyCoeff;
 
         const float cleanPath = klonState.cleanLP * juce::jmap (d, 1.10f, 0.86f);
-        const float dirtyToneMix = 0.91f + (1.0f - d) * 0.04f;
+        const float dirtyToneMix = 0.94f + (1.0f - d) * 0.03f;
         const float dirtyFiltered = clipped + (klonState.dirtyLP - clipped) * dirtyToneMix;
         const float dirtyPath = dirtyFiltered - klonState.dirtyLowLP * (0.30f + d * 0.20f);
 
