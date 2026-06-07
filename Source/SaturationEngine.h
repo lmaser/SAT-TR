@@ -537,11 +537,26 @@ struct ClipperPeakState
     }
 };
 
+struct KlonBiquadState
+{
+    float z1 = 0.0f;
+    float z2 = 0.0f;
+
+    void reset() noexcept
+    {
+        z1 = 0.0f;
+        z2 = 0.0f;
+    }
+};
+
 struct ClipperKlonState
 {
     float cleanLP = 0.0f;
     float dirtyLowLP = 0.0f;
     float dirtyLP = 0.0f;
+    float preEqLP = 0.0f;
+    KlonBiquadState preBell;
+    KlonBiquadState postBell;
     adaa::StableTanhADAA softAdaa;
 
     void reset() noexcept
@@ -549,6 +564,9 @@ struct ClipperKlonState
         cleanLP = 0.0f;
         dirtyLowLP = 0.0f;
         dirtyLP = 0.0f;
+        preEqLP = 0.0f;
+        preBell.reset();
+        postBell.reset();
         softAdaa.reset();
     }
 };
@@ -1005,6 +1023,11 @@ struct State
                 fl (clipperKlon[sp][ch].cleanLP);
                 fl (clipperKlon[sp][ch].dirtyLowLP);
                 fl (clipperKlon[sp][ch].dirtyLP);
+                fl (clipperKlon[sp][ch].preEqLP);
+                fl (clipperKlon[sp][ch].preBell.z1);
+                fl (clipperKlon[sp][ch].preBell.z2);
+                fl (clipperKlon[sp][ch].postBell.z1);
+                fl (clipperKlon[sp][ch].postBell.z2);
                 fl (transistorPeakCatch[sp][ch].peakEnv);
                 fl (transistorPeakCatch[sp][ch].bodyEnv);
                 fl (transistorPeakCatch[sp][ch].gain);
@@ -3649,6 +3672,43 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
     return clipped * voiceTrim;
 }
 
+inline float processKlonPeakEq (float x, KlonBiquadState& st, float sr,
+                                float freqHz, float q, float gainDb) noexcept
+{
+    const float safeSr = std::max (sr, 1000.0f);
+    const float f0 = detail::clampF (freqHz, 20.0f, safeSr * 0.45f);
+    const float safeQ = std::max (q, 0.10f);
+    const float w0 = kTwoPi * f0 / safeSr;
+    const float cosW = std::cos (w0);
+    const float sinW = std::sin (w0);
+    const float alpha = sinW / (2.0f * safeQ);
+    const float a = std::pow (10.0f, gainDb / 40.0f);
+    const float a0 = 1.0f + alpha / a;
+
+    const float b0 = (1.0f + alpha * a) / a0;
+    const float b1 = (-2.0f * cosW) / a0;
+    const float b2 = (1.0f - alpha * a) / a0;
+    const float a1 = (-2.0f * cosW) / a0;
+    const float a2 = (1.0f - alpha / a) / a0;
+
+    const float y = b0 * x + st.z1;
+    st.z1 = b1 * x - a1 * y + st.z2;
+    st.z2 = b2 * x - a2 * y;
+    return std::isfinite (y) ? y : x;
+}
+
+inline float processKlonPreEq (float x, ClipperKlonState& st, float sr) noexcept
+{
+    const float lpCoeff = detail::onePoleCoeff (2000.0f, sr);
+    st.preEqLP += (x - st.preEqLP) * lpCoeff;
+    return processKlonPeakEq (st.preEqLP, st.preBell, sr, 3000.0f, 1.0f, 6.0f);
+}
+
+inline float processKlonPostEq (float x, ClipperKlonState& st, float sr) noexcept
+{
+    return processKlonPeakEq (x, st.postBell, sr, 1500.0f, 1.0f, -6.0f);
+}
+
 // CLIPPER: threshold-driven clipper with continuous soft->hard knee control
 // and a voice morph from broadband classic -> TS-style -> Klon-style.
 inline float processClipper (float x, float drive, float girth, float bias, float mod,
@@ -3686,7 +3746,12 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     const float legacyClipIn = x * (voiceScale / std::max (threshold, 0.05f));
     const float klonDriveGain = detail::interpDrive5 (d,
                                                       0.90f, 2.15f, 7.20f, 32.00f, 160.0f);
-    const float clipIn = juce::jmap (klonVoice, legacyClipIn, x * klonDriveGain);
+    auto& klonState = state.clipperKlon[state.currentSeriesPass][ch];
+    float klonInput = x;
+    if (klonVoice > 0.0001f && ! rawMode)
+        klonInput = juce::jmap (klonVoice, x, processKlonPreEq (x, klonState, sr));
+
+    const float clipIn = juce::jmap (klonVoice, legacyClipIn, klonInput * klonDriveGain);
 
     // BIAS becomes symmetry / mismatch: shifts positive and negative clip
     // thresholds independently, but keep their mean around unity.
@@ -3713,8 +3778,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
 
     if (klonVoice > 0.0001f)
     {
-        auto& klonState = state.clipperKlon[state.currentSeriesPass][ch];
-        const float klonSoftIn = x * klonDriveGain * juce::jmap (k, 0.82f, 1.00f);
+        const float klonSoftIn = klonInput * klonDriveGain * juce::jmap (k, 0.82f, 1.00f);
         const float klonSoftK = 0.48f + k * 0.38f;
         const float klonSoft = klonState.softAdaa.process (klonSoftIn, klonSoftK)
                              * juce::jmap (k, 0.88f, 1.04f);
@@ -3730,11 +3794,9 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
 
     if (klonVoice > 0.0001f && ! rawMode)
     {
-        auto& klonState = state.clipperKlon[state.currentSeriesPass][ch];
-
         const float cleanHz = 452.0f + d * 78.0f;
         const float cleanCoeff = detail::onePoleCoeff (cleanHz, sr);
-        klonState.cleanLP += (x - klonState.cleanLP) * cleanCoeff;
+        klonState.cleanLP += (klonInput - klonState.cleanLP) * cleanCoeff;
 
         const float dirtyLowHz = 205.0f + d * 105.0f;
         const float dirtyLowCoeff = detail::onePoleCoeff (dirtyLowHz, sr);
@@ -3751,7 +3813,8 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
 
         const float cleanAmount = 0.46f * std::pow (1.0f - d, 2.65f);
         const float dirtyAmount = 1.0f - cleanAmount * 0.42f;
-        const float klonSum = dirtyPath * dirtyAmount + cleanPath * cleanAmount;
+        const float klonSum = processKlonPostEq (dirtyPath * dirtyAmount + cleanPath * cleanAmount,
+                                                 klonState, sr);
         clipped = juce::jmap (klonVoice, clipped, klonSum);
     }
 
@@ -4001,6 +4064,7 @@ inline void processBlock (State& state,
                 state.transistorCoreAdaa[sp][ch].reset();
                 state.tapeAdaa[sp][ch].reset();
                 state.clipperAdaa[sp][ch].reset();
+                state.clipperKlon[sp][ch].reset();
                 state.girthAdaa[sp][ch].reset();
                 state.triodeBlock[sp][ch] = 0.0f;
                 state.powerSag[sp][ch] = 0.0f;
@@ -4154,6 +4218,7 @@ inline void processBlock (State& state,
                     state.transistorCoreAdaa[sp][ch].reset();
                     state.tapeAdaa[sp][ch].reset();
                     state.clipperAdaa[sp][ch].reset();
+                    state.clipperKlon[sp][ch].reset();
                     state.interStageDCx[sp][ch] = 0.0f;
                     state.interStageDCy[sp][ch] = 0.0f;
                     state.interStageLPF[sp][ch] = 0.0f;
@@ -4207,6 +4272,7 @@ inline void processBlock (State& state,
                     state.transistorCoreAdaa[sp][ch].reset();
                     state.tapeAdaa[sp][ch].reset();
                     state.clipperAdaa[sp][ch].reset();
+                    state.clipperKlon[sp][ch].reset();
                     state.powerSag[sp][ch] = 0.0f;
                     state.transistorPreHP[sp][ch] = 0.0f;
                     state.transistorPreEdge[sp][ch] = 0.0f;
