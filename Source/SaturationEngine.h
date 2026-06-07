@@ -557,6 +557,13 @@ struct ClipperKlonState
     float preEqLP = 0.0f;
     KlonBiquadState preBell;
     KlonBiquadState postBell;
+    KlonBiquadState preCorrectBell500;
+    KlonBiquadState preCorrectBell1200;
+    KlonBiquadState preCorrectBell4000;
+    KlonBiquadState postCorrectBell116[4];
+    KlonBiquadState postCorrectBell139[3];
+    KlonBiquadState postCorrectBell1200[2];
+    KlonBiquadState postCorrectBell5631[2];
     adaa::StableTanhADAA softAdaa;
 
     void reset() noexcept
@@ -567,6 +574,13 @@ struct ClipperKlonState
         preEqLP = 0.0f;
         preBell.reset();
         postBell.reset();
+        preCorrectBell500.reset();
+        preCorrectBell1200.reset();
+        preCorrectBell4000.reset();
+        for (auto& s : postCorrectBell116)  s.reset();
+        for (auto& s : postCorrectBell139)  s.reset();
+        for (auto& s : postCorrectBell1200) s.reset();
+        for (auto& s : postCorrectBell5631) s.reset();
         softAdaa.reset();
     }
 };
@@ -1028,6 +1042,16 @@ struct State
                 fl (clipperKlon[sp][ch].preBell.z2);
                 fl (clipperKlon[sp][ch].postBell.z1);
                 fl (clipperKlon[sp][ch].postBell.z2);
+                fl (clipperKlon[sp][ch].preCorrectBell500.z1);
+                fl (clipperKlon[sp][ch].preCorrectBell500.z2);
+                fl (clipperKlon[sp][ch].preCorrectBell1200.z1);
+                fl (clipperKlon[sp][ch].preCorrectBell1200.z2);
+                fl (clipperKlon[sp][ch].preCorrectBell4000.z1);
+                fl (clipperKlon[sp][ch].preCorrectBell4000.z2);
+                for (auto& s : clipperKlon[sp][ch].postCorrectBell116)  { fl (s.z1); fl (s.z2); }
+                for (auto& s : clipperKlon[sp][ch].postCorrectBell139)  { fl (s.z1); fl (s.z2); }
+                for (auto& s : clipperKlon[sp][ch].postCorrectBell1200) { fl (s.z1); fl (s.z2); }
+                for (auto& s : clipperKlon[sp][ch].postCorrectBell5631) { fl (s.z1); fl (s.z2); }
                 fl (transistorPeakCatch[sp][ch].peakEnv);
                 fl (transistorPeakCatch[sp][ch].bodyEnv);
                 fl (transistorPeakCatch[sp][ch].gain);
@@ -3697,27 +3721,47 @@ inline float processKlonPeakEq (float x, KlonBiquadState& st, float sr,
     return std::isfinite (y) ? y : x;
 }
 
+template <int NumStages>
+inline float processKlonPeakEqStages (float x, KlonBiquadState (&states)[NumStages], float sr,
+                                      float freqHz, float q, float gainDb) noexcept
+{
+    const float stageGainDb = gainDb / (float) NumStages;
+    for (auto& state : states)
+        x = processKlonPeakEq (x, state, sr, freqHz, q, stageGainDb);
+    return x;
+}
+
 inline float processKlonPreEq (float x, ClipperKlonState& st, float sr,
                                float peak, float bias) noexcept
 {
+    (void) bias;
+
     const float p = detail::smoothStep01 (detail::clampF (peak, 0.0f, 1.0f));
-    const float b = detail::clampF (bias, -1.0f, 1.0f);
     const float lpHz = juce::jmap (p, 2000.0f, 4000.0f);
-    const float bellHz = 3000.0f + b * 300.0f;
-    const float bellGainDb = 6.0f + p * 1.0f;
     const float lpCoeff = detail::onePoleCoeff (lpHz, sr);
     st.preEqLP += (x - st.preEqLP) * lpCoeff;
-    return processKlonPeakEq (x, st.preBell, sr, bellHz, 1.0f, bellGainDb);
+
+    float y = x;
+    y = processKlonPeakEq (y, st.preCorrectBell500,  sr,  500.0f, 1.0f,  3.0f);
+    y = processKlonPeakEq (y, st.preCorrectBell1200, sr, 1200.0f, 1.0f,  3.0f);
+    y = processKlonPeakEq (y, st.preCorrectBell4000, sr, 4000.0f, 1.0f, -4.0f);
+    y = processKlonPeakEq (y, st.preBell,            sr, 3000.0f, 1.0f,  6.0f);
+    return y;
 }
 
 inline float processKlonPostEq (float x, ClipperKlonState& st, float sr,
                                 float peak, float bias) noexcept
 {
-    const float p = detail::smoothStep01 (detail::clampF (peak, 0.0f, 1.0f));
-    const float b = detail::clampF (bias, -1.0f, 1.0f);
-    const float bellHz = 1500.0f + b * 150.0f;
-    const float bellGainDb = juce::jmap (p, -6.0f, -3.5f);
-    return processKlonPeakEq (x, st.postBell, sr, bellHz, 1.0f, bellGainDb);
+    (void) peak;
+    (void) bias;
+
+    float y = x;
+    y = processKlonPeakEq (y,       st.postBell,            sr, 1500.0f,  1.0f,  -6.0f);
+    y = processKlonPeakEqStages (y, st.postCorrectBell116,  sr,  116.29f, 1.363f, -2.10f);
+    y = processKlonPeakEqStages (y, st.postCorrectBell139,  sr,  138.59f, 0.025f, -4.72f);
+    y = processKlonPeakEqStages (y, st.postCorrectBell1200, sr, 1200.0f,  1.621f,  3.38f);
+    y = processKlonPeakEqStages (y, st.postCorrectBell5631, sr, 5630.7f,  0.884f, -1.53f);
+    return y;
 }
 
 // CLIPPER: threshold-driven clipper with continuous soft->hard knee control
