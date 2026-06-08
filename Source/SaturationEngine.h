@@ -4101,6 +4101,8 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     const float b = detail::clampF (bias, -1.0f, 1.0f);
     const float m = detail::clampF (mod, 0.0f, 1.0f);
     const float classicVoice = clipperClassicVoice (m);
+    const float klonVoice = m <= 0.5f ? 0.0f : detail::smoothStep01 ((m - 0.5f) * 2.0f);
+    const float legacyDriveVoice = 1.0f - 0.08f * klonVoice;
 
     // DRIVE sets the clipping threshold, but we keep a fixed clip ceiling.
     // This makes the control behave like a real threshold while preserving a
@@ -4115,8 +4117,8 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     else
     {
         constexpr float kCurrentMaxAtNewDrive = 0.5f;
-        const float currentMaxThreshold = juce::jmap (classicVoice, 0.08f, 0.04f);
-        const float extendedMaxThreshold = juce::jmap (classicVoice, 0.08f, 0.0025f);
+        const float currentMaxThreshold = juce::jmap (legacyDriveVoice, 0.08f, 0.04f);
+        const float extendedMaxThreshold = juce::jmap (legacyDriveVoice, 0.08f, 0.0025f);
 
         if (d <= kCurrentMaxAtNewDrive)
         {
@@ -4135,7 +4137,6 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     float voiceScale = 1.0f;
     float legacyCleanBlend = 0.0f;
     float voiceLift = 1.0f;
-    float klonVoice = 0.0f;
     if (m <= 0.5f)
     {
         const float t = detail::smoothStep01 (m * 2.0f);
@@ -4143,7 +4144,6 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     }
     else
     {
-        klonVoice = detail::smoothStep01 ((m - 0.5f) * 2.0f);
         voiceScale = juce::jmap (klonVoice, 1.08f, 0.92f); // Klon opens back up
         legacyCleanBlend = 0.18f * klonVoice * (1.0f - klonVoice);
         voiceLift = juce::jmap (klonVoice, 1.0f, 1.12f);
@@ -4154,7 +4154,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     if (classicVoice > 0.0001f && ! rawMode)
         legacyInput = processClipperClassicPreEq (x, klonState, sr, classicVoice);
 
-    const float thresholdFloor = juce::jmap (classicVoice, 0.05f, 0.0015625f);
+    const float thresholdFloor = juce::jmap (legacyDriveVoice, 0.05f, 0.0015625f);
     const float legacyClipIn = legacyInput * (voiceScale / std::max (threshold, thresholdFloor));
     const float klonDriveGain = detail::interpDrive5 (d,
                                                       0.90f, 2.15f, 7.80f, 35.00f, 160.0f);
