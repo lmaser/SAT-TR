@@ -564,6 +564,10 @@ struct ClipperKlonState
     KlonBiquadState postCorrectBell139[3];
     KlonBiquadState postCorrectBell1200[2];
     KlonBiquadState postCorrectBell5631[2];
+    KlonBiquadState preResidualEq[6][2];
+    KlonBiquadState postResidualEq[24][2];
+    KlonBiquadState postResidualEq2[24][2];
+    KlonBiquadState postManualEq[3][2];
     adaa::StableTanhADAA softAdaa;
 
     void reset() noexcept
@@ -581,6 +585,18 @@ struct ClipperKlonState
         for (auto& s : postCorrectBell139)  s.reset();
         for (auto& s : postCorrectBell1200) s.reset();
         for (auto& s : postCorrectBell5631) s.reset();
+        for (auto& band : preResidualEq)
+            for (auto& s : band)
+                s.reset();
+        for (auto& band : postResidualEq)
+            for (auto& s : band)
+                s.reset();
+        for (auto& band : postResidualEq2)
+            for (auto& s : band)
+                s.reset();
+        for (auto& band : postManualEq)
+            for (auto& s : band)
+                s.reset();
         softAdaa.reset();
     }
 };
@@ -1052,6 +1068,30 @@ struct State
                 for (auto& s : clipperKlon[sp][ch].postCorrectBell139)  { fl (s.z1); fl (s.z2); }
                 for (auto& s : clipperKlon[sp][ch].postCorrectBell1200) { fl (s.z1); fl (s.z2); }
                 for (auto& s : clipperKlon[sp][ch].postCorrectBell5631) { fl (s.z1); fl (s.z2); }
+                for (auto& band : clipperKlon[sp][ch].preResidualEq)
+                    for (auto& s : band)
+                    {
+                        fl (s.z1);
+                        fl (s.z2);
+                    }
+                for (auto& band : clipperKlon[sp][ch].postResidualEq)
+                    for (auto& s : band)
+                    {
+                        fl (s.z1);
+                        fl (s.z2);
+                    }
+                for (auto& band : clipperKlon[sp][ch].postResidualEq2)
+                    for (auto& s : band)
+                    {
+                        fl (s.z1);
+                        fl (s.z2);
+                    }
+                for (auto& band : clipperKlon[sp][ch].postManualEq)
+                    for (auto& s : band)
+                    {
+                        fl (s.z1);
+                        fl (s.z2);
+                    }
                 fl (transistorPeakCatch[sp][ch].peakEnv);
                 fl (transistorPeakCatch[sp][ch].bodyEnv);
                 fl (transistorPeakCatch[sp][ch].gain);
@@ -3701,7 +3741,7 @@ inline float processKlonPeakEq (float x, KlonBiquadState& st, float sr,
 {
     const float safeSr = std::max (sr, 1000.0f);
     const float f0 = detail::clampF (freqHz, 20.0f, safeSr * 0.45f);
-    const float safeQ = std::max (q, 0.10f);
+    const float safeQ = std::max (q, 0.025f);
     const float w0 = kTwoPi * f0 / safeSr;
     const float cosW = std::cos (w0);
     const float sinW = std::sin (w0);
@@ -3721,6 +3761,58 @@ inline float processKlonPeakEq (float x, KlonBiquadState& st, float sr,
     return std::isfinite (y) ? y : x;
 }
 
+inline float processKlonShelfEq (float x, KlonBiquadState& st, float sr,
+                                 float freqHz, float q, float gainDb, bool highShelf) noexcept
+{
+    const float safeSr = std::max (sr, 1000.0f);
+    const float f0 = detail::clampF (freqHz, 20.0f, safeSr * 0.45f);
+    const float safeQ = std::max (q, 0.025f);
+    const float w0 = kTwoPi * f0 / safeSr;
+    const float cosW = std::cos (w0);
+    const float sinW = std::sin (w0);
+    const float a = std::pow (10.0f, gainDb / 40.0f);
+    const float alpha = sinW / (2.0f * safeQ);
+    const float beta = 2.0f * std::sqrt (a) * alpha;
+
+    float b0 = 1.0f;
+    float b1 = 0.0f;
+    float b2 = 0.0f;
+    float a0 = 1.0f;
+    float a1 = 0.0f;
+    float a2 = 0.0f;
+
+    if (highShelf)
+    {
+        b0 = a * ((a + 1.0f) + (a - 1.0f) * cosW + beta);
+        b1 = -2.0f * a * ((a - 1.0f) + (a + 1.0f) * cosW);
+        b2 = a * ((a + 1.0f) + (a - 1.0f) * cosW - beta);
+        a0 = (a + 1.0f) - (a - 1.0f) * cosW + beta;
+        a1 = 2.0f * ((a - 1.0f) - (a + 1.0f) * cosW);
+        a2 = (a + 1.0f) - (a - 1.0f) * cosW - beta;
+    }
+    else
+    {
+        b0 = a * ((a + 1.0f) - (a - 1.0f) * cosW + beta);
+        b1 = 2.0f * a * ((a - 1.0f) - (a + 1.0f) * cosW);
+        b2 = a * ((a + 1.0f) - (a - 1.0f) * cosW - beta);
+        a0 = (a + 1.0f) + (a - 1.0f) * cosW + beta;
+        a1 = -2.0f * ((a - 1.0f) + (a + 1.0f) * cosW);
+        a2 = (a + 1.0f) + (a - 1.0f) * cosW - beta;
+    }
+
+    const float invA0 = 1.0f / std::max (a0, 1.0e-12f);
+    b0 *= invA0;
+    b1 *= invA0;
+    b2 *= invA0;
+    a1 *= invA0;
+    a2 *= invA0;
+
+    const float y = b0 * x + st.z1;
+    st.z1 = b1 * x - a1 * y + st.z2;
+    st.z2 = b2 * x - a2 * y;
+    return std::isfinite (y) ? y : x;
+}
+
 template <int NumStages>
 inline float processKlonPeakEqStages (float x, KlonBiquadState (&states)[NumStages], float sr,
                                       float freqHz, float q, float gainDb) noexcept
@@ -3728,6 +3820,26 @@ inline float processKlonPeakEqStages (float x, KlonBiquadState (&states)[NumStag
     const float stageGainDb = gainDb / (float) NumStages;
     for (auto& state : states)
         x = processKlonPeakEq (x, state, sr, freqHz, q, stageGainDb);
+    return x;
+}
+
+inline float processKlonPeakEqStages (float x, KlonBiquadState* states, int numStages, float sr,
+                                      float freqHz, float q, float gainDb) noexcept
+{
+    const int stages = juce::jlimit (1, 2, numStages);
+    const float stageGainDb = gainDb / (float) stages;
+    for (int i = 0; i < stages; ++i)
+        x = processKlonPeakEq (x, states[i], sr, freqHz, q, stageGainDb);
+    return x;
+}
+
+inline float processKlonShelfEqStages (float x, KlonBiquadState* states, int numStages, float sr,
+                                       float freqHz, float q, float gainDb, bool highShelf) noexcept
+{
+    const int stages = juce::jlimit (1, 2, numStages);
+    const float stageGainDb = gainDb / (float) stages;
+    for (int i = 0; i < stages; ++i)
+        x = processKlonShelfEq (x, states[i], sr, freqHz, q, stageGainDb, highShelf);
     return x;
 }
 
@@ -3742,6 +3854,12 @@ inline float processKlonPreEq (float x, ClipperKlonState& st, float sr,
     st.preEqLP += (x - st.preEqLP) * lpCoeff;
 
     float y = x;
+    y = processKlonPeakEqStages  (y, st.preResidualEq[0], 2, sr,   90.00f, 3.000f, -0.26f);
+    y = processKlonPeakEqStages  (y, st.preResidualEq[1], 2, sr,  265.97f, 0.350f, -1.16f);
+    y = processKlonPeakEqStages  (y, st.preResidualEq[2], 2, sr,  785.99f, 3.000f, -0.16f);
+    y = processKlonPeakEqStages  (y, st.preResidualEq[3], 2, sr, 2322.78f, 2.000f, +0.19f);
+    y = processKlonPeakEqStages  (y, st.preResidualEq[4], 2, sr, 6864.29f, 2.000f, -0.17f);
+    y = processKlonShelfEqStages (y, st.preResidualEq[5], 1, sr, 8000.00f, 0.707f, -1.03f, true);
     y = processKlonPeakEq (y, st.preCorrectBell500,  sr,  500.0f, 1.0f,  3.0f);
     y = processKlonPeakEq (y, st.preCorrectBell1200, sr, 1200.0f, 1.0f,  3.0f);
     y = processKlonPeakEq (y, st.preCorrectBell4000, sr, 4000.0f, 1.0f, -4.0f);
@@ -3761,6 +3879,57 @@ inline float processKlonPostEq (float x, ClipperKlonState& st, float sr,
     y = processKlonPeakEqStages (y, st.postCorrectBell139,  sr,  138.59f, 0.025f, -4.72f);
     y = processKlonPeakEqStages (y, st.postCorrectBell1200, sr, 1200.0f,  1.621f,  3.38f);
     y = processKlonPeakEqStages (y, st.postCorrectBell5631, sr, 5630.7f,  0.884f, -1.53f);
+    y = processKlonShelfEqStages (y, st.postResidualEq[0],  2, sr,    55.00f,  1.400f,  +0.86f, false);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[1],  2, sr,    89.03f,  5.000f,  -0.65f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[2],  2, sr,   113.28f, 12.000f,  +1.06f);
+    y = processKlonShelfEqStages (y, st.postResidualEq[3],  1, sr,   180.00f,  1.400f,  +0.41f, false);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[4],  2, sr,   233.32f,  5.000f,  +3.60f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[5],  2, sr,   296.86f, 12.000f,  +0.71f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[6],  2, sr,   377.70f,  3.000f,  -1.19f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[7],  2, sr,   377.70f, 12.000f,  +1.39f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[8],  2, sr,   777.94f,  3.000f,  -0.44f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[9],  2, sr,   989.79f,  5.000f,  +1.12f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[10], 2, sr,  1259.34f,  0.350f,  -4.85f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[11], 2, sr,  1259.34f, 12.000f,  -0.94f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[12], 2, sr,  2038.64f,  5.000f,  +1.50f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[13], 2, sr,  2593.81f,  5.000f,  -2.52f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[14], 2, sr,  3300.18f, 12.000f,  +3.49f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[15], 2, sr,  4198.90f,  5.000f,  -2.06f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[16], 2, sr,  5342.37f, 12.000f,  +2.04f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[17], 2, sr,  6797.24f,  5.000f,  +1.23f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[18], 2, sr,  8648.31f,  3.000f,  -5.19f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[19], 2, sr,  8648.31f, 12.000f,  +5.86f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[20], 2, sr, 11003.47f,  3.000f,  +7.04f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[21], 2, sr, 11003.47f, 12.000f,  -5.23f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq[22], 2, sr, 14000.00f,  5.000f,  -1.19f);
+    y = processKlonShelfEqStages (y, st.postResidualEq[23], 1, sr, 15000.00f,  0.707f,  +0.83f, true);
+    y = processKlonShelfEqStages (y, st.postResidualEq2[0],  1, sr,    55.00f,  1.000f,  +1.14f, false);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[1],  2, sr,    69.98f,  8.000f,  +0.91f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[2],  2, sr,    89.03f,  5.000f,  -0.26f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[3],  2, sr,   113.28f, 12.000f,  +1.52f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[4],  2, sr,   144.13f, 12.000f,  +0.52f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[5],  2, sr,   233.32f,  0.350f,  -1.89f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[6],  2, sr,   233.32f,  5.000f,  +0.91f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[7],  2, sr,   296.86f,  5.000f,  +0.23f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[8],  2, sr,   480.56f,  5.000f,  -0.76f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[9],  2, sr,   611.43f,  2.000f,  +2.41f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[10], 2, sr,   611.43f, 12.000f,  -1.86f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[11], 2, sr,   777.94f,  3.000f,  -4.04f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[12], 2, sr,   777.94f, 12.000f,  +4.02f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[13], 2, sr,   989.79f,  5.000f,  +4.03f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[14], 2, sr,   989.79f, 12.000f,  -4.70f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[15], 2, sr,  1259.34f,  5.000f,  -0.37f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[16], 2, sr,  2038.64f, 12.000f,  +1.11f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[17], 2, sr,  2593.81f,  3.000f,  -1.48f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[18], 2, sr,  2593.81f, 12.000f,  +2.59f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[19], 2, sr,  3300.18f,  5.000f,  +2.13f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[20], 2, sr,  3300.18f, 12.000f,  -1.78f);
+    y = processKlonPeakEqStages  (y, st.postResidualEq2[21], 2, sr,  5342.37f,  2.000f,  -0.13f);
+    y = processKlonShelfEqStages (y, st.postResidualEq2[22], 2, sr,  7000.00f,  0.707f,  -1.23f, true);
+    y = processKlonShelfEqStages (y, st.postResidualEq2[23], 2, sr, 15000.00f,  1.400f,  -0.39f, true);
+    y = processKlonShelfEqStages (y, st.postManualEq[0], 1, sr,   22.591f, 1.000f, -3.44f, false);
+    y = processKlonPeakEqStages  (y, st.postManualEq[1], 1, sr,   93.495f, 5.946f, +2.60f);
+    y = processKlonPeakEqStages  (y, st.postManualEq[2], 2, sr,  788.04f,  0.423f, +4.58f);
     return y;
 }
 
