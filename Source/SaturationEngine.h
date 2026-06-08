@@ -570,6 +570,14 @@ struct ClipperKlonState
     KlonBiquadState postManualEq[3][2];
     KlonBiquadState preReferenceEq[6][2];
     KlonBiquadState postReferenceEq[12][2];
+    KlonBiquadState classicPreEq[2][2];
+    KlonBiquadState classicPostLowShelf;
+    KlonBiquadState classicPostBell515[4];
+    KlonBiquadState classicPostBell1586[3];
+    KlonBiquadState classicDrivePostBell21;
+    KlonBiquadState classicDrivePostBell18229;
+    KlonBiquadState classicPostHiCut;
+    float classicPostHiCutLP = 0.0f;
     adaa::StableTanhADAA softAdaa;
 
     void reset() noexcept
@@ -605,6 +613,18 @@ struct ClipperKlonState
         for (auto& band : postReferenceEq)
             for (auto& s : band)
                 s.reset();
+        for (auto& band : classicPreEq)
+            for (auto& s : band)
+                s.reset();
+        classicPostLowShelf.reset();
+        for (auto& s : classicPostBell515)
+            s.reset();
+        for (auto& s : classicPostBell1586)
+            s.reset();
+        classicDrivePostBell21.reset();
+        classicDrivePostBell18229.reset();
+        classicPostHiCut.reset();
+        classicPostHiCutLP = 0.0f;
         softAdaa.reset();
     }
 };
@@ -1112,6 +1132,31 @@ struct State
                         fl (s.z1);
                         fl (s.z2);
                     }
+                for (auto& band : clipperKlon[sp][ch].classicPreEq)
+                    for (auto& s : band)
+                    {
+                        fl (s.z1);
+                        fl (s.z2);
+                    }
+                fl (clipperKlon[sp][ch].classicPostLowShelf.z1);
+                fl (clipperKlon[sp][ch].classicPostLowShelf.z2);
+                for (auto& s : clipperKlon[sp][ch].classicPostBell515)
+                {
+                    fl (s.z1);
+                    fl (s.z2);
+                }
+                for (auto& s : clipperKlon[sp][ch].classicPostBell1586)
+                {
+                    fl (s.z1);
+                    fl (s.z2);
+                }
+                fl (clipperKlon[sp][ch].classicDrivePostBell21.z1);
+                fl (clipperKlon[sp][ch].classicDrivePostBell21.z2);
+                fl (clipperKlon[sp][ch].classicDrivePostBell18229.z1);
+                fl (clipperKlon[sp][ch].classicDrivePostBell18229.z2);
+                fl (clipperKlon[sp][ch].classicPostHiCut.z1);
+                fl (clipperKlon[sp][ch].classicPostHiCut.z2);
+                fl (clipperKlon[sp][ch].classicPostHiCutLP);
                 fl (transistorPeakCatch[sp][ch].peakEnv);
                 fl (transistorPeakCatch[sp][ch].bodyEnv);
                 fl (transistorPeakCatch[sp][ch].gain);
@@ -3833,6 +3878,37 @@ inline float processKlonShelfEq (float x, KlonBiquadState& st, float sr,
     return std::isfinite (y) ? y : x;
 }
 
+inline float processKlonLowPassEq (float x, KlonBiquadState& st, float sr,
+                                   float freqHz, float q) noexcept
+{
+    const float safeSr = std::max (sr, 1000.0f);
+    const float f0 = detail::clampF (freqHz, 20.0f, safeSr * 0.45f);
+    const float safeQ = std::max (q, 0.025f);
+    const float w0 = kTwoPi * f0 / safeSr;
+    const float cosW = std::cos (w0);
+    const float sinW = std::sin (w0);
+    const float alpha = sinW / (2.0f * safeQ);
+
+    float b0 = (1.0f - cosW) * 0.5f;
+    float b1 = 1.0f - cosW;
+    float b2 = (1.0f - cosW) * 0.5f;
+    float a0 = 1.0f + alpha;
+    float a1 = -2.0f * cosW;
+    float a2 = 1.0f - alpha;
+
+    const float invA0 = 1.0f / std::max (a0, 1.0e-12f);
+    b0 *= invA0;
+    b1 *= invA0;
+    b2 *= invA0;
+    a1 *= invA0;
+    a2 *= invA0;
+
+    const float y = b0 * x + st.z1;
+    st.z1 = b1 * x - a1 * y + st.z2;
+    st.z2 = b2 * x - a2 * y;
+    return std::isfinite (y) ? y : x;
+}
+
 template <int NumStages>
 inline float processKlonPeakEqStages (float x, KlonBiquadState (&states)[NumStages], float sr,
                                       float freqHz, float q, float gainDb) noexcept
@@ -3846,7 +3922,7 @@ inline float processKlonPeakEqStages (float x, KlonBiquadState (&states)[NumStag
 inline float processKlonPeakEqStages (float x, KlonBiquadState* states, int numStages, float sr,
                                       float freqHz, float q, float gainDb) noexcept
 {
-    const int stages = juce::jlimit (1, 2, numStages);
+    const int stages = juce::jlimit (1, 4, numStages);
     const float stageGainDb = gainDb / (float) stages;
     for (int i = 0; i < stages; ++i)
         x = processKlonPeakEq (x, states[i], sr, freqHz, q, stageGainDb);
@@ -3856,7 +3932,7 @@ inline float processKlonPeakEqStages (float x, KlonBiquadState* states, int numS
 inline float processKlonShelfEqStages (float x, KlonBiquadState* states, int numStages, float sr,
                                        float freqHz, float q, float gainDb, bool highShelf) noexcept
 {
-    const int stages = juce::jlimit (1, 2, numStages);
+    const int stages = juce::jlimit (1, 4, numStages);
     const float stageGainDb = gainDb / (float) stages;
     for (int i = 0; i < stages; ++i)
         x = processKlonShelfEq (x, states[i], sr, freqHz, q, stageGainDb, highShelf);
@@ -3983,6 +4059,37 @@ inline float processKlonPostEq (float x, ClipperKlonState& st, float sr,
     return y;
 }
 
+inline float clipperClassicVoice (float mod) noexcept
+{
+    return 1.0f - detail::smoothStep01 (detail::clampF (mod * 2.0f, 0.0f, 1.0f));
+}
+
+inline float processClipperClassicPreEq (float x, ClipperKlonState& st, float sr, float amount) noexcept
+{
+    float y = x;
+    y = processKlonPeakEqStages (y, st.classicPreEq[0], 1, sr,    41.116f, 0.123f, -26.50f * amount);
+    y = processKlonPeakEqStages (y, st.classicPreEq[1], 2, sr, 18601.00f, 0.174f,  -7.05f * amount);
+    return y;
+}
+
+inline float processClipperClassicPostEq (float x, ClipperKlonState& st, float sr,
+                                          float amount, float drive) noexcept
+{
+    float y = x;
+    y = processKlonShelfEq (y, st.classicPostLowShelf, sr, 22.591f, 1.000f, -4.81f * amount, false);
+    y = processKlonPeakEqStages (y, st.classicPostBell515, 4, sr,  514.78f, 0.025f, -10.20f * amount);
+    y = processKlonPeakEqStages (y, st.classicPostBell1586, 3, sr, 1585.6f,  0.194f,  +2.79f * amount);
+
+    const float driveAmount = amount * detail::clampF (drive, 0.0f, 1.0f);
+    y = processKlonPeakEq (y, st.classicDrivePostBell21,    sr,    20.833f, 0.097f, -10.11f * driveAmount);
+    y = processKlonPeakEq (y, st.classicDrivePostBell18229, sr, 18229.0f,  0.299f, -10.93f * driveAmount);
+
+    const float biquadCut = processKlonLowPassEq (y, st.classicPostHiCut, sr, 13315.0f, 1.000f);
+    const float onePoleCoeff = detail::onePoleCoeff (13315.0f, sr);
+    st.classicPostHiCutLP += (biquadCut - st.classicPostHiCutLP) * onePoleCoeff;
+    return juce::jmap (amount, y, st.classicPostHiCutLP);
+}
+
 // CLIPPER: threshold-driven clipper with continuous soft->hard knee control
 // and a voice morph from broadband classic -> TS-style -> Klon-style.
 inline float processClipper (float x, float drive, float girth, float bias, float mod, float peak,
@@ -3993,12 +4100,37 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     const float k = detail::clampF (girth, 0.0f, 1.0f);
     const float b = detail::clampF (bias, -1.0f, 1.0f);
     const float m = detail::clampF (mod, 0.0f, 1.0f);
+    const float classicVoice = clipperClassicVoice (m);
 
     // DRIVE sets the clipping threshold, but we keep a fixed clip ceiling.
     // This makes the control behave like a real threshold while preserving a
     // practical output range similar to pro clippers and pedal stages.
-    const float threshold = detail::interpDrive5 (d,
-                                                  1.08f, 0.92f, 0.72f, 0.48f, 0.24f);
+    float threshold = 1.08f;
+    constexpr float kLegacyMaxAtNewDrive = 1.0f / 3.0f;
+    if (d <= kLegacyMaxAtNewDrive)
+    {
+        threshold = detail::interpDrive5 (d / kLegacyMaxAtNewDrive,
+                                          1.08f, 0.92f, 0.72f, 0.48f, 0.24f);
+    }
+    else
+    {
+        constexpr float kCurrentMaxAtNewDrive = 0.5f;
+        const float currentMaxThreshold = juce::jmap (classicVoice, 0.08f, 0.04f);
+        const float extendedMaxThreshold = juce::jmap (classicVoice, 0.08f, 0.0025f);
+
+        if (d <= kCurrentMaxAtNewDrive)
+        {
+            const float extraDrive = detail::smoothStep01 ((d - kLegacyMaxAtNewDrive)
+                                                        / (kCurrentMaxAtNewDrive - kLegacyMaxAtNewDrive));
+            threshold = juce::jmap (extraDrive, 0.24f, currentMaxThreshold);
+        }
+        else
+        {
+            const float extraDrive = detail::smoothStep01 ((d - kCurrentMaxAtNewDrive)
+                                                        / (1.0f - kCurrentMaxAtNewDrive));
+            threshold = juce::jmap (extraDrive, currentMaxThreshold, extendedMaxThreshold);
+        }
+    }
 
     float voiceScale = 1.0f;
     float legacyCleanBlend = 0.0f;
@@ -4017,10 +4149,15 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
         voiceLift = juce::jmap (klonVoice, 1.0f, 1.12f);
     }
 
-    const float legacyClipIn = x * (voiceScale / std::max (threshold, 0.05f));
+    auto& klonState = state.clipperKlon[state.currentSeriesPass][ch];
+    float legacyInput = x;
+    if (classicVoice > 0.0001f && ! rawMode)
+        legacyInput = processClipperClassicPreEq (x, klonState, sr, classicVoice);
+
+    const float thresholdFloor = juce::jmap (classicVoice, 0.05f, 0.0015625f);
+    const float legacyClipIn = legacyInput * (voiceScale / std::max (threshold, thresholdFloor));
     const float klonDriveGain = detail::interpDrive5 (d,
                                                       0.90f, 2.15f, 7.80f, 35.00f, 160.0f);
-    auto& klonState = state.clipperKlon[state.currentSeriesPass][ch];
     float klonInput = x;
     if (klonVoice > 0.0001f && ! rawMode)
         klonInput = juce::jmap (klonVoice, x, processKlonPreEq (x, klonState, sr, peak, b, d));
@@ -4050,6 +4187,9 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     const float outputScale = 2.0f / (thresholdPos + thresholdNeg);
     clipped *= outputScale;
 
+    if (classicVoice > 0.0001f && ! rawMode)
+        clipped = processClipperClassicPostEq (clipped, klonState, sr, classicVoice, d);
+
     if (klonVoice > 0.0001f)
     {
         const float kneeT = k <= 0.5f ? k * 2.0f : (k - 0.5f) * 2.0f;
@@ -4059,8 +4199,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
                                           : juce::jmap (kneeT, 0.67f, 0.42f);
         const float klonSoftOut = k <= 0.5f ? juce::jmap (kneeT, 1.10f, 0.96f)
                                             : juce::jmap (kneeT, 0.96f, 0.84f);
-        const float klonSoftBlend = klonVoice * (k <= 0.5f ? juce::jmap (kneeT, 0.880f, 0.970f)
-                                                           : juce::jmap (kneeT, 0.970f, 0.995f));
+        const float klonSoftBlend = klonVoice * detail::smoothStep01 (k);
         const float klonSoftIn = klonInput * klonDriveGain * klonSoftInGain;
         const float klonSoft = klonState.softAdaa.process (klonSoftIn, klonSoftK)
                              * klonSoftOut;
