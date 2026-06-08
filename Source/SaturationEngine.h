@@ -568,6 +568,8 @@ struct ClipperKlonState
     KlonBiquadState postResidualEq[24][2];
     KlonBiquadState postResidualEq2[24][2];
     KlonBiquadState postManualEq[3][2];
+    KlonBiquadState preReferenceEq[6][2];
+    KlonBiquadState postReferenceEq[12][2];
     adaa::StableTanhADAA softAdaa;
 
     void reset() noexcept
@@ -595,6 +597,12 @@ struct ClipperKlonState
             for (auto& s : band)
                 s.reset();
         for (auto& band : postManualEq)
+            for (auto& s : band)
+                s.reset();
+        for (auto& band : preReferenceEq)
+            for (auto& s : band)
+                s.reset();
+        for (auto& band : postReferenceEq)
             for (auto& s : band)
                 s.reset();
         softAdaa.reset();
@@ -1087,6 +1095,18 @@ struct State
                         fl (s.z2);
                     }
                 for (auto& band : clipperKlon[sp][ch].postManualEq)
+                    for (auto& s : band)
+                    {
+                        fl (s.z1);
+                        fl (s.z2);
+                    }
+                for (auto& band : clipperKlon[sp][ch].preReferenceEq)
+                    for (auto& s : band)
+                    {
+                        fl (s.z1);
+                        fl (s.z2);
+                    }
+                for (auto& band : clipperKlon[sp][ch].postReferenceEq)
                     for (auto& s : band)
                     {
                         fl (s.z1);
@@ -3843,8 +3863,16 @@ inline float processKlonShelfEqStages (float x, KlonBiquadState* states, int num
     return x;
 }
 
+inline float klonReferenceWeight (float drive) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float driveOpen = detail::smoothStep01 ((d - 0.15f) / 0.35f);
+    const float topGuard = detail::smoothStep01 ((d - 0.90f) / 0.10f);
+    return 0.25f * driveOpen * (1.0f - 0.25f * topGuard);
+}
+
 inline float processKlonPreEq (float x, ClipperKlonState& st, float sr,
-                               float peak, float bias) noexcept
+                               float peak, float bias, float drive) noexcept
 {
     (void) bias;
 
@@ -3864,11 +3892,19 @@ inline float processKlonPreEq (float x, ClipperKlonState& st, float sr,
     y = processKlonPeakEq (y, st.preCorrectBell1200, sr, 1200.0f, 1.0f,  3.0f);
     y = processKlonPeakEq (y, st.preCorrectBell4000, sr, 4000.0f, 1.0f, -4.0f);
     y = processKlonPeakEq (y, st.preBell,            sr, 3000.0f, 1.0f,  6.0f);
+
+    const float ref = klonReferenceWeight (drive);
+    y = processKlonPeakEqStages  (y, st.preReferenceEq[0], 1, sr,  154.72f, 1.000f,  1.89f * ref);
+    y = processKlonPeakEqStages  (y, st.preReferenceEq[1], 2, sr, 1030.54f, 2.000f, -0.86f * ref);
+    y = processKlonPeakEqStages  (y, st.preReferenceEq[2], 2, sr, 1771.58f, 3.000f,  1.15f * ref);
+    y = processKlonShelfEqStages (y, st.preReferenceEq[3], 2, sr, 2000.00f, 0.500f,  2.50f * ref, true);
+    y = processKlonPeakEqStages  (y, st.preReferenceEq[4], 2, sr, 2322.78f, 1.400f,  0.58f * ref);
+    y = processKlonPeakEqStages  (y, st.preReferenceEq[5], 2, sr, 6864.29f, 3.000f,  0.84f * ref);
     return y;
 }
 
 inline float processKlonPostEq (float x, ClipperKlonState& st, float sr,
-                                float peak, float bias) noexcept
+                                float peak, float bias, float drive) noexcept
 {
     (void) peak;
     (void) bias;
@@ -3930,6 +3966,20 @@ inline float processKlonPostEq (float x, ClipperKlonState& st, float sr,
     y = processKlonShelfEqStages (y, st.postManualEq[0], 1, sr,   22.591f, 1.000f, -3.44f, false);
     y = processKlonPeakEqStages  (y, st.postManualEq[1], 1, sr,   93.495f, 5.946f, +2.60f);
     y = processKlonPeakEqStages  (y, st.postManualEq[2], 2, sr,  788.04f,  0.423f, +4.58f);
+
+    const float ref = klonReferenceWeight (drive);
+    y = processKlonPeakEqStages  (y, st.postReferenceEq[0],  1, sr,   144.13f,  1.000f,  3.80f * ref);
+    y = processKlonPeakEqStages  (y, st.postReferenceEq[1],  2, sr,   233.32f, 12.000f, -3.26f * ref);
+    y = processKlonPeakEqStages  (y, st.postReferenceEq[2],  2, sr,   296.86f,  5.000f,  1.70f * ref);
+    y = processKlonPeakEqStages  (y, st.postReferenceEq[3],  2, sr,   611.43f,  3.000f, -0.82f * ref);
+    y = processKlonPeakEqStages  (y, st.postReferenceEq[4],  2, sr,  1259.34f,  5.000f, -2.25f * ref);
+    y = processKlonPeakEqStages  (y, st.postReferenceEq[5],  2, sr,  2038.64f,  3.000f,  4.50f * ref);
+    y = processKlonPeakEqStages  (y, st.postReferenceEq[6],  2, sr,  2038.64f,  5.000f,  1.79f * ref);
+    y = processKlonShelfEqStages (y, st.postReferenceEq[7],  2, sr,  3500.00f,  2.000f,  1.81f * ref, true);
+    y = processKlonPeakEqStages  (y, st.postReferenceEq[8],  2, sr,  6797.24f,  0.250f,  3.09f * ref);
+    y = processKlonShelfEqStages (y, st.postReferenceEq[9],  2, sr,  9000.00f,  2.000f, -1.20f * ref, true);
+    y = processKlonShelfEqStages (y, st.postReferenceEq[10], 2, sr, 12000.00f,  2.000f,  2.10f * ref, true);
+    y = processKlonShelfEqStages (y, st.postReferenceEq[11], 2, sr, 15000.00f,  2.000f, -1.33f * ref, true);
     return y;
 }
 
@@ -3973,7 +4023,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     auto& klonState = state.clipperKlon[state.currentSeriesPass][ch];
     float klonInput = x;
     if (klonVoice > 0.0001f && ! rawMode)
-        klonInput = juce::jmap (klonVoice, x, processKlonPreEq (x, klonState, sr, peak, b));
+        klonInput = juce::jmap (klonVoice, x, processKlonPreEq (x, klonState, sr, peak, b, d));
 
     const float clipIn = juce::jmap (klonVoice, legacyClipIn, klonInput * klonDriveGain);
 
@@ -4046,7 +4096,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
         const float cleanAmount = 0.46f * std::pow (1.0f - d, 2.65f);
         const float dirtyAmount = 1.0f - cleanAmount * 0.42f;
         const float klonSum = processKlonPostEq (dirtyPath * dirtyAmount + cleanPath * cleanAmount,
-                                                 klonState, sr, peak, b);
+                                                 klonState, sr, peak, b, d);
         clipped = juce::jmap (klonVoice, clipped, klonSum);
     }
 
