@@ -216,7 +216,7 @@ namespace adaa
         static inline float clipPositive (float x, float threshold, float knee) noexcept
         {
             const float T = std::max (threshold, 1.0e-4f);
-            const float W = std::max (knee, 1.0e-5f);
+            const float W = juce::jlimit (1.0e-5f, T, knee);
             const float L = std::max (0.0f, T - W);
             const float H = T + W;
 
@@ -232,7 +232,7 @@ namespace adaa
         static inline float clipPositiveAD1 (float x, float threshold, float knee) noexcept
         {
             const float T = std::max (threshold, 1.0e-4f);
-            const float W = std::max (knee, 1.0e-5f);
+            const float W = juce::jlimit (1.0e-5f, T, knee);
             const float L = std::max (0.0f, T - W);
             const float H = T + W;
 
@@ -2700,6 +2700,29 @@ inline float getClipperLevelCorrection (float drive, float girth, float mod, int
     return baseTrim * std::pow (10.0f, midAttenuationDb / 20.0f);
 }
 
+inline float getBroadbandDriveReferenceTrim (Model model, float drive) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+
+    switch (model)
+    {
+        case Model::Tape:
+            return detail::interpDrive5 (d, 0.8309f, 0.7647f, 0.7221f, 0.6554f, 0.7037f);
+
+        case Model::Tube:
+            return detail::interpDrive5 (d, 1.0083f, 1.0549f, 1.0550f, 0.9551f, 0.6525f);
+
+        case Model::Transistor:
+            return detail::interpDrive5 (d, 1.1173f, 0.9350f, 0.6909f, 0.5999f, 0.6226f);
+
+        case Model::Diode:
+            return detail::interpDrive5 (d, 1.5604f, 1.2751f, 0.8984f, 0.7366f, 0.6625f);
+
+        default:
+            return 1.0f;
+    }
+}
+
 inline float getHotInputReferenceCorrection (Model model, float drive, float girth,
                                              float mod, int seriesCount) noexcept
 {
@@ -3016,7 +3039,8 @@ inline float getHotInputReferenceCorrection (Model model, float drive, float gir
         charTrim[charIndex] = detail::morphThreeWay (m, trimType0, trimType1, trimType2);
     }
 
-    return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
+    return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2])
+         * getBroadbandDriveReferenceTrim (model, d);
 }
 
 // ----------------------------------------------------------------
@@ -4288,7 +4312,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     const float klonThresholdNeg = detail::clampF (klonDiodeHeadroom * (1.0f - b * klonBiasRange), 0.30f, 1.35f);
     const float thresholdPos = juce::jmap (klonVoice, legacyThresholdPos, klonThresholdPos);
     const float thresholdNeg = juce::jmap (klonVoice, legacyThresholdNeg, klonThresholdNeg);
-    const float legacyKneeRange = juce::jmap (classicVoice, 0.56f, 2.24f);
+    const float legacyKneeRange = juce::jmap (classicVoice, 0.56f, 0.99f);
     const float legacyKneeSoft = 0.01f + k * legacyKneeRange;
     const float klonKneeSoft = 0.045f + k * 0.34f;
     const float kneeSoft = juce::jmap (klonVoice, legacyKneeSoft, klonKneeSoft);
