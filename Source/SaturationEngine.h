@@ -541,11 +541,23 @@ struct KlonBiquadState
 {
     float z1 = 0.0f;
     float z2 = 0.0f;
+    float b0 = 1.0f;
+    float b1 = 0.0f;
+    float b2 = 0.0f;
+    float a1 = 0.0f;
+    float a2 = 0.0f;
+    float cachedSr = -1.0f;
+    float cachedFreq = -1.0f;
+    float cachedQ = -1.0f;
+    float cachedGain = 9999.0f;
+    int cachedType = -1;
+    bool cachedHighShelf = false;
 
     void reset() noexcept
     {
         z1 = 0.0f;
         z2 = 0.0f;
+        cachedType = -1;
     }
 };
 
@@ -2681,7 +2693,11 @@ inline float getClipperLevelCorrection (float drive, float girth, float mod, int
         charTrim[charIndex] = detail::morphThreeWay (m, trimType0, trimType1, trimType2);
     }
 
-    return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
+    const float baseTrim = detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
+    const float midType = std::pow (detail::clampF (1.0f - std::abs (m - 0.5f) * 2.0f, 0.0f, 1.0f), 1.5f);
+    const float driveTrim = detail::smoothStep01 (d * 2.0f);
+    const float midAttenuationDb = -9.0f * midType * driveTrim;
+    return baseTrim * std::pow (10.0f, midAttenuationDb / 20.0f);
 }
 
 inline float getHotInputReferenceCorrection (Model model, float drive, float girth,
@@ -3801,8 +3817,38 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
     return clipped * voiceTrim;
 }
 
-inline float processKlonPeakEq (float x, KlonBiquadState& st, float sr,
-                                float freqHz, float q, float gainDb) noexcept
+inline bool klonBiquadNeedsUpdate (const KlonBiquadState& st, int type, float sr,
+                                   float freqHz, float q, float gainDb, bool highShelf) noexcept
+{
+    return st.cachedType != type
+        || st.cachedSr != sr
+        || st.cachedFreq != freqHz
+        || st.cachedQ != q
+        || st.cachedGain != gainDb
+        || st.cachedHighShelf != highShelf;
+}
+
+inline void cacheKlonBiquad (KlonBiquadState& st, int type, float sr,
+                             float freqHz, float q, float gainDb, bool highShelf) noexcept
+{
+    st.cachedType = type;
+    st.cachedSr = sr;
+    st.cachedFreq = freqHz;
+    st.cachedQ = q;
+    st.cachedGain = gainDb;
+    st.cachedHighShelf = highShelf;
+}
+
+inline float processCachedKlonBiquad (float x, KlonBiquadState& st) noexcept
+{
+    const float y = st.b0 * x + st.z1;
+    st.z1 = st.b1 * x - st.a1 * y + st.z2;
+    st.z2 = st.b2 * x - st.a2 * y;
+    return std::isfinite (y) ? y : x;
+}
+
+inline void updateKlonPeakEqCoeffs (KlonBiquadState& st, float sr,
+                                    float freqHz, float q, float gainDb) noexcept
 {
     const float safeSr = std::max (sr, 1000.0f);
     const float f0 = detail::clampF (freqHz, 20.0f, safeSr * 0.45f);
@@ -3814,20 +3860,25 @@ inline float processKlonPeakEq (float x, KlonBiquadState& st, float sr,
     const float a = std::pow (10.0f, gainDb / 40.0f);
     const float a0 = 1.0f + alpha / a;
 
-    const float b0 = (1.0f + alpha * a) / a0;
-    const float b1 = (-2.0f * cosW) / a0;
-    const float b2 = (1.0f - alpha * a) / a0;
-    const float a1 = (-2.0f * cosW) / a0;
-    const float a2 = (1.0f - alpha / a) / a0;
-
-    const float y = b0 * x + st.z1;
-    st.z1 = b1 * x - a1 * y + st.z2;
-    st.z2 = b2 * x - a2 * y;
-    return std::isfinite (y) ? y : x;
+    st.b0 = (1.0f + alpha * a) / a0;
+    st.b1 = (-2.0f * cosW) / a0;
+    st.b2 = (1.0f - alpha * a) / a0;
+    st.a1 = (-2.0f * cosW) / a0;
+    st.a2 = (1.0f - alpha / a) / a0;
+    cacheKlonBiquad (st, 1, sr, freqHz, q, gainDb, false);
 }
 
-inline float processKlonShelfEq (float x, KlonBiquadState& st, float sr,
-                                 float freqHz, float q, float gainDb, bool highShelf) noexcept
+inline float processKlonPeakEq (float x, KlonBiquadState& st, float sr,
+                                float freqHz, float q, float gainDb) noexcept
+{
+    if (klonBiquadNeedsUpdate (st, 1, sr, freqHz, q, gainDb, false))
+        updateKlonPeakEqCoeffs (st, sr, freqHz, q, gainDb);
+
+    return processCachedKlonBiquad (x, st);
+}
+
+inline void updateKlonShelfEqCoeffs (KlonBiquadState& st, float sr,
+                                     float freqHz, float q, float gainDb, bool highShelf) noexcept
 {
     const float safeSr = std::max (sr, 1000.0f);
     const float f0 = detail::clampF (freqHz, 20.0f, safeSr * 0.45f);
@@ -3866,20 +3917,25 @@ inline float processKlonShelfEq (float x, KlonBiquadState& st, float sr,
     }
 
     const float invA0 = 1.0f / std::max (a0, 1.0e-12f);
-    b0 *= invA0;
-    b1 *= invA0;
-    b2 *= invA0;
-    a1 *= invA0;
-    a2 *= invA0;
-
-    const float y = b0 * x + st.z1;
-    st.z1 = b1 * x - a1 * y + st.z2;
-    st.z2 = b2 * x - a2 * y;
-    return std::isfinite (y) ? y : x;
+    st.b0 = b0 * invA0;
+    st.b1 = b1 * invA0;
+    st.b2 = b2 * invA0;
+    st.a1 = a1 * invA0;
+    st.a2 = a2 * invA0;
+    cacheKlonBiquad (st, 2, sr, freqHz, q, gainDb, highShelf);
 }
 
-inline float processKlonLowPassEq (float x, KlonBiquadState& st, float sr,
-                                   float freqHz, float q) noexcept
+inline float processKlonShelfEq (float x, KlonBiquadState& st, float sr,
+                                 float freqHz, float q, float gainDb, bool highShelf) noexcept
+{
+    if (klonBiquadNeedsUpdate (st, 2, sr, freqHz, q, gainDb, highShelf))
+        updateKlonShelfEqCoeffs (st, sr, freqHz, q, gainDb, highShelf);
+
+    return processCachedKlonBiquad (x, st);
+}
+
+inline void updateKlonLowPassEqCoeffs (KlonBiquadState& st, float sr,
+                                       float freqHz, float q) noexcept
 {
     const float safeSr = std::max (sr, 1000.0f);
     const float f0 = detail::clampF (freqHz, 20.0f, safeSr * 0.45f);
@@ -3897,16 +3953,21 @@ inline float processKlonLowPassEq (float x, KlonBiquadState& st, float sr,
     float a2 = 1.0f - alpha;
 
     const float invA0 = 1.0f / std::max (a0, 1.0e-12f);
-    b0 *= invA0;
-    b1 *= invA0;
-    b2 *= invA0;
-    a1 *= invA0;
-    a2 *= invA0;
+    st.b0 = b0 * invA0;
+    st.b1 = b1 * invA0;
+    st.b2 = b2 * invA0;
+    st.a1 = a1 * invA0;
+    st.a2 = a2 * invA0;
+    cacheKlonBiquad (st, 3, sr, freqHz, q, 0.0f, false);
+}
 
-    const float y = b0 * x + st.z1;
-    st.z1 = b1 * x - a1 * y + st.z2;
-    st.z2 = b2 * x - a2 * y;
-    return std::isfinite (y) ? y : x;
+inline float processKlonLowPassEq (float x, KlonBiquadState& st, float sr,
+                                   float freqHz, float q) noexcept
+{
+    if (klonBiquadNeedsUpdate (st, 3, sr, freqHz, q, 0.0f, false))
+        updateKlonLowPassEqCoeffs (st, sr, freqHz, q);
+
+    return processCachedKlonBiquad (x, st);
 }
 
 template <int NumStages>
@@ -4174,7 +4235,8 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     const float klonThresholdNeg = detail::clampF (klonDiodeHeadroom * (1.0f - b * klonBiasRange), 0.30f, 1.35f);
     const float thresholdPos = juce::jmap (klonVoice, legacyThresholdPos, klonThresholdPos);
     const float thresholdNeg = juce::jmap (klonVoice, legacyThresholdNeg, klonThresholdNeg);
-    const float legacyKneeSoft = 0.01f + k * 0.56f;
+    const float legacyKneeRange = juce::jmap (classicVoice, 0.56f, 1.12f);
+    const float legacyKneeSoft = 0.01f + k * legacyKneeRange;
     const float klonKneeSoft = 0.045f + k * 0.34f;
     const float kneeSoft = juce::jmap (klonVoice, legacyKneeSoft, klonKneeSoft);
     const float kneePos = std::max (1.0e-4f, thresholdPos * kneeSoft);
