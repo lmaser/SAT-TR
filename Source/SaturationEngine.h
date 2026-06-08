@@ -3353,9 +3353,9 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     // overheats the repeated series stages and buries sag, because later
     // passes hit the same hard ceiling even at drive=0.
     const float inputPad12AX7 = detail::interpDrive5 (d,
-                                                      0.42f, 0.52f, 0.66f, 0.82f, 1.00f);
+                                                      0.42f, 0.52f, 0.66f, 0.82f, 2.00f);
     const float inputPadPower = detail::interpDrive5 (d,
-                                                      0.48f, 0.58f, 0.72f, 0.90f, 1.08f);
+                                                      0.48f, 0.58f, 0.72f, 0.90f, 2.16f);
     const float inputPad = juce::jmap (tubeMorph, inputPad12AX7, inputPadPower);
     xStage *= inputPad;
     const float sagAmt = triodeSag.lastSag;
@@ -3615,10 +3615,10 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
     }
 
     const float inputPadBjt = detail::interpDrive5 (d,
-                                                    0.14f, 0.30f, 0.68f, 1.32f, 2.75f)
+                                                    0.14f, 0.30f, 0.68f, 1.32f, 5.50f)
                             * juce::jmap (bodyToneCurve, 1.00f, 1.22f);
     const float inputPadFet = detail::interpDrive5 (d,
-                                                    0.18f, 0.36f, 0.74f, 1.26f, 2.20f)
+                                                    0.18f, 0.36f, 0.74f, 1.26f, 4.40f)
                             * juce::jmap (bodyToneCurve, 1.00f, 1.14f);
     const float inputPad = juce::jmap (type, inputPadBjt, inputPadFet);
 
@@ -3753,9 +3753,9 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
     const float condKnee = juce::jmap (condCurve, 0.24f, 0.075f);
     const float condDrive = juce::jmap (condDriveCurve, 1.00f, 1.12f);
 
-    const float driveFb = detail::interpDrive5 (d, 1.00f, 1.45f, 2.80f, 5.80f, 9.50f);
-    const float driveHard = detail::interpDrive5 (d, 1.00f, 2.20f, 5.20f, 10.80f, 18.00f);
-    const float driveOpen = detail::interpDrive5 (d, 1.00f, 1.65f, 3.40f, 6.10f, 9.60f);
+    const float driveFb = detail::interpDrive5 (d, 1.00f, 1.45f, 2.80f, 5.80f, 19.00f);
+    const float driveHard = detail::interpDrive5 (d, 1.00f, 2.20f, 5.20f, 10.80f, 36.00f);
+    const float driveOpen = detail::interpDrive5 (d, 1.00f, 1.65f, 3.40f, 6.10f, 19.20f);
 
     float driveGain = driveHard;
     float thresholdMul = 1.0f;
@@ -3970,6 +3970,29 @@ inline float processKlonLowPassEq (float x, KlonBiquadState& st, float sr,
     return processCachedKlonBiquad (x, st);
 }
 
+inline bool klonFixedBiquadNeedsUpdate (const KlonBiquadState& st, int type, float sr) noexcept
+{
+    return st.cachedType != type || st.cachedSr != sr;
+}
+
+inline float processKlonFixedPeakEq (float x, KlonBiquadState& st, float sr,
+                                     float freqHz, float q, float gainDb) noexcept
+{
+    if (klonFixedBiquadNeedsUpdate (st, 1, sr))
+        updateKlonPeakEqCoeffs (st, sr, freqHz, q, gainDb);
+
+    return processCachedKlonBiquad (x, st);
+}
+
+inline float processKlonFixedShelfEq (float x, KlonBiquadState& st, float sr,
+                                      float freqHz, float q, float gainDb, bool highShelf) noexcept
+{
+    if (klonFixedBiquadNeedsUpdate (st, 2, sr))
+        updateKlonShelfEqCoeffs (st, sr, freqHz, q, gainDb, highShelf);
+
+    return processCachedKlonBiquad (x, st);
+}
+
 template <int NumStages>
 inline float processKlonPeakEqStages (float x, KlonBiquadState (&states)[NumStages], float sr,
                                       float freqHz, float q, float gainDb) noexcept
@@ -4000,6 +4023,36 @@ inline float processKlonShelfEqStages (float x, KlonBiquadState* states, int num
     return x;
 }
 
+template <int NumStages>
+inline float processKlonFixedPeakEqStages (float x, KlonBiquadState (&states)[NumStages], float sr,
+                                           float freqHz, float q, float gainDb) noexcept
+{
+    const float stageGainDb = gainDb / (float) NumStages;
+    for (auto& state : states)
+        x = processKlonFixedPeakEq (x, state, sr, freqHz, q, stageGainDb);
+    return x;
+}
+
+inline float processKlonFixedPeakEqStages (float x, KlonBiquadState* states, int numStages, float sr,
+                                           float freqHz, float q, float gainDb) noexcept
+{
+    const int stages = juce::jlimit (1, 4, numStages);
+    const float stageGainDb = gainDb / (float) stages;
+    for (int i = 0; i < stages; ++i)
+        x = processKlonFixedPeakEq (x, states[i], sr, freqHz, q, stageGainDb);
+    return x;
+}
+
+inline float processKlonFixedShelfEqStages (float x, KlonBiquadState* states, int numStages, float sr,
+                                            float freqHz, float q, float gainDb, bool highShelf) noexcept
+{
+    const int stages = juce::jlimit (1, 4, numStages);
+    const float stageGainDb = gainDb / (float) stages;
+    for (int i = 0; i < stages; ++i)
+        x = processKlonFixedShelfEq (x, states[i], sr, freqHz, q, stageGainDb, highShelf);
+    return x;
+}
+
 inline float klonReferenceWeight (float drive) noexcept
 {
     const float d = detail::clampF (drive, 0.0f, 1.0f);
@@ -4019,16 +4072,16 @@ inline float processKlonPreEq (float x, ClipperKlonState& st, float sr,
     st.preEqLP += (x - st.preEqLP) * lpCoeff;
 
     float y = x;
-    y = processKlonPeakEqStages  (y, st.preResidualEq[0], 2, sr,   90.00f, 3.000f, -0.26f);
-    y = processKlonPeakEqStages  (y, st.preResidualEq[1], 2, sr,  265.97f, 0.350f, -1.16f);
-    y = processKlonPeakEqStages  (y, st.preResidualEq[2], 2, sr,  785.99f, 3.000f, -0.16f);
-    y = processKlonPeakEqStages  (y, st.preResidualEq[3], 2, sr, 2322.78f, 2.000f, +0.19f);
-    y = processKlonPeakEqStages  (y, st.preResidualEq[4], 2, sr, 6864.29f, 2.000f, -0.17f);
-    y = processKlonShelfEqStages (y, st.preResidualEq[5], 1, sr, 8000.00f, 0.707f, -1.03f, true);
-    y = processKlonPeakEq (y, st.preCorrectBell500,  sr,  500.0f, 1.0f,  3.0f);
-    y = processKlonPeakEq (y, st.preCorrectBell1200, sr, 1200.0f, 1.0f,  3.0f);
-    y = processKlonPeakEq (y, st.preCorrectBell4000, sr, 4000.0f, 1.0f, -4.0f);
-    y = processKlonPeakEq (y, st.preBell,            sr, 3000.0f, 1.0f,  6.0f);
+    y = processKlonFixedPeakEqStages  (y, st.preResidualEq[0], 2, sr,   90.00f, 3.000f, -0.26f);
+    y = processKlonFixedPeakEqStages  (y, st.preResidualEq[1], 2, sr,  265.97f, 0.350f, -1.16f);
+    y = processKlonFixedPeakEqStages  (y, st.preResidualEq[2], 2, sr,  785.99f, 3.000f, -0.16f);
+    y = processKlonFixedPeakEqStages  (y, st.preResidualEq[3], 2, sr, 2322.78f, 2.000f, +0.19f);
+    y = processKlonFixedPeakEqStages  (y, st.preResidualEq[4], 2, sr, 6864.29f, 2.000f, -0.17f);
+    y = processKlonFixedShelfEqStages (y, st.preResidualEq[5], 1, sr, 8000.00f, 0.707f, -1.03f, true);
+    y = processKlonFixedPeakEq (y, st.preCorrectBell500,  sr,  500.0f, 1.0f,  3.0f);
+    y = processKlonFixedPeakEq (y, st.preCorrectBell1200, sr, 1200.0f, 1.0f,  3.0f);
+    y = processKlonFixedPeakEq (y, st.preCorrectBell4000, sr, 4000.0f, 1.0f, -4.0f);
+    y = processKlonFixedPeakEq (y, st.preBell,            sr, 3000.0f, 1.0f,  6.0f);
 
     const float ref = klonReferenceWeight (drive);
     y = processKlonPeakEqStages  (y, st.preReferenceEq[0], 1, sr,  154.72f, 1.000f,  1.89f * ref);
@@ -4047,62 +4100,62 @@ inline float processKlonPostEq (float x, ClipperKlonState& st, float sr,
     (void) bias;
 
     float y = x;
-    y = processKlonPeakEq (y,       st.postBell,            sr, 1500.0f,  1.0f,  -6.0f);
-    y = processKlonPeakEqStages (y, st.postCorrectBell116,  sr,  116.29f, 1.363f, -2.10f);
-    y = processKlonPeakEqStages (y, st.postCorrectBell139,  sr,  138.59f, 0.025f, -4.72f);
-    y = processKlonPeakEqStages (y, st.postCorrectBell1200, sr, 1200.0f,  1.621f,  3.38f);
-    y = processKlonPeakEqStages (y, st.postCorrectBell5631, sr, 5630.7f,  0.884f, -1.53f);
-    y = processKlonShelfEqStages (y, st.postResidualEq[0],  2, sr,    55.00f,  1.400f,  +0.86f, false);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[1],  2, sr,    89.03f,  5.000f,  -0.65f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[2],  2, sr,   113.28f, 12.000f,  +1.06f);
-    y = processKlonShelfEqStages (y, st.postResidualEq[3],  1, sr,   180.00f,  1.400f,  +0.41f, false);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[4],  2, sr,   233.32f,  5.000f,  +3.60f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[5],  2, sr,   296.86f, 12.000f,  +0.71f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[6],  2, sr,   377.70f,  3.000f,  -1.19f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[7],  2, sr,   377.70f, 12.000f,  +1.39f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[8],  2, sr,   777.94f,  3.000f,  -0.44f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[9],  2, sr,   989.79f,  5.000f,  +1.12f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[10], 2, sr,  1259.34f,  0.350f,  -4.85f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[11], 2, sr,  1259.34f, 12.000f,  -0.94f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[12], 2, sr,  2038.64f,  5.000f,  +1.50f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[13], 2, sr,  2593.81f,  5.000f,  -2.52f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[14], 2, sr,  3300.18f, 12.000f,  +3.49f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[15], 2, sr,  4198.90f,  5.000f,  -2.06f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[16], 2, sr,  5342.37f, 12.000f,  +2.04f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[17], 2, sr,  6797.24f,  5.000f,  +1.23f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[18], 2, sr,  8648.31f,  3.000f,  -5.19f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[19], 2, sr,  8648.31f, 12.000f,  +5.86f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[20], 2, sr, 11003.47f,  3.000f,  +7.04f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[21], 2, sr, 11003.47f, 12.000f,  -5.23f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq[22], 2, sr, 14000.00f,  5.000f,  -1.19f);
-    y = processKlonShelfEqStages (y, st.postResidualEq[23], 1, sr, 15000.00f,  0.707f,  +0.83f, true);
-    y = processKlonShelfEqStages (y, st.postResidualEq2[0],  1, sr,    55.00f,  1.000f,  +1.14f, false);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[1],  2, sr,    69.98f,  8.000f,  +0.91f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[2],  2, sr,    89.03f,  5.000f,  -0.26f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[3],  2, sr,   113.28f, 12.000f,  +1.52f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[4],  2, sr,   144.13f, 12.000f,  +0.52f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[5],  2, sr,   233.32f,  0.350f,  -1.89f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[6],  2, sr,   233.32f,  5.000f,  +0.91f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[7],  2, sr,   296.86f,  5.000f,  +0.23f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[8],  2, sr,   480.56f,  5.000f,  -0.76f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[9],  2, sr,   611.43f,  2.000f,  +2.41f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[10], 2, sr,   611.43f, 12.000f,  -1.86f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[11], 2, sr,   777.94f,  3.000f,  -4.04f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[12], 2, sr,   777.94f, 12.000f,  +4.02f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[13], 2, sr,   989.79f,  5.000f,  +4.03f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[14], 2, sr,   989.79f, 12.000f,  -4.70f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[15], 2, sr,  1259.34f,  5.000f,  -0.37f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[16], 2, sr,  2038.64f, 12.000f,  +1.11f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[17], 2, sr,  2593.81f,  3.000f,  -1.48f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[18], 2, sr,  2593.81f, 12.000f,  +2.59f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[19], 2, sr,  3300.18f,  5.000f,  +2.13f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[20], 2, sr,  3300.18f, 12.000f,  -1.78f);
-    y = processKlonPeakEqStages  (y, st.postResidualEq2[21], 2, sr,  5342.37f,  2.000f,  -0.13f);
-    y = processKlonShelfEqStages (y, st.postResidualEq2[22], 2, sr,  7000.00f,  0.707f,  -1.23f, true);
-    y = processKlonShelfEqStages (y, st.postResidualEq2[23], 2, sr, 15000.00f,  1.400f,  -0.39f, true);
-    y = processKlonShelfEqStages (y, st.postManualEq[0], 1, sr,   22.591f, 1.000f, -3.44f, false);
-    y = processKlonPeakEqStages  (y, st.postManualEq[1], 1, sr,   93.495f, 5.946f, +2.60f);
-    y = processKlonPeakEqStages  (y, st.postManualEq[2], 2, sr,  788.04f,  0.423f, +4.58f);
+    y = processKlonFixedPeakEq (y,       st.postBell,            sr, 1500.0f,  1.0f,  -6.0f);
+    y = processKlonFixedPeakEqStages (y, st.postCorrectBell116,  sr,  116.29f, 1.363f, -2.10f);
+    y = processKlonFixedPeakEqStages (y, st.postCorrectBell139,  sr,  138.59f, 0.025f, -4.72f);
+    y = processKlonFixedPeakEqStages (y, st.postCorrectBell1200, sr, 1200.0f,  1.621f,  3.38f);
+    y = processKlonFixedPeakEqStages (y, st.postCorrectBell5631, sr, 5630.7f,  0.884f, -1.53f);
+    y = processKlonFixedShelfEqStages (y, st.postResidualEq[0],  2, sr,    55.00f,  1.400f,  +0.86f, false);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[1],  2, sr,    89.03f,  5.000f,  -0.65f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[2],  2, sr,   113.28f, 12.000f,  +1.06f);
+    y = processKlonFixedShelfEqStages (y, st.postResidualEq[3],  1, sr,   180.00f,  1.400f,  +0.41f, false);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[4],  2, sr,   233.32f,  5.000f,  +3.60f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[5],  2, sr,   296.86f, 12.000f,  +0.71f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[6],  2, sr,   377.70f,  3.000f,  -1.19f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[7],  2, sr,   377.70f, 12.000f,  +1.39f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[8],  2, sr,   777.94f,  3.000f,  -0.44f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[9],  2, sr,   989.79f,  5.000f,  +1.12f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[10], 2, sr,  1259.34f,  0.350f,  -4.85f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[11], 2, sr,  1259.34f, 12.000f,  -0.94f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[12], 2, sr,  2038.64f,  5.000f,  +1.50f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[13], 2, sr,  2593.81f,  5.000f,  -2.52f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[14], 2, sr,  3300.18f, 12.000f,  +3.49f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[15], 2, sr,  4198.90f,  5.000f,  -2.06f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[16], 2, sr,  5342.37f, 12.000f,  +2.04f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[17], 2, sr,  6797.24f,  5.000f,  +1.23f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[18], 2, sr,  8648.31f,  3.000f,  -5.19f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[19], 2, sr,  8648.31f, 12.000f,  +5.86f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[20], 2, sr, 11003.47f,  3.000f,  +7.04f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[21], 2, sr, 11003.47f, 12.000f,  -5.23f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[22], 2, sr, 14000.00f,  5.000f,  -1.19f);
+    y = processKlonFixedShelfEqStages (y, st.postResidualEq[23], 1, sr, 15000.00f,  0.707f,  +0.83f, true);
+    y = processKlonFixedShelfEqStages (y, st.postResidualEq2[0],  1, sr,    55.00f,  1.000f,  +1.14f, false);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[1],  2, sr,    69.98f,  8.000f,  +0.91f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[2],  2, sr,    89.03f,  5.000f,  -0.26f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[3],  2, sr,   113.28f, 12.000f,  +1.52f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[4],  2, sr,   144.13f, 12.000f,  +0.52f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[5],  2, sr,   233.32f,  0.350f,  -1.89f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[6],  2, sr,   233.32f,  5.000f,  +0.91f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[7],  2, sr,   296.86f,  5.000f,  +0.23f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[8],  2, sr,   480.56f,  5.000f,  -0.76f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[9],  2, sr,   611.43f,  2.000f,  +2.41f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[10], 2, sr,   611.43f, 12.000f,  -1.86f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[11], 2, sr,   777.94f,  3.000f,  -4.04f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[12], 2, sr,   777.94f, 12.000f,  +4.02f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[13], 2, sr,   989.79f,  5.000f,  +4.03f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[14], 2, sr,   989.79f, 12.000f,  -4.70f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[15], 2, sr,  1259.34f,  5.000f,  -0.37f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[16], 2, sr,  2038.64f, 12.000f,  +1.11f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[17], 2, sr,  2593.81f,  3.000f,  -1.48f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[18], 2, sr,  2593.81f, 12.000f,  +2.59f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[19], 2, sr,  3300.18f,  5.000f,  +2.13f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[20], 2, sr,  3300.18f, 12.000f,  -1.78f);
+    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[21], 2, sr,  5342.37f,  2.000f,  -0.13f);
+    y = processKlonFixedShelfEqStages (y, st.postResidualEq2[22], 2, sr,  7000.00f,  0.707f,  -1.23f, true);
+    y = processKlonFixedShelfEqStages (y, st.postResidualEq2[23], 2, sr, 15000.00f,  1.400f,  -0.39f, true);
+    y = processKlonFixedShelfEqStages (y, st.postManualEq[0], 1, sr,   22.591f, 1.000f, -3.44f, false);
+    y = processKlonFixedPeakEqStages  (y, st.postManualEq[1], 1, sr,   93.495f, 5.946f, +2.60f);
+    y = processKlonFixedPeakEqStages  (y, st.postManualEq[2], 2, sr,  788.04f,  0.423f, +4.58f);
 
     const float ref = klonReferenceWeight (drive);
     y = processKlonPeakEqStages  (y, st.postReferenceEq[0],  1, sr,   144.13f,  1.000f,  3.80f * ref);
@@ -4235,7 +4288,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     const float klonThresholdNeg = detail::clampF (klonDiodeHeadroom * (1.0f - b * klonBiasRange), 0.30f, 1.35f);
     const float thresholdPos = juce::jmap (klonVoice, legacyThresholdPos, klonThresholdPos);
     const float thresholdNeg = juce::jmap (klonVoice, legacyThresholdNeg, klonThresholdNeg);
-    const float legacyKneeRange = juce::jmap (classicVoice, 0.56f, 1.12f);
+    const float legacyKneeRange = juce::jmap (classicVoice, 0.56f, 2.24f);
     const float legacyKneeSoft = 0.01f + k * legacyKneeRange;
     const float klonKneeSoft = 0.045f + k * 0.34f;
     const float kneeSoft = juce::jmap (klonVoice, legacyKneeSoft, klonKneeSoft);
