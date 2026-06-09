@@ -234,12 +234,18 @@ public:
 		static constexpr const char* ioExpandedB = "uiIoExpandedB";
 		static constexpr const char* ioExpandedC = "uiIoExpandedC";
 		static constexpr const char* firstVisibleLoader = "uiFirstVisibleLoader";
+		static constexpr const char* dryAlignMode = "uiDryAlignMode";
+		static constexpr const char* dryAlignAnchorA = "uiDryAlignAnchorA";
+		static constexpr const char* dryAlignAnchorB = "uiDryAlignAnchorB";
+		static constexpr const char* dryAlignAnchorC = "uiDryAlignAnchorC";
 	};
 
 	void  setUiIoExpanded (int loaderIndex, bool expanded);
 	bool  getUiIoExpanded (int loaderIndex) const noexcept;
 	void  setUiFirstVisibleLoaderIndex (int loaderIndex);
 	int   getUiFirstVisibleLoaderIndex() const noexcept;
+	void  setDryAlignModeEnabled (bool enabled);
+	bool  isDryAlignModeEnabled() const noexcept;
 
 	// ----------------------------------------------------------------
 	//  Parameter Ranges & Defaults - Filters
@@ -671,6 +677,9 @@ public:
 		// Delay line for phase alignment (max ~0.5s)
 		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> delayLine { 96000 };
 		juce::SmoothedValue<float> smoothedDelay { 0.0f };
+		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> dryDelayLine { 96000 };
+		juce::SmoothedValue<float> smoothedDryDelay { 0.0f };
+		std::atomic<float> dryAnchorSamples { 0.0f };
 		
 		// Delete copy operations (contains atomic)
 		LoaderState() = default;
@@ -1027,6 +1036,10 @@ private:
 	float lastGlobalDryMix_       = 0.0f;
 	float lastGlobalWetMix_       = 1.0f;
 	float lastLimiterThresholdLin_ = 1.0f;
+	juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> globalDryDelayLine { 96000 };
+	juce::SmoothedValue<float> smoothedGlobalDryDelay { 0.0f };
+	std::atomic<bool> dryAlignModeEnabled_ { false };
+	std::atomic<bool> dryAlignRuntimeActive_ { false };
 
 	// DC blocking filter state (per-channel)
 	float dcBlockX_[2] = { 0.0f, 0.0f };
@@ -1064,7 +1077,13 @@ private:
 	                    int loaderIndex);
 
 	// Delay for auto-align
+	void applyDelaySamples (juce::AudioBuffer<float>& buffer,
+	                        float targetDelaySamples,
+	                        juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd>& delayLine,
+	                        juce::SmoothedValue<float>& smoother);
 	void applyDelay (juce::AudioBuffer<float>& buffer, float delayMs, int loaderIndex);
+	void applyDryAlignDelay (juce::AudioBuffer<float>& buffer, float targetDelaySamples, int loaderIndex);
+	void applyGlobalDryAlignDelay (juce::AudioBuffer<float>& buffer, float targetDelaySamples);
 	void calculateAutoAlignment();
 
 

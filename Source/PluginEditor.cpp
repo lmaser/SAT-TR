@@ -1826,6 +1826,12 @@ SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 	// Align button (momentary toggle in header)
 	addAndMakeVisible (alignButton);
 	alignButton.setButtonText ("ALIGN");
+	alignButton.setRightClickTextOnly (true);
+	alignButton.onRightClick = [this]()
+	{
+		audioProcessor.setDryAlignModeEnabled (! audioProcessor.isDryAlignModeEnabled());
+		updateAlignModeUi();
+	};
 	alignButton.addListener (this);
 
 	// Create parameter attachments
@@ -1861,6 +1867,7 @@ SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 		params, SATTRAudioProcessor::kParamInvStr, invStrCombo);
 	alignAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
 		params, SATTRAudioProcessor::kParamAlign, alignButton);
+	updateAlignModeUi();
 
 	// Initialize per-loader collapse state from processor
 	ioExpandedA_ = audioProcessor.getUiIoExpanded (0);
@@ -2915,6 +2922,14 @@ void SATTRAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
 void SATTRAudioProcessorEditor::buttonClicked (juce::Button* button)
 {
 	juce::ignoreUnused (button);
+}
+
+void SATTRAudioProcessorEditor::updateAlignModeUi()
+{
+	const bool dryAlign = audioProcessor.isDryAlignModeEnabled();
+	alignButton.setButtonText (dryAlign ? "A+DI" : "ALIGN");
+	alignButton.setTooltip ({});
+	alignButton.repaint();
 }
 
 void SATTRAudioProcessorEditor::comboBoxChanged (juce::ComboBox* combo)

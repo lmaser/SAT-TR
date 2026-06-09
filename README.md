@@ -29,7 +29,7 @@ SAT-TR uses a text-based UI with horizontal bar sliders. Loader tabs switch betw
 - **CHAOS buttons**: Left-click enables/disables the target. Right-click opens the amount/speed prompt for delay or filter chaos.
 - **SIDECHAIN button**: Left-click enables/disables external drive modulation for the loader. Right-click opens the `SMOOTH` / `TONE` prompt.
 - **Tooltips**: Toggle tooltips use an opaque palette-background panel with palette text/outline, so `EXP`, `CHAOS D`, `CHAOS F`, and `SIDECHAIN` match the rest of the TR Series.
-- **ALIGN button**: Momentary trigger. Auto-sets per-loader delay compensation and invert state from synthetic probe analysis.
+- **ALIGN button**: Left-click triggers alignment. Right-click the text to toggle `A+DI`, which also aligns the dry/DI paths.
 - **Gear icon** (top-right): Opens the info popup with version, credits, and the Graphics prompt.
 - **Graphics popup**: Toggles graphic FX and switches between default/custom colour palettes.
 - **Resize**: Drag the bottom-right corner. New instances open at one-loader minimum size (`360 x 752`); width persists as 1/2/3-loader views and height stays fixed.
@@ -239,6 +239,8 @@ The fader floor is -144 dB, displayed as -INF; 0 dB is centered on the control.
 #### ALIGN
 
 Momentary trigger. Calculates relative alignment from the active loader responses and writes per-loader delay compensation plus invert state automatically.
+
+Right-click the `ALIGN` text to toggle `A+DI` mode. In `A+DI`, the same left-click action also delays the per-loader and global dry/DI paths so dry/wet blends line up with the synthetic response centroid. Switching back to `ALIGN` returns dry paths to their original zero-delay behaviour.
 
 #### LIM
 

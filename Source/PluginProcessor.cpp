@@ -869,15 +869,31 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	stateA.delayLine.prepare (spec);
 	stateB.delayLine.prepare (spec);
 	stateC.delayLine.prepare (spec);
+	stateA.dryDelayLine.prepare (spec);
+	stateB.dryDelayLine.prepare (spec);
+	stateC.dryDelayLine.prepare (spec);
+	globalDryDelayLine.prepare (spec);
 	stateA.delayLine.reset();
 	stateB.delayLine.reset();
 	stateC.delayLine.reset();
+	stateA.dryDelayLine.reset();
+	stateB.dryDelayLine.reset();
+	stateC.dryDelayLine.reset();
+	globalDryDelayLine.reset();
 	stateA.smoothedDelay.reset (sampleRate, 0.05);
 	stateB.smoothedDelay.reset (sampleRate, 0.05);
 	stateC.smoothedDelay.reset (sampleRate, 0.05);
+	stateA.smoothedDryDelay.reset (sampleRate, 0.05);
+	stateB.smoothedDryDelay.reset (sampleRate, 0.05);
+	stateC.smoothedDryDelay.reset (sampleRate, 0.05);
+	smoothedGlobalDryDelay.reset (sampleRate, 0.05);
 	stateA.smoothedDelay.setCurrentAndTargetValue (0.0f);
 	stateB.smoothedDelay.setCurrentAndTargetValue (0.0f);
 	stateC.smoothedDelay.setCurrentAndTargetValue (0.0f);
+	stateA.smoothedDryDelay.setCurrentAndTargetValue (0.0f);
+	stateB.smoothedDryDelay.setCurrentAndTargetValue (0.0f);
+	stateC.smoothedDryDelay.setCurrentAndTargetValue (0.0f);
+	smoothedGlobalDryDelay.setCurrentAndTargetValue (0.0f);
 	
 	// Prepare temp buffers (pre-allocated for audio thread)
 	// Use generous size to handle hosts that send variable/larger blocks
@@ -1205,6 +1221,13 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
 void SATTRAudioProcessor::releaseResources()
 {
+	stateA.delayLine.reset();
+	stateB.delayLine.reset();
+	stateC.delayLine.reset();
+	stateA.dryDelayLine.reset();
+	stateB.dryDelayLine.reset();
+	stateC.dryDelayLine.reset();
+	globalDryDelayLine.reset();
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -1349,6 +1372,9 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 	const float globalWetEnd = (mixMode == 0) ? globalMix : wetLevel;
 	const float globalDryEnd = (mixMode == 0) ? (1.0f - globalMix) : dryLevel;
 	constexpr float kMixBypassEps = 1.0e-4f;
+	const float delayA = loadRelaxed (pDelayA);
+	const float delayB = loadRelaxed (pDelayB);
+	const float delayC = loadRelaxed (pDelayC);
 	const bool needsGlobalDry = std::abs (globalDryEnd) > kMixBypassEps
 	                         || std::abs (lastGlobalDryMix_) > kMixBypassEps;
 	const bool needsGlobalWetGain = std::abs (globalWetEnd - 1.0f) > kMixBypassEps
@@ -1385,6 +1411,69 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 	const bool sidechainB = activeB && loadRelaxedBool (pSidechainB);
 	const bool sidechainC = activeC && loadRelaxedBool (pSidechainC);
 	const bool anySidechainEnabled = sidechainA || sidechainB || sidechainC;
+
+	const bool dryAlignMode = dryAlignRuntimeActive_.load (std::memory_order_acquire);
+	auto loaderDryAlignSamples = [&] (const LoaderState& state, bool active, float loaderMix, float delayMs) noexcept
+	{
+		if (! dryAlignMode || ! active || loaderMix <= kMixBypassEps)
+			return 0.0f;
+
+		const float delaySamples = delayMs * 0.001f * static_cast<float> (currentSampleRate);
+		return juce::jmax (0.0f, state.dryAnchorSamples.load() + delaySamples);
+	};
+
+	const float dryAlignSamplesA = loaderDryAlignSamples (stateA, activeA, mixA, delayA);
+	const float dryAlignSamplesB = loaderDryAlignSamples (stateB, activeB, mixB, delayB);
+	const float dryAlignSamplesC = loaderDryAlignSamples (stateC, activeC, mixC, delayC);
+
+	auto averageDryAlignBranches = [] (float a, bool hasA, float b, bool hasB, float c, bool hasC) noexcept
+	{
+		float sum = 0.0f;
+		int count = 0;
+		if (hasA) { sum += a; ++count; }
+		if (hasB) { sum += b; ++count; }
+		if (hasC) { sum += c; ++count; }
+		return count > 0 ? sum / static_cast<float> (count) : 0.0f;
+	};
+
+	const bool hasDryAlignA = dryAlignMode && activeA && mixA > kMixBypassEps;
+	const bool hasDryAlignB = dryAlignMode && activeB && mixB > kMixBypassEps;
+	const bool hasDryAlignC = dryAlignMode && activeC && mixC > kMixBypassEps;
+	float globalDryAlignSamples = 0.0f;
+	if (route == 0) // A->B->C
+		globalDryAlignSamples = dryAlignSamplesA + dryAlignSamplesB + dryAlignSamplesC;
+	else if (route == 1) // A|B|C
+		globalDryAlignSamples = averageDryAlignBranches (dryAlignSamplesA, hasDryAlignA,
+		                                                 dryAlignSamplesB, hasDryAlignB,
+		                                                 dryAlignSamplesC, hasDryAlignC);
+	else if (route == 2) // A->B | C
+	{
+		const float series = dryAlignSamplesA + dryAlignSamplesB;
+		globalDryAlignSamples = averageDryAlignBranches (series, hasDryAlignA || hasDryAlignB,
+		                                                 0.0f, false,
+		                                                 dryAlignSamplesC, hasDryAlignC);
+	}
+	else if (route == 3) // A | B->C
+	{
+		const float series = dryAlignSamplesB + dryAlignSamplesC;
+		globalDryAlignSamples = averageDryAlignBranches (dryAlignSamplesA, hasDryAlignA,
+		                                                 series, hasDryAlignB || hasDryAlignC,
+		                                                 0.0f, false);
+	}
+	else if (route == 4) // (A|B)->C
+	{
+		const float parallel = averageDryAlignBranches (dryAlignSamplesA, hasDryAlignA,
+		                                                dryAlignSamplesB, hasDryAlignB,
+		                                                0.0f, false);
+		globalDryAlignSamples = parallel + dryAlignSamplesC;
+	}
+	else if (route == 5) // A->(B|C)
+	{
+		const float parallel = averageDryAlignBranches (dryAlignSamplesB, hasDryAlignB,
+		                                                dryAlignSamplesC, hasDryAlignC,
+		                                                0.0f, false);
+		globalDryAlignSamples = dryAlignSamplesA + parallel;
+	}
 
 	const bool sidechainActive[3] = { sidechainA, sidechainB, sidechainC };
 	std::atomic<float>* sidechainSmoothParams[3] = { pSidechainSmoothA, pSidechainSmoothB, pSidechainSmoothC };
@@ -1591,6 +1680,7 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 	{
 		for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 			globalDryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+		applyGlobalDryAlignDelay (globalDryBuffer, globalDryAlignSamples);
 	}
 
 	// -- Helper lambdas --
@@ -1619,7 +1709,11 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 		const bool needsLoaderDry = needsLoaderMix || needsLoaderDryForDiag;
 
 		if (needsLoaderDry)
+		{
 			saveDry (buf);
+			const float dryDelaySamples = loaderIndex == 0 ? dryAlignSamplesA : (loaderIndex == 1 ? dryAlignSamplesB : dryAlignSamplesC);
+			applyDryAlignDelay (loaderDryBuffer, dryDelaySamples, loaderIndex);
+		}
 
 		applyMidSideInputMode (buf, modeIn, numSamples);
 		processLoader (state, buf, loaderIndex);
@@ -3161,18 +3255,17 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 }
 
 // ----------------------------------------------------------------
-void SATTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float delayMs, int loaderIndex)
+void SATTRAudioProcessor::applyDelaySamples (
+	juce::AudioBuffer<float>& buffer,
+	float targetDelaySamples,
+	juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd>& delayLine,
+	juce::SmoothedValue<float>& smoother)
 {
 	const int numSamples  = buffer.getNumSamples();
 	const int numChannels = buffer.getNumChannels();
-	
-	const float targetDelaySamples = juce::jmax (0.0f, delayMs * 0.001f * static_cast<float> (currentSampleRate));
-	
-	auto& delayLine = loaderIndex == 0 ? stateA.delayLine : (loaderIndex == 1 ? stateB.delayLine : stateC.delayLine);
-	auto& smoother  = loaderIndex == 0 ? stateA.smoothedDelay : (loaderIndex == 1 ? stateB.smoothedDelay : stateC.smoothedDelay);
 	auto* const* writeChannels = buffer.getArrayOfWritePointers();
-	
-	smoother.setTargetValue (targetDelaySamples);
+
+	smoother.setTargetValue (juce::jlimit (0.0f, 95998.0f, targetDelaySamples));
 
 	// Keep the buffer continuously fed and fade the first 0..2 samples into dry.
 	// This preserves the intentional "rewind" glide while avoiding a hard switch
@@ -3233,6 +3326,26 @@ void SATTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float de
 			channelData[i] = input + (delayed - input) * wet;
 		}
 	}
+}
+
+void SATTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float delayMs, int loaderIndex)
+{
+	const float targetDelaySamples = juce::jmax (0.0f, delayMs * 0.001f * static_cast<float> (currentSampleRate));
+	auto& delayLine = loaderIndex == 0 ? stateA.delayLine : (loaderIndex == 1 ? stateB.delayLine : stateC.delayLine);
+	auto& smoother  = loaderIndex == 0 ? stateA.smoothedDelay : (loaderIndex == 1 ? stateB.smoothedDelay : stateC.smoothedDelay);
+	applyDelaySamples (buffer, targetDelaySamples, delayLine, smoother);
+}
+
+void SATTRAudioProcessor::applyDryAlignDelay (juce::AudioBuffer<float>& buffer, float targetDelaySamples, int loaderIndex)
+{
+	auto& delayLine = loaderIndex == 0 ? stateA.dryDelayLine : (loaderIndex == 1 ? stateB.dryDelayLine : stateC.dryDelayLine);
+	auto& smoother  = loaderIndex == 0 ? stateA.smoothedDryDelay : (loaderIndex == 1 ? stateB.smoothedDryDelay : stateC.smoothedDryDelay);
+	applyDelaySamples (buffer, targetDelaySamples, delayLine, smoother);
+}
+
+void SATTRAudioProcessor::applyGlobalDryAlignDelay (juce::AudioBuffer<float>& buffer, float targetDelaySamples)
+{
+	applyDelaySamples (buffer, targetDelaySamples, globalDryDelayLine, smoothedGlobalDryDelay);
 }
 
 void SATTRAudioProcessor::applyMidSideOutputMode (juce::AudioBuffer<float>& buf, int modeVal, int nSamples)
@@ -3363,12 +3476,58 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 		return sum;
 	};
 
-	const int typeA = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeA)->load());
-	const float typeCtrlA = parameters.getRawParameterValue (kParamSatTypeCtrlA)->load();
-	const bool rawA = parameters.getRawParameterValue (kParamSatRawA)->load() > 0.5f;
-	auto probeA = makeAlignmentProbe (typeA, typeCtrlA, rawA);
+	auto makeLoaderProbe = [&] (const char* typeId, const char* typeCtrlId, const char* rawId)
+	{
+		const int type = static_cast<int> (parameters.getRawParameterValue (typeId)->load());
+		const float typeCtrl = parameters.getRawParameterValue (typeCtrlId)->load();
+		const bool raw = parameters.getRawParameterValue (rawId)->load() > 0.5f;
+		return makeAlignmentProbe (type, typeCtrl, raw);
+	};
+
+	juce::AudioBuffer<float> probeA;
+	juce::AudioBuffer<float> probeB;
+	juce::AudioBuffer<float> probeC;
+	float centroidA = 0.0f;
+	float centroidB = 0.0f;
+	float centroidC = 0.0f;
+
+	if (enabledA)
+	{
+		probeA = makeLoaderProbe (kParamSatTypeA, kParamSatTypeCtrlA, kParamSatRawA);
+		centroidA = calcCentroid (probeA);
+		stateA.dryAnchorSamples.store (centroidA);
+	}
+	else
+		stateA.dryAnchorSamples.store (0.0f);
+
+	if (enabledB)
+	{
+		probeB = makeLoaderProbe (kParamSatTypeB, kParamSatTypeCtrlB, kParamSatRawB);
+		centroidB = calcCentroid (probeB);
+		stateB.dryAnchorSamples.store (centroidB);
+	}
+	else
+		stateB.dryAnchorSamples.store (0.0f);
+
+	if (enabledC)
+	{
+		probeC = makeLoaderProbe (kParamSatTypeC, kParamSatTypeCtrlC, kParamSatRawC);
+		centroidC = calcCentroid (probeC);
+		stateC.dryAnchorSamples.store (centroidC);
+	}
+	else
+		stateC.dryAnchorSamples.store (0.0f);
+
+	const bool dryAlignRequested = isDryAlignModeEnabled();
+	const bool anyEnabled = enabledA || enabledB || enabledC;
+	if (! enabledA || (! enabledB && ! enabledC))
+	{
+		dryAlignRuntimeActive_.store (dryAlignRequested && anyEnabled, std::memory_order_release);
+		return;
+	}
+
+	dryAlignRuntimeActive_.store (dryAlignRequested, std::memory_order_release);
 	const float* dataA = probeA.getReadPointer (0);
-	const float centroidA = calcCentroid (probeA);
 
 	// Reset all delays and inversions first - ALIGN finds optimal from scratch
 	if (auto* p = parameters.getParameter (kParamDelayA))
@@ -3384,30 +3543,14 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	if (auto* p = parameters.getParameter (kParamInvC))
 		p->setValueNotifyingHost (0.0f);
 
-	float centroidB = centroidA;
-	float centroidC = centroidA;
 	float corrSignB = 1.0f;
 	float corrSignC = 1.0f;
 
 	if (enabledB)
-	{
-		const int typeB = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeB)->load());
-		const float typeCtrlB = parameters.getRawParameterValue (kParamSatTypeCtrlB)->load();
-		const bool rawB = parameters.getRawParameterValue (kParamSatRawB)->load() > 0.5f;
-		auto probeB = makeAlignmentProbe (typeB, typeCtrlB, rawB);
-		centroidB = calcCentroid (probeB);
 		corrSignB = xcorrSign (dataA, probeB);
-	}
 
 	if (enabledC)
-	{
-		const int typeC = static_cast<int> (parameters.getRawParameterValue (kParamSatTypeC)->load());
-		const float typeCtrlC = parameters.getRawParameterValue (kParamSatTypeCtrlC)->load();
-		const bool rawC = parameters.getRawParameterValue (kParamSatRawC)->load() > 0.5f;
-		auto probeC = makeAlignmentProbe (typeC, typeCtrlC, rawC);
-		centroidC = calcCentroid (probeC);
 		corrSignC = xcorrSign (dataA, probeC);
-	}
 
 	// Find maximum centroid - loaders with smaller centroids need delay compensation
 	const float maxCentroid = juce::jmax (centroidA,
@@ -3474,8 +3617,9 @@ void SATTRAudioProcessor::timerCallback()
 			const bool enabledA = parameters.getRawParameterValue (kParamEnableA)->load() > 0.5f;
 			const bool enabledB = parameters.getRawParameterValue (kParamEnableB)->load() > 0.5f;
 			const bool enabledC = parameters.getRawParameterValue (kParamEnableC)->load() > 0.5f;
+			const bool dryAlignRequested = isDryAlignModeEnabled();
 
-			if (enabledA && (enabledB || enabledC))
+			if ((enabledA && (enabledB || enabledC)) || (dryAlignRequested && (enabledA || enabledB || enabledC)))
 			{
 				calculateAutoAlignment();
 				lastAlignTime_ = now;
@@ -3520,10 +3664,26 @@ int SATTRAudioProcessor::getUiFirstVisibleLoaderIndex() const noexcept
 	return juce::jlimit (0, 2, static_cast<int> (parameters.state.getProperty (UiStateKeys::firstVisibleLoader, 0)));
 }
 
+void SATTRAudioProcessor::setDryAlignModeEnabled (bool enabled)
+{
+	dryAlignModeEnabled_.store (enabled, std::memory_order_release);
+	if (! enabled)
+		dryAlignRuntimeActive_.store (false, std::memory_order_release);
+	parameters.state.setProperty (UiStateKeys::dryAlignMode, enabled, nullptr);
+}
+
+bool SATTRAudioProcessor::isDryAlignModeEnabled() const noexcept
+{
+	return dryAlignModeEnabled_.load (std::memory_order_acquire);
+}
+
 // ----------------------------------------------------------------
 void SATTRAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
 	auto state = parameters.copyState();
+	state.setProperty (UiStateKeys::dryAlignAnchorA, stateA.dryAnchorSamples.load(), nullptr);
+	state.setProperty (UiStateKeys::dryAlignAnchorB, stateB.dryAnchorSamples.load(), nullptr);
+	state.setProperty (UiStateKeys::dryAlignAnchorC, stateC.dryAnchorSamples.load(), nullptr);
 	auto xml = state.createXml();
 	if (xml != nullptr)
 		copyXmlToBinary (*xml, destData);
@@ -3538,6 +3698,21 @@ void SATTRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 		if (state.isValid())
 		{
 			parameters.replaceState (state);
+
+			const bool restoredDryAlignMode = (bool) parameters.state.getProperty (UiStateKeys::dryAlignMode, false);
+			dryAlignModeEnabled_.store (restoredDryAlignMode, std::memory_order_release);
+			dryAlignRuntimeActive_.store (restoredDryAlignMode, std::memory_order_release);
+			stateA.dryAnchorSamples.store (static_cast<float> ((double) parameters.state.getProperty (UiStateKeys::dryAlignAnchorA, 0.0)));
+			stateB.dryAnchorSamples.store (static_cast<float> ((double) parameters.state.getProperty (UiStateKeys::dryAlignAnchorB, 0.0)));
+			stateC.dryAnchorSamples.store (static_cast<float> ((double) parameters.state.getProperty (UiStateKeys::dryAlignAnchorC, 0.0)));
+			stateA.dryDelayLine.reset();
+			stateB.dryDelayLine.reset();
+			stateC.dryDelayLine.reset();
+			globalDryDelayLine.reset();
+			stateA.smoothedDryDelay.setCurrentAndTargetValue (0.0f);
+			stateB.smoothedDryDelay.setCurrentAndTargetValue (0.0f);
+			stateC.smoothedDryDelay.setCurrentAndTargetValue (0.0f);
+			smoothedGlobalDryDelay.setCurrentAndTargetValue (0.0f);
 
 			for (int loader = 0; loader < 3; ++loader)
 			{
