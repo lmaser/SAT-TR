@@ -3509,6 +3509,17 @@ bool SATTRAudioProcessor::getUiIoExpanded (int loaderIndex) const noexcept
 	return false;
 }
 
+void SATTRAudioProcessor::setUiFirstVisibleLoaderIndex (int loaderIndex)
+{
+	parameters.state.setProperty (UiStateKeys::firstVisibleLoader,
+	                              juce::jlimit (0, 2, loaderIndex), nullptr);
+}
+
+int SATTRAudioProcessor::getUiFirstVisibleLoaderIndex() const noexcept
+{
+	return juce::jlimit (0, 2, static_cast<int> (parameters.state.getProperty (UiStateKeys::firstVisibleLoader, 0)));
+}
+
 // ----------------------------------------------------------------
 void SATTRAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {

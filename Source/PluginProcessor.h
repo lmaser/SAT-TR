@@ -233,10 +233,13 @@ public:
 		static constexpr const char* ioExpandedA = "uiIoExpandedA";
 		static constexpr const char* ioExpandedB = "uiIoExpandedB";
 		static constexpr const char* ioExpandedC = "uiIoExpandedC";
+		static constexpr const char* firstVisibleLoader = "uiFirstVisibleLoader";
 	};
 
 	void  setUiIoExpanded (int loaderIndex, bool expanded);
 	bool  getUiIoExpanded (int loaderIndex) const noexcept;
+	void  setUiFirstVisibleLoaderIndex (int loaderIndex);
+	int   getUiFirstVisibleLoaderIndex() const noexcept;
 
 	// ----------------------------------------------------------------
 	//  Parameter Ranges & Defaults - Filters

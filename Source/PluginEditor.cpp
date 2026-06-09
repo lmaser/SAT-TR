@@ -1902,6 +1902,9 @@ SATTRAudioProcessorEditor::SATTRAudioProcessorEditor (SATTRAudioProcessor& p)
 	                                    audioProcessor.getUiEditorWidth());
 	const int restoredH = kCompactFixedHeightPx;
 	visibleLoaderCount_ = getMaxVisibleLoaderCountForWidth (restoredW);
+	firstVisibleLoaderIndex_ = juce::jlimit (0,
+	                                         kCompactMaxVisibleLoaders - visibleLoaderCount_,
+	                                         audioProcessor.getUiFirstVisibleLoaderIndex());
 	setSize (restoredW, restoredH);
 	setResizable (true, true);
 	setResizeLimits (getCompactTargetWidthForLoaderCount (kCompactMinVisibleLoaders),
@@ -3241,6 +3244,7 @@ void SATTRAudioProcessorEditor::setFirstVisibleLoaderIndex (int loaderIndex)
 		return;
 
 	firstVisibleLoaderIndex_ = safeIndex;
+	audioProcessor.setUiFirstVisibleLoaderIndex (safeIndex);
 	resized();
 	repaint();
 }
