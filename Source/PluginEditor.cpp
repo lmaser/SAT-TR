@@ -5038,12 +5038,13 @@ void SATTRAudioProcessorEditor::openFilterPrompt (int loaderIndex)
 			const int worstTextW = stringWidth (te->getFont(), useKhz ? "20.0" : "999");
 			const int unitTextW = stringWidth (hzLabel->getFont(), hzLabel->getText());
 			const int unitW  = stringWidth (hzLabel->getFont(), "kHz") + 8;
-			constexpr int kEditorPad = 2;
+			constexpr int kEditorPad = 6;
 			const int editorW = juce::jmax (28, juce::jmax (textW, worstTextW) + kEditorPad * 2);
 			const int visualW = textW + hzGap + unitTextW;
 			const int blockLeft = midL + juce::jmax (0, (midW - visualW) / 2);
 			const int groupX = blockLeft - ((editorW - textW) / 2);
 
+			te->setJustification (juce::Justification::centred);
 			te->setBounds (groupX, y, editorW, rowH);
 			hzLabel->setBounds (blockLeft + textW + hzGap, y, unitW, rowH);
 
@@ -6867,7 +6868,7 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			}
 			else
 			{
-				const int valuePad = isExpTimeRow ? 4 : 16;
+				const int valuePad = isExpTimeRow ? 10 : 16;
 				const int valueGap = isExpTimeRow ? 1 : unitGapPx;
 				editorW = juce::jlimit (24, editorW, textW + valuePad);
 				const int maxFittedEditorW = juce::jmax (24, innerW - labelW - labelGap - (unitLabel != nullptr ? valueGap + unitW : 0));
@@ -6925,13 +6926,13 @@ void SATTRAudioProcessorEditor::openExpPrompt (int loaderIndex)
 			const int midR = slopeX - kSlopeGap;
 			const int midW = midR - midL;
 
-			te->setJustification (juce::Justification::centredLeft);
+			te->setJustification (juce::Justification::centred);
 			const int unitTextW = stringWidth (unit->getFont(), unit->getText());
 			const int unitW = stringWidth (unit->getFont(), "kHz") + 8;
-			constexpr int kEditorPad = 9;
+			constexpr int kEditorPad = 6;
 			constexpr int hzGap = 1;
 			const int textW = juce::jmax (1, stringWidth (te->getFont(), te->getText()));
-			const int editorW = juce::jmax (28, textW + kEditorPad);
+			const int editorW = juce::jmax (28, textW + kEditorPad * 2);
 			const int visualW = textW + hzGap + unitTextW;
 			const int blockLeft = midL + juce::jmax (0, (midW - visualW) / 2);
 			const int groupX = blockLeft - ((editorW - textW) / 2);
