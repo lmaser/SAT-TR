@@ -3378,8 +3378,13 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	const bool enabledB = parameters.getRawParameterValue (kParamEnableB)->load() > 0.5f;
 	const bool enabledC = parameters.getRawParameterValue (kParamEnableC)->load() > 0.5f;
 
-	if (! enabledA || (! enabledB && ! enabledC))
+	const bool dryAlignRequested = isDryAlignModeEnabled();
+	const bool anyEnabled = enabledA || enabledB || enabledC;
+	if (! anyEnabled)
+	{
+		dryAlignRuntimeActive_.store (false, std::memory_order_release);
 		return;
+	}
 
 	// -- Generate synthetic alignment probes --
 	// Process a unit impulse through each active engine's emphasis chain.
@@ -3518,8 +3523,6 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	else
 		stateC.dryAnchorSamples.store (0.0f);
 
-	const bool dryAlignRequested = isDryAlignModeEnabled();
-	const bool anyEnabled = enabledA || enabledB || enabledC;
 	if (! enabledA || (! enabledB && ! enabledC))
 	{
 		dryAlignRuntimeActive_.store (dryAlignRequested && anyEnabled, std::memory_order_release);
