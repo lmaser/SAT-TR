@@ -155,6 +155,7 @@ void SatNamModel::reset (double hostSampleRate, int maxBlockSize)
 			model->Reset (hostSampleRate_, safeBlock);
 
 	inputScratch_.setSize (2, safeBlock, false, false, true);
+	outputScratch_.setSize (2, safeBlock, false, false, true);
 }
 
 void SatNamModel::setSlimAmount (float amount01)
@@ -184,10 +185,19 @@ void SatNamModel::process (juce::AudioBuffer<float>& buffer, int numSamples)
 		for (int offset = 0; offset < numSamples; offset += chunkSamples)
 		{
 			const int chunk = juce::jmin (chunkSamples, numSamples - offset);
-			inputScratch_.copyFrom (ch, 0, buffer, ch, offset, chunk);
+			const auto* in = buffer.getReadPointer (ch, offset);
+			auto* scratchIn = inputScratch_.getWritePointer (ch);
+			auto* scratchOut = outputScratch_.getWritePointer (ch);
+			for (int i = 0; i < chunk; ++i)
+				scratchIn[i] = static_cast<double> (in[i]);
+
 			inputPtrs_[0] = inputScratch_.getWritePointer (ch);
-			outputPtrs_[0] = buffer.getWritePointer (ch, offset);
+			outputPtrs_[0] = scratchOut;
 			model->process (inputPtrs_.data(), outputPtrs_.data(), chunk);
+
+			auto* out = buffer.getWritePointer (ch, offset);
+			for (int i = 0; i < chunk; ++i)
+				out[i] = static_cast<float> (scratchOut[i]);
 		}
 	}
 
@@ -207,10 +217,19 @@ void SatNamModel::processMonoToStereo (juce::AudioBuffer<float>& buffer, int num
 	for (int offset = 0; offset < numSamples; offset += chunkSamples)
 	{
 		const int chunk = juce::jmin (chunkSamples, numSamples - offset);
-		inputScratch_.copyFrom (0, 0, buffer, 0, offset, chunk);
+		const auto* in = buffer.getReadPointer (0, offset);
+		auto* scratchIn = inputScratch_.getWritePointer (0);
+		auto* scratchOut = outputScratch_.getWritePointer (0);
+		for (int i = 0; i < chunk; ++i)
+			scratchIn[i] = static_cast<double> (in[i]);
+
 		inputPtrs_[0] = inputScratch_.getWritePointer (0);
-		outputPtrs_[0] = buffer.getWritePointer (0, offset);
+		outputPtrs_[0] = scratchOut;
 		channelModels_[0]->process (inputPtrs_.data(), outputPtrs_.data(), chunk);
+
+		auto* out = buffer.getWritePointer (0, offset);
+		for (int i = 0; i < chunk; ++i)
+			out[i] = static_cast<float> (scratchOut[i]);
 	}
 
 	if (buffer.getNumChannels() > 1)

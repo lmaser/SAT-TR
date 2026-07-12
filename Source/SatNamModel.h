@@ -33,9 +33,10 @@ public:
 
 private:
 	std::array<std::unique_ptr<nam::DSP>, 2> channelModels_;
-	juce::AudioBuffer<float> inputScratch_;
-	std::array<float*, 2> inputPtrs_ {};
-	std::array<float*, 2> outputPtrs_ {};
+	juce::AudioBuffer<double> inputScratch_;
+	juce::AudioBuffer<double> outputScratch_;
+	std::array<double*, 2> inputPtrs_ {};
+	std::array<double*, 2> outputPtrs_ {};
 	juce::String currentFilePath_;
 	juce::String displayName_;
 	double hostSampleRate_ = 44100.0;
