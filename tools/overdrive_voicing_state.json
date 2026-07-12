@@ -1,0 +1,1920 @@
+{
+  "klon": {
+    "active_variant": "core-residual",
+    "active_variant_description": "Klon/Overdrive B core + accepted residual matching, without TS808 state coupling.",
+    "base_voicing_enabled": true,
+    "core": {
+      "clean_amount_scale": 1.0662202368000004,
+      "clean_freq_scale": 1.0,
+      "diode_headroom_scale": 1.2130560000000001,
+      "dirty_amount_scale": 1.0,
+      "dirty_freq_scale": 1.0,
+      "dirty_low_freq_scale": 1.0,
+      "dirty_low_mix_scale": 1.4439472128000002,
+      "dirty_tone_offset": 0.0,
+      "drive_gain_max_scale": 1.0,
+      "drive_gain_scale": 1.0,
+      "drive_scale": 0.9063,
+      "input_gain_db": 5.25,
+      "post_asym_scale": 1.0,
+      "soft_blend_scale": 1.08
+    },
+    "historical_scores": [
+      {
+        "hammer": 6.616870044209244,
+        "measured_hammer_with_current_runner": 6.592776916291103,
+        "measured_score_with_current_runner": 0.011030309002861984,
+        "reason": "metric_provenance_mismatch_before_klon_rebaseline",
+        "recorded_at_unix": 1783212594.166546,
+        "report": "C:\\Users\\Dev\\Documents\\SAT-TR-CascadeVoicing\\analysis_out\\metric_provenance\\klon\\metric_provenance_report.json",
+        "score": 0.0004935688813308228
+      },
+      {
+        "hammer_score": 6.592776916291103,
+        "reason": "pre_compaction_baseline_before_post_b_cap_20",
+        "score": 0.011030309002861984,
+        "timestamp_utc": "2026-07-05T00:59:41Z"
+      },
+      {
+        "hammer_score": 6.551142587927017,
+        "reason": "prepost_before_pre_gain_pre_ndsp_0_LowShelf_65_m0p25dB",
+        "score": 0.0074719771208356725,
+        "timestamp_utc": "2026-07-05T01:49:51Z"
+      }
+    ],
+    "last_core_hammer_candidate": {
+      "eligible": true,
+      "final_hammer_improved": true,
+      "final_hammer_ok": false,
+      "final_hammer_score": 6.616870044209244,
+      "final_static_score": 0.0004935688813308228,
+      "hammer_required": 6.604360398823423,
+      "hammer_score": 6.616870044209244,
+      "joint_refit": {
+        "joint_refit": false,
+        "label": "core_only",
+        "moves": [],
+        "score": 0.0004935688813308228
+      },
+      "joint_refit_score": 0.0004935688813308228,
+      "label": "core_hammer_clean_amount_scale_1p06622024",
+      "new": 1.0662202368000004,
+      "old": 0.9872409600000003,
+      "param": "clean_amount_scale",
+      "refit_gate": true,
+      "static_allowed": 0.0005111722267556109,
+      "static_promising": true,
+      "static_score": 0.0004935688813308228,
+      "step": 1.08
+    },
+    "last_core_hammer_source_hammer": 6.629360398823423,
+    "last_core_hammer_source_static": 0.0005011492419172655,
+    "last_core_hammer_updated_at_unix": 1783171936.5173898,
+    "last_core_post_joint_candidate": {
+      "accepted_pending_provenance": false,
+      "label": "core_hammer_input_gain_db_5p25_joint_prepost",
+      "moves": [
+        {
+          "new": 5.25,
+          "old": 5.0,
+          "param": "input_gain_db",
+          "section": "core"
+        },
+        {
+          "freq_hz": 129.0,
+          "kind": "LowShelf",
+          "new_gain_db": 1.1749999999999998,
+          "old_gain_db": -1.05,
+          "section": "pre_a",
+          "slot": 0
+        },
+        {
+          "freq_hz": 1400.0,
+          "kind": "Peak",
+          "new_gain_db": -1.8820004848548186,
+          "old_gain_db": -2.1320004848548186,
+          "section": "post_a",
+          "slot": 1
+        }
+      ],
+      "recorded_at_unix": 1783252997.1806808,
+      "source_fit_summary": "C:\\tmp\\klon_core_joint_sane\\candidates\\iteration_1_core_hammer_input_gain_db_5p25\\final_guard\\overdrive_cases\\klon_drive_drv100_in_p0\\overdrive_id_fit_voiced\\fit_summary.json",
+      "source_state": "C:\\tmp\\klon_core_joint_sane\\candidates\\iteration_1_core_hammer_input_gain_db_5p25\\final_guard\\candidate_voicing_state.json",
+      "summary_score": 0.0031868647081576226,
+      "verified_hammer_rebased_to_current_runner": 8.668471717964453,
+      "verified_score_rebased_to_current_runner": 0.0031868647081576226
+    },
+    "last_klon_core_grid": {
+      "backup": "SAT-TR\\tools\\overdrive_voicing_state.before_klon_core_grid_20260702_102843.json",
+      "baseline_score": 0.03723636693901756,
+      "changes": {
+        "drive_scale": 0.9063,
+        "input_gain_db": 5.0
+      },
+      "label": "fine_input+5_absDrive0.9063",
+      "score": 0.022137471397750866,
+      "source_report": "analysis_out\\klon_core_grid_fine\\klon_core_grid_report.json"
+    },
+    "last_klon_diode_headroom_probe": {
+      "baseline_score": 0.019733460429213968,
+      "best_label": "post_ndsp_6_Peak_4000_m0p50dB",
+      "best_score": 0.01749603817073242,
+      "core_change": {
+        "diode_headroom_scale": 1.2130560000000001
+      },
+      "exact_full_guard_root": "analysis_out/klon_diode_headroom_probe/combined_exact_full_guard",
+      "note": "Promoted only after exact cascade validation reproduced score 0.017496.",
+      "post_change": {
+        "band_index": 6,
+        "freq_hz": 4000.0,
+        "gain_delta_db": -0.5,
+        "layer": "post_ndsp"
+      },
+      "probe_source_score": 0.01855653458775398,
+      "source_root": "analysis_out/klon_diode_headroom_probe"
+    },
+    "last_metric_provenance": {
+      "kind": "metric_provenance_after_klon_capacity_apply",
+      "pedal": "klon",
+      "label": "pre_gain_pre_ndsp_0_LowShelf_65_p1dB",
+      "score": 0.0025167876649868754,
+      "hammer_score": 6.989708644252756,
+      "root": "_tmp_overdrive_audit\\metric_provenance_klon_after_apply\\klon",
+      "source_state": "_tmp_overdrive_audit\\capacity_klon_now\\klon\\candidates\\0024_pre_gain_pre_ndsp_0_LowShelf_65_p1dB\\materialized_verify\\candidate_voicing_state.json",
+      "source_fit_summary": "_tmp_overdrive_audit\\capacity_klon_now\\klon\\candidates\\0024_pre_gain_pre_ndsp_0_LowShelf_65_p1dB\\materialized_verify\\overdrive_cases\\klon_drive_drv100_in_p0\\overdrive_id_fit_voiced\\fit_summary.json",
+      "note": "Klon capacity candidate applied after materialized verification; metadata rebased to current provenance runner."
+    },
+    "last_prepost_local_refine": {
+      "label": "pre_gain_pre_ndsp_4_Peak_1000_p0p0625dB",
+      "root": "C:\\tmp\\prepost_klon_micro_topn\\klon\\pass_01\\candidates\\0031_pre_gain_pre_ndsp_4_Peak_1000_p0p0625dB\\materialized_verify",
+      "score": 0.0040360259981379,
+      "selection_score": 0.0040362247836225095
+    },
+    "last_prepost_local_refine_summary": {
+      "best": {
+        "candidate": {
+          "band": {
+            "amount": "Classic",
+            "freq_hz": 1000.0,
+            "gain_db": 0.0,
+            "kind": "Peak",
+            "q": 1.0,
+            "stages": 1
+          },
+          "band_index": 4,
+          "delta_db": 0.0625,
+          "layer": "pre_ndsp",
+          "type": "pre_gain"
+        },
+        "label": "pre_gain_pre_ndsp_4_Peak_1000_p0p0625dB",
+        "score": 0.0040360259981379,
+        "selection_score": 0.0040362247836225095
+      },
+      "case_id": "klon_drive_drv100_in_p0",
+      "passes_completed": 1,
+      "passes_requested": 1,
+      "pedal": "klon"
+    },
+    "last_probe_note": "temporary diode_headroom_scale probe; not applied to canonical state",
+    "last_verified_best_candidate": {
+      "band": {
+        "amount": "Classic",
+        "freq_hz": 65.0,
+        "gain_db": -0.25,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      "band_index": 0,
+      "delta_db": 1.0,
+      "layer": "pre_ndsp",
+      "type": "pre_gain"
+    },
+    "last_verified_best_hammer_score": 6.989708644252756,
+    "last_verified_best_score": 0.0025167876649868754,
+    "last_verified_reference_score": 0.0031868647081576226,
+    "last_verified_updated_at_unix": 1783632887.1139727,
+    "post_a": [
+      {
+        "amount": "Classic",
+        "freq_hz": 5000.0,
+        "gain_db": -6.551493942288111,
+        "kind": "HighShelf",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1400.0,
+        "gain_db": -1.8820004848548186,
+        "kind": "Peak",
+        "q": 3.0,
+        "stages": 2
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": 1.9451702858042774,
+        "kind": "HighShelf",
+        "q": 2.0,
+        "stages": 1
+      }
+    ],
+    "post_b": [
+      {
+        "amount": "Classic",
+        "freq_hz": 125.0,
+        "gain_db": -6.140802257353108,
+        "kind": "LowShelf",
+        "q": 0.5,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": -8.783135480949262,
+        "kind": "HighShelf",
+        "q": 0.5,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 5600.0,
+        "gain_db": 1.269183889056267,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 65.0,
+        "gain_db": 1.9645062525822055,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 2000.0,
+        "gain_db": -2.404509857919119,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 4000.0,
+        "gain_db": -2.935778619186763,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 1600.0,
+        "gain_db": -1.4600635274651619,
+        "kind": "TiltShelf",
+        "q": 1.25,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 65.0,
+        "gain_db": -1.4945620028632736,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 250.0,
+        "gain_db": 1.7415598311884513,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 500.0,
+        "gain_db": 3.1477818223835325,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 1000.0,
+        "gain_db": 5.829128892146966,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 2000.0,
+        "gain_db": 4.19272118062191,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 4000.0,
+        "gain_db": 1.9470219050192348,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 1000.0,
+        "gain_db": 1.0849883380198617,
+        "kind": "Peak",
+        "q": 3.0,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 125.0,
+        "gain_db": -1.0025523330043387,
+        "kind": "Peak",
+        "q": 3.0,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 65.0,
+        "gain_db": 1.7655970012339004,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 250.0,
+        "gain_db": -2.924012795737971,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 500.0,
+        "gain_db": -3.5228883952924255,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 1000.0,
+        "gain_db": -5.7190721018099895,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 2000.0,
+        "gain_db": -3.169823699044629,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 3500.0,
+        "gain_db": 0.39321061247870503,
+        "kind": "HighShelf",
+        "q": 3.0,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 2800.0,
+        "gain_db": 0.6557026060515324,
+        "kind": "Peak",
+        "q": 3.0,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 250.0,
+        "gain_db": 1.4043989087505504,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 4000.0,
+        "gain_db": -1.942638627961048,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      }
+    ],
+    "post_hicut_enabled": true,
+    "post_ndsp": [
+      {
+        "amount": "Classic",
+        "freq_hz": 65.0,
+        "gain_db": 2.3912063258524707,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 125.0,
+        "gain_db": -1.8058387304397208,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": -3.059971263921649,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 500.0,
+        "gain_db": -4.676989190614391,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": -6.3674233410379,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 2000.0,
+        "gain_db": -7.340699317837495,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 4000.0,
+        "gain_db": -6.956415896843008,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 8000.0,
+        "gain_db": -5.339177538440982,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": -5.511860434876223,
+        "kind": "HighShelf",
+        "q": 0.707,
+        "stages": 1
+      }
+    ],
+    "post_residual": [
+      {
+        "amount": "Classic",
+        "freq_hz": 5000.0,
+        "gain_db": -6.551493942288111,
+        "kind": "HighShelf",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1400.0,
+        "gain_db": -1.8820004848548186,
+        "kind": "Peak",
+        "q": 3.0,
+        "stages": 2
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": 1.9451702858042774,
+        "kind": "HighShelf",
+        "q": 2.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 65.0,
+        "gain_db": 2.3912063258524707,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 125.0,
+        "gain_db": -1.8058387304397208,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": -3.059971263921649,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 500.0,
+        "gain_db": -4.676989190614391,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": -6.3674233410379,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 2000.0,
+        "gain_db": -7.340699317837495,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 4000.0,
+        "gain_db": -6.956415896843008,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 8000.0,
+        "gain_db": -5.339177538440982,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": -5.511860434876223,
+        "kind": "HighShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 125.0,
+        "gain_db": -6.140802257353108,
+        "kind": "LowShelf",
+        "q": 0.5,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": -8.783135480949262,
+        "kind": "HighShelf",
+        "q": 0.5,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 5600.0,
+        "gain_db": 1.269183889056267,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 65.0,
+        "gain_db": 1.9645062525822055,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 2000.0,
+        "gain_db": -2.404509857919119,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 4000.0,
+        "gain_db": -2.935778619186763,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 1600.0,
+        "gain_db": -1.4600635274651619,
+        "kind": "TiltShelf",
+        "q": 1.25,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 65.0,
+        "gain_db": -1.4945620028632736,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 250.0,
+        "gain_db": 1.7415598311884513,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 500.0,
+        "gain_db": 3.1477818223835325,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 1000.0,
+        "gain_db": 5.829128892146966,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 2000.0,
+        "gain_db": 4.19272118062191,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 4000.0,
+        "gain_db": 1.9470219050192348,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 1000.0,
+        "gain_db": 1.0849883380198617,
+        "kind": "Peak",
+        "q": 3.0,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 125.0,
+        "gain_db": -1.0025523330043387,
+        "kind": "Peak",
+        "q": 3.0,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 65.0,
+        "gain_db": 1.7655970012339004,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 250.0,
+        "gain_db": -2.924012795737971,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 500.0,
+        "gain_db": -3.5228883952924255,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 1000.0,
+        "gain_db": -5.7190721018099895,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 2000.0,
+        "gain_db": -3.169823699044629,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 3500.0,
+        "gain_db": 0.39321061247870503,
+        "kind": "HighShelf",
+        "q": 3.0,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 2800.0,
+        "gain_db": 0.6557026060515324,
+        "kind": "Peak",
+        "q": 3.0,
+        "stages": 2
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 250.0,
+        "gain_db": 1.4043989087505504,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 4000.0,
+        "gain_db": -1.942638627961048,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      }
+    ],
+    "pre_a": [
+      {
+        "amount": "Classic",
+        "freq_hz": 129.0,
+        "gain_db": 1.1749999999999998,
+        "kind": "LowShelf",
+        "q": 0.7,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": -1.25,
+        "kind": "Peak",
+        "q": 0.75,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": -1.0,
+        "kind": "Peak",
+        "q": 0.75,
+        "stages": 1
+      }
+    ],
+    "pre_b": [
+      {
+        "amount": "Fixed",
+        "freq_hz": 1740.0,
+        "gain_db": 2.7,
+        "kind": "Peak",
+        "q": 3.2,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 65.0,
+        "gain_db": -1.0,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      }
+    ],
+    "pre_ndsp": [
+      {
+        "amount": "Classic",
+        "freq_hz": 65.0,
+        "gain_db": 0.75,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 125.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 500.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": 0.0625,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 2000.0,
+        "gain_db": -0.5,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 4000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 8000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": 0.0,
+        "kind": "HighShelf",
+        "q": 0.707,
+        "stages": 1
+      }
+    ],
+    "residual_matching_enabled": true,
+    "residual_pre": [
+      {
+        "amount": "Classic",
+        "freq_hz": 129.0,
+        "gain_db": 1.1749999999999998,
+        "kind": "LowShelf",
+        "q": 0.7,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": -1.25,
+        "kind": "Peak",
+        "q": 0.75,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": -1.0,
+        "kind": "Peak",
+        "q": 0.75,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 65.0,
+        "gain_db": 0.75,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 125.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 500.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": 0.0625,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 2000.0,
+        "gain_db": -0.5,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 4000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 8000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": 0.0,
+        "kind": "HighShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 1740.0,
+        "gain_db": 2.7,
+        "kind": "Peak",
+        "q": 3.2,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 65.0,
+        "gain_db": -1.0,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      }
+    ],
+    "voicing_cascade_contract": {
+      "core": "klon_split_clean_dirty_core",
+      "legacy_mirrors": [
+        "residual_pre",
+        "post_residual"
+      ],
+      "post_order": [
+        "post_a",
+        "post_ndsp",
+        "post_b"
+      ],
+      "pre_order": [
+        "pre_a",
+        "pre_ndsp",
+        "pre_b"
+      ]
+    },
+    "last_prepost_capacity_candidate": {
+      "candidate": {
+        "band": {
+          "amount": "Classic",
+          "freq_hz": 65.0,
+          "gain_db": -0.25,
+          "kind": "LowShelf",
+          "q": 0.707,
+          "stages": 1
+        },
+        "band_index": 0,
+        "delta_db": 1.0,
+        "layer": "pre_ndsp",
+        "type": "pre_gain"
+      },
+      "hammer_score": 6.989708644252756,
+      "label": "pre_gain_pre_ndsp_0_LowShelf_65_p1dB",
+      "materialization_gap": 0.0,
+      "post_fit_csv": "_tmp_overdrive_audit\\capacity_klon_now\\klon\\candidates\\0024_pre_gain_pre_ndsp_0_LowShelf_65_p1dB\\materialized_verify\\overdrive_cases\\klon_drive_drv100_in_p0\\overdrive_id_fit_voiced\\cma_filterbank_fit.csv",
+      "pre_materialized_fit_score": 0.0025167876649868754,
+      "root": "_tmp_overdrive_audit\\capacity_klon_now\\klon\\candidates\\0024_pre_gain_pre_ndsp_0_LowShelf_65_p1dB\\materialized_verify",
+      "score": 0.0025167876649868754
+    }
+  },
+  "target": "SAT-TR Overdrive TS808",
+  "ts808": {
+    "active_variant": "core-residual",
+    "active_variant_description": "TS808 core + accepted residual matching, without native/base voicing.",
+    "analysis_notes": [
+      {
+        "message": "Normalized ts808.core.drive_headroom to 1.0 because DSP clamps lower values; no effective audio change.",
+        "new_value": 1.0,
+        "old_value": 0.95,
+        "time_unix": 1783023800.7148864,
+        "type": "state_normalization"
+      },
+      {
+        "message": "Updated last_verified_case_scores to match accepted best score after drive_headroom normalization.",
+        "score": 0.008749949586485551,
+        "time_unix": 1783023847.5242624,
+        "type": "metadata_fix"
+      }
+    ],
+    "base_voicing_enabled": false,
+    "core": {
+      "air_gain_at_max_drive": 0.31999999999999995,
+      "body_asymmetry_hi": 0.29,
+      "body_asymmetry_lo": 0.08,
+      "body_feedback_hi": 3.08896,
+      "body_feedback_lo": 0.75,
+      "body_hardness_hi": 1.85,
+      "body_hardness_lo": 0.95,
+      "body_limit_hi": 0.48,
+      "body_limit_lo": 1.72,
+      "drive_headroom": 1.0,
+      "drive_scale": 0.8041275000000001,
+      "feedback_pole_min_hz": 5600.0,
+      "input_gain_db": 1.25,
+      "input_high_pass_hz": 720.0,
+      "legacy_knee_range_hi": 0.99,
+      "legacy_knee_range_lo": 0.56,
+      "loop_capped_gain_at_max_drive": 3.08,
+      "loop_coeff_hz_hi": 680.0,
+      "loop_coeff_hz_lo": 950.0,
+      "loop_drive_max": 72.11274854799771,
+      "low_trim_at_max_drive": 0.22,
+      "solver_knee_start": 0.3999999999999999,
+      "solver_pre_conduct": 0.1785341892669007,
+      "upper_air_dynamic_feedback": 1.12,
+      "upper_air_trim_hi": 0.88,
+      "upper_air_trim_lo": 0.94,
+      "upper_asymmetry_scale": 0.5,
+      "upper_blend_hi": 0.45999999999999996,
+      "upper_blend_lo": 0.28,
+      "upper_dynamic_feedback": 1.0,
+      "upper_feedback_hi": 0.6820799999999999,
+      "upper_feedback_lo": 0.55,
+      "upper_hardness_hi": 0.357,
+      "upper_hardness_lo": 0.6,
+      "upper_limit_hi": 1.35,
+      "upper_limit_lo": 3.1,
+      "upper_mid_dynamic_feedback": 1.0,
+      "upper_mid_split_hz": 3200.0
+    },
+    "last_control_fit_candidate": {
+      "applied_mapping": {
+        "drive_scale": {
+          "multiplier": 1.1,
+          "new": 0.8934750000000001,
+          "old": 0.81225
+        },
+        "input_gain_db": {
+          "delta_db": 0.0,
+          "new": 0.0,
+          "old": 0.0
+        },
+        "knee": {
+          "applied": false,
+          "reason": "TS808 knee is intentionally held at 0 for this tuning pass.",
+          "suggested": 0.0
+        },
+        "output_db": {
+          "applied": false,
+          "reason": "No TS808 core output trim field exists; residual/output calibration remains explicit.",
+          "suggested_db": 0.0
+        }
+      },
+      "score": 2.3204577921909,
+      "source_best": {
+        "drive": 1.1,
+        "harmonic_proxy": 0.027847722158242785,
+        "input_db": 0.0,
+        "knee": 0.0,
+        "median_dynamic_error_db": -4.572870776466949,
+        "median_level_match_abs_db": 1.9090671217024662,
+        "output_db": 0.0,
+        "raw": false,
+        "score": 2.3204577921909,
+        "spectral_rmse_db": 1.0503821896868035,
+        "spectral_variance_db": 3.3708258758767893
+      }
+    },
+    "last_core_hammer_candidate": {
+      "mode": "core_hammer",
+      "new": 0.696,
+      "old": 0.6,
+      "param": "upper_feedback_hi",
+      "step": 1.16
+    },
+    "last_core_optimizer": {
+      "accepted_moves": [
+        {
+          "new": 0.8041275000000001,
+          "old": 0.8934750000000001,
+          "param": "drive_scale",
+          "score": 1.964910716931363
+        },
+        {
+          "new": 1.0,
+          "old": 0.0,
+          "param": "input_gain_db",
+          "score": 1.935282261667374
+        },
+        {
+          "new": 0.17176477119999997,
+          "old": 0.18272847999999997,
+          "param": "solver_pre_conduct",
+          "score": 1.9056264753242065
+        },
+        {
+          "new": 0.45999999999999996,
+          "old": 0.42999999999999994,
+          "param": "upper_blend_hi",
+          "score": 1.8770544321040559
+        },
+        {
+          "new": 0.88,
+          "old": 0.85,
+          "param": "upper_air_trim_hi",
+          "score": 1.8420899587025363
+        }
+      ],
+      "best_score": 1.8420899587025363,
+      "case_id": "ts808_drive_drv100_in_p0",
+      "original_score": 2.5664006622409636,
+      "profile": "fast"
+    },
+    "last_core_optimizer_reverted_note": "Reverted loop_drive_max from rejected guarded iteration; residual promotion rejected the final score.",
+    "last_core_post_joint_candidate": {
+      "accepted_pending_provenance": false,
+      "label": "core_solver_pre_conduct_0p17853419_joint_prepost",
+      "moves": [
+        {
+          "new": 0.1785341892669007,
+          "old": 0.175895752972316,
+          "param": "solver_pre_conduct",
+          "section": "core"
+        },
+        {
+          "freq_hz": 65.0,
+          "kind": "LowShelf",
+          "new_gain_db": 0.0,
+          "old_gain_db": 0.125,
+          "section": "pre_ndsp",
+          "slot": 0
+        },
+        {
+          "freq_hz": 1000.0,
+          "kind": "Peak",
+          "new_gain_db": -1.043205910827026,
+          "old_gain_db": -1.293205910827026,
+          "section": "post_ndsp",
+          "slot": 4
+        }
+      ],
+      "recorded_at_unix": 1783254672.0004408,
+      "source_fit_summary": "C:\\tmp\\ts808_core_post_joint_sane\\iteration_1_core_solver_pre_conduct_0p17853419\\final_guard\\overdrive_cases\\ts808_drive_drv100_in_p0\\overdrive_id_fit_voiced\\fit_summary.json",
+      "source_state": "C:\\tmp\\ts808_core_post_joint_sane\\iteration_1_core_solver_pre_conduct_0p17853419\\final_guard\\candidate_voicing_state.json",
+      "summary_score": 0.00725083111463386,
+      "verified_hammer_rebased_to_current_runner": 3.7932634126652194,
+      "verified_score_rebased_to_current_runner": 0.007250831114633862
+    },
+    "last_metric_provenance": {
+      "hammer_score": 3.7938241450079215,
+      "kind": "metric_provenance_after_interrupted_joint_candidate_promote",
+      "label": "core_upper_hardness_hi_0p357",
+      "note": "Score and Hammer reproduced exactly after export; promotion is locked.",
+      "pedal": "ts808",
+      "root": "C:\\tmp\\metric_provenance_ts808_after_upper_hardness\\ts808",
+      "score": 0.00712252841877491,
+      "source_fit_summary": "C:\\tmp\\ts808_core_post_joint_lock\\iteration_1_core_upper_hardness_hi_0p357\\final_guard\\overdrive_cases\\ts808_drive_drv100_in_p0\\overdrive_id_fit_voiced\\fit_summary.json",
+      "source_state": "C:\\tmp\\ts808_core_post_joint_lock\\iteration_1_core_upper_hardness_hi_0p357\\final_guard\\candidate_voicing_state.json"
+    },
+    "last_plan_residual_aggregate": "median",
+    "last_plan_residual_application": "replace",
+    "last_plan_residual_cases": [
+      "ts808_drive_drv100_in_p0"
+    ],
+    "last_plan_residual_delta_scale": 1.0,
+    "last_plan_residual_filter_models": [
+      "dsp_ndsp-foundation-eq_biquad_loggrid_b14_q0p85_g12p0"
+    ],
+    "last_plan_residual_scores": {
+      "ts808_drive_drv100_in_p0": 0.00994230607737585
+    },
+    "last_plan_residual_updated_at_unix": 1782667838.3677297,
+    "last_pre_cascade_candidate": {
+      "band_index": 0,
+      "gain_delta_db": 0.25,
+      "layer": "post_a",
+      "mode": "gain_delta"
+    },
+    "last_prepost_local_refine": {
+      "label": "pre_struct_pre_b_replace1_LowShelf_95_m1dB_q0p707",
+      "root": "C:\\tmp\\prepost_ts808_next_hammer_weighted\\ts808\\pass_01\\candidates\\0020_pre_struct_pre_b_replace1_LowShelf_95_m1dB_q0p707\\materialized_verify",
+      "score": 0.002035658
+    },
+    "last_prepost_local_refine_summary": {
+      "best": {
+        "candidate": {
+          "band": {
+            "amount": "Classic",
+            "freq_hz": 250.0,
+            "gain_db": -1.0,
+            "kind": "Peak",
+            "q": 0.75,
+            "stages": 1
+          },
+          "layer": "pre_a",
+          "slot": 1,
+          "type": "pre_structural"
+        },
+        "label": "pre_struct_pre_a_replace1_Peak_250_m1dB_q0p75",
+        "score": 0.00446331594721665
+      },
+      "case_id": "ts808_drive_drv100_in_p0",
+      "passes_completed": 1,
+      "passes_requested": 1,
+      "pedal": "ts808"
+    },
+    "last_verified_best_candidate": {
+      "acceptance_class": "static_improved_hammer_neutral",
+      "accepted_from_interrupted_run": true,
+      "accepted_policy": "static_improved_hammer_neutral_after_joint_prepost_refit",
+      "combined_improved": true,
+      "eligible": true,
+      "final_combined_score": 1.232342060714545,
+      "final_complexity": {
+        "abs_gain_stage_sum": 35.64188664387539,
+        "band_count": 28,
+        "excess_bands": 0,
+        "post_b_count": 2,
+        "pre_b_count": 2
+      },
+      "final_complexity_penalty": 0.0010692565993162617,
+      "final_hammer_neutral": true,
+      "final_hammer_ok": false,
+      "final_hammer_score": 3.7938241450079215,
+      "final_regularized_score": 1.2334113173138612,
+      "final_static_score": 0.00712252841877491,
+      "hammer_neutral": true,
+      "hammer_ok": false,
+      "hammer_score": 3.7928935913694013,
+      "hammer_strong_static_gate": true,
+      "joint_refit": {
+        "contract_compaction": {
+          "post_b_after": 2,
+          "post_b_before": 2,
+          "pre_b_after": 2,
+          "pre_b_before": 2,
+          "removed_post_b": 0,
+          "removed_pre_b": 0
+        },
+        "joint_refit": true,
+        "label": "pre_refit_pre_ndsp_0_LowShelf_65_p0p125dB+post_refit_post_ndsp_4_Peak_1000_p0p125dB",
+        "moves": [
+          {
+            "band_index": 0,
+            "delta_db": 0.125,
+            "freq_hz": 65.0,
+            "joint_refit": true,
+            "kind": "LowShelf",
+            "label": "pre_refit_pre_ndsp_0_LowShelf_65_p0p125dB",
+            "layer": "pre_ndsp",
+            "score": 0.007279982069961629
+          },
+          {
+            "band_index": 4,
+            "delta_db": 0.125,
+            "freq_hz": 1000.0,
+            "joint_refit": true,
+            "kind": "Peak",
+            "label": "post_refit_post_ndsp_4_Peak_1000_p0p125dB",
+            "layer": "post_ndsp",
+            "score": 0.00712252841877491
+          }
+        ],
+        "score": 0.00712252841877491
+      },
+      "joint_refit_score": 0.00712252841877491,
+      "label": "core_upper_hardness_hi_0p357",
+      "new": 0.357,
+      "old": 0.35,
+      "param": "upper_hardness_hi",
+      "raw_static_ok": true,
+      "refit_gate": true,
+      "regularized_improved": true,
+      "source_combined_score": 1.25,
+      "source_fit_summary": "C:\\tmp\\ts808_core_post_joint_lock\\iteration_1_core_upper_hardness_hi_0p357\\final_guard\\overdrive_cases\\ts808_drive_drv100_in_p0\\overdrive_id_fit_voiced\\fit_summary.json",
+      "source_state": "C:\\tmp\\ts808_core_post_joint_lock\\iteration_1_core_upper_hardness_hi_0p357\\final_guard\\candidate_voicing_state.json",
+      "static_gate": true,
+      "static_score": 0.00729962059475805,
+      "step": 1.02
+    },
+    "last_verified_best_hammer_score": 3.7938241450079215,
+    "last_verified_best_score": 0.00712252841877491,
+    "last_verified_case_scores": {
+      "ts808_drive_drv100_in_p0": 0.008893716454434358
+    },
+    "last_verified_filter_models": [
+      "dsp_ndsp-foundation-eq_biquad_loggrid_b14_q0p85_g12p0"
+    ],
+    "last_verified_previous_baseline": 0.008882483346977223,
+    "last_verified_reference_score": 0.008893716454434358,
+    "last_verified_updated_at_unix": 1783268026.225038,
+    "post_a": [
+      {
+        "amount": "Classic",
+        "freq_hz": 10000.0,
+        "gain_db": -2.8159420567519837,
+        "kind": "HighShelf",
+        "q": 1.5,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": 1.0478878408464805,
+        "kind": "TiltShelf",
+        "q": 1.25,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 95.0,
+        "gain_db": -1.135295229252637,
+        "kind": "LowShelf",
+        "q": 1.25,
+        "stages": 2
+      }
+    ],
+    "post_b": [
+      {
+        "amount": "Fixed",
+        "freq_hz": 10000.0,
+        "gain_db": -2.3850036006864435,
+        "kind": "HighShelf",
+        "q": 1.25,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 250.0,
+        "gain_db": -1.0155605135771915,
+        "kind": "LowShelf",
+        "q": 1.5,
+        "stages": 2
+      }
+    ],
+    "post_core": [
+      {
+        "amount": "Classic",
+        "freq_hz": 110.0,
+        "gain_db": -6.0,
+        "kind": "LowShelf",
+        "q": 0.35,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 920.0,
+        "gain_db": 1.65,
+        "kind": "Peak",
+        "q": 1.05,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1900.0,
+        "gain_db": -1.85,
+        "kind": "Peak",
+        "q": 0.85,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 4100.0,
+        "gain_db": 1.65,
+        "kind": "Peak",
+        "q": 0.9,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 8600.0,
+        "gain_db": -3.2,
+        "kind": "Peak",
+        "q": 0.95,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 14500.0,
+        "gain_db": 1.6,
+        "kind": "HighShelf",
+        "q": 0.707,
+        "stages": 1
+      }
+    ],
+    "post_hicut": {
+      "amount": "Classic",
+      "freq_hz": 18000.0,
+      "gain_db": 0.0,
+      "kind": "LowPass",
+      "q": 0.707,
+      "stages": 1
+    },
+    "post_hicut_enabled": false,
+    "post_ndsp": [
+      {
+        "amount": "Classic",
+        "freq_hz": 65.0,
+        "gain_db": -2.5805524636871793,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 125.0,
+        "gain_db": -2.5892324123618664,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": -1.5587960962664942,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 500.0,
+        "gain_db": -1.7061732498684479,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": -0.918205910827026,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 2000.0,
+        "gain_db": -0.5636919867035568,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 4000.0,
+        "gain_db": -2.215281410457619,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 8000.0,
+        "gain_db": -3.040220461950096,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": -3.369187667808535,
+        "kind": "HighShelf",
+        "q": 0.707,
+        "stages": 1
+      }
+    ],
+    "post_residual": [
+      {
+        "amount": "Classic",
+        "freq_hz": 10000.0,
+        "gain_db": -2.8159420567519837,
+        "kind": "HighShelf",
+        "q": 1.5,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": 1.0478878408464805,
+        "kind": "TiltShelf",
+        "q": 1.25,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 95.0,
+        "gain_db": -1.135295229252637,
+        "kind": "LowShelf",
+        "q": 1.25,
+        "stages": 2
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 65.0,
+        "gain_db": -2.5805524636871793,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 125.0,
+        "gain_db": -2.5892324123618664,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": -1.5587960962664942,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 500.0,
+        "gain_db": -1.7061732498684479,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": -0.918205910827026,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 2000.0,
+        "gain_db": -0.5636919867035568,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 4000.0,
+        "gain_db": -2.215281410457619,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 8000.0,
+        "gain_db": -3.040220461950096,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": -3.369187667808535,
+        "kind": "HighShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 10000.0,
+        "gain_db": -2.3850036006864435,
+        "kind": "HighShelf",
+        "q": 1.25,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 250.0,
+        "gain_db": -1.0155605135771915,
+        "kind": "LowShelf",
+        "q": 1.5,
+        "stages": 2
+      }
+    ],
+    "pre_a": [
+      {
+        "amount": "Classic",
+        "freq_hz": 95.0,
+        "gain_db": -1.0499999999999998,
+        "kind": "LowShelf",
+        "q": 0.7,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": -1.125,
+        "kind": "Peak",
+        "q": 0.75,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 740.0,
+        "gain_db": 2.75,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      }
+    ],
+    "pre_b": [
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": -0.5,
+        "kind": "HighShelf",
+        "q": 0.5,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 95.0,
+        "gain_db": -1.0,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      }
+    ],
+    "pre_ndsp": [
+      {
+        "amount": "Classic",
+        "freq_hz": 65.0,
+        "gain_db": 0.125,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 125.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 500.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 2000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 4000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 8000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": 0.0,
+        "kind": "HighShelf",
+        "q": 0.707,
+        "stages": 1
+      }
+    ],
+    "residual_matching_enabled": true,
+    "residual_pre": [
+      {
+        "amount": "Classic",
+        "freq_hz": 95.0,
+        "gain_db": -1.0499999999999998,
+        "kind": "LowShelf",
+        "q": 0.7,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": -1.125,
+        "kind": "Peak",
+        "q": 0.75,
+        "stages": 1
+      },
+      {
+        "amount": "Fixed",
+        "freq_hz": 740.0,
+        "gain_db": 2.75,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 65.0,
+        "gain_db": 0.125,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 125.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 250.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 500.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 2000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 4000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 8000.0,
+        "gain_db": 0.0,
+        "kind": "Peak",
+        "q": 1.0,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 16000.0,
+        "gain_db": 0.0,
+        "kind": "HighShelf",
+        "q": 0.707,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 1000.0,
+        "gain_db": -0.5,
+        "kind": "HighShelf",
+        "q": 0.5,
+        "stages": 1
+      },
+      {
+        "amount": "Classic",
+        "freq_hz": 95.0,
+        "gain_db": -1.0,
+        "kind": "LowShelf",
+        "q": 0.707,
+        "stages": 1
+      }
+    ],
+    "voicing_cascade_contract": {
+      "core": "ts808_feedback_diode_core",
+      "legacy_mirrors": [
+        "residual_pre",
+        "post_residual"
+      ],
+      "post_order": [
+        "post_a",
+        "post_ndsp",
+        "post_b"
+      ],
+      "pre_order": [
+        "pre_a",
+        "pre_ndsp",
+        "pre_b"
+      ]
+    }
+  },
+  "version": 1
+}

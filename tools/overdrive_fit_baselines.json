@@ -1,0 +1,155 @@
+{
+  "plan:render_plan_ts808.json:core-residual:dsp_ndsp-foundation-eq_biquad_loggrid_b12_q0p85_g12p0:median": {
+    "aggregate": "median",
+    "aggregate_score": 0.02438669059621267,
+    "application": "verified-post-apply",
+    "candidate": {
+      "application": "replace",
+      "label": "replace_0p75",
+      "scale": 0.75
+    },
+    "missing_cases": [],
+    "note": "Score measured after applying candidate residual and rerendering SAT output.",
+    "scores": {
+      "ts808_drive_drv100_in_p0": 0.02438669059621267
+    },
+    "updated_at_unix": 1782470517.3741682,
+    "used_cases": [
+      "ts808_drive_drv100_in_p0"
+    ],
+    "variant": "core-residual"
+  },
+  "plan:render_plan_ts808.json:core-residual:dsp_ndsp-foundation-eq_biquad_loggrid_b14_q0p85_g12p0:median": {
+    "aggregate": "median",
+    "aggregate_score": 0.022545655006501943,
+    "application": "current-rescore",
+    "candidate": {
+      "application": "restored_current_rescore",
+      "label": "restored_upper_asymmetry_scale_0p6"
+    },
+    "missing_cases": [],
+    "note": "Comparable current-state rescore after rebuilding renderer; use this as global guard baseline.",
+    "scores": {
+      "ts808_drive_drv100_in_p0": 0.022545655006501943
+    },
+    "updated_at_unix": 1782682922.8860142,
+    "used_cases": [
+      "ts808_drive_drv100_in_p0"
+    ],
+    "variant": "core-residual"
+  },
+  "plan:render_plan_ts808.json:core-residual:dsp_peak_biquad:median": {
+    "aggregate": "median",
+    "aggregate_score": 1.0382027092554602,
+    "application": "verified-post-apply",
+    "candidate": {
+      "application": "add",
+      "label": "add_0p25",
+      "scale": 0.25
+    },
+    "missing_cases": [],
+    "note": "Score measured after applying candidate residual and rerendering SAT output.",
+    "scores": {
+      "ts808_drive_drv100_in_p0": 1.0382027092554602
+    },
+    "updated_at_unix": 1782344136.7704144,
+    "used_cases": [
+      "ts808_drive_drv100_in_p0"
+    ],
+    "variant": "core-residual"
+  },
+  "plan:render_plan_ts808.json:core-residual:dsp_peak_biquad_loggrid_b48_q0p85_g12p0:median": {
+    "aggregate": "median",
+    "aggregate_score": 0.4590616811457542,
+    "application": "verified-post-apply",
+    "candidate": {
+      "application": "replace",
+      "label": "replace_1p5",
+      "scale": 1.5
+    },
+    "missing_cases": [],
+    "note": "Score measured after applying candidate residual and rerendering SAT output.",
+    "scores": {
+      "ts808_drive_drv100_in_p0": 0.4590616811457542
+    },
+    "updated_at_unix": 1782378493.2869668,
+    "used_cases": [
+      "ts808_drive_drv100_in_p0"
+    ],
+    "variant": "core-residual"
+  },
+  "plan:render_plan_ts808.json:core-residual:dsp_peak_biquad_loggrid_b48_q0p85_g9p0:median": {
+    "aggregate": "median",
+    "aggregate_score": 0.5578293187369212,
+    "application": "verified-post-apply",
+    "candidate": {
+      "application": "replace",
+      "label": "replace_1p0",
+      "scale": 1.0
+    },
+    "missing_cases": [],
+    "note": "Score measured after applying candidate residual and rerendering SAT output.",
+    "scores": {
+      "ts808_drive_drv100_in_p0": 0.5578293187369212
+    },
+    "updated_at_unix": 1782377098.1538315,
+    "used_cases": [
+      "ts808_drive_drv100_in_p0"
+    ],
+    "variant": "core-residual"
+  },
+  "plan:render_plan_ts808.json:core-residual:dsp_tone_biquad_loggrid_b12_q0p85_g12p0:median": {
+    "aggregate": "median",
+    "aggregate_score": 0.6590927950367987,
+    "application": "verified-post-apply",
+    "candidate": {
+      "application": "replace",
+      "label": "replace_1p5",
+      "scale": 1.5
+    },
+    "missing_cases": [],
+    "note": "Score measured after applying candidate residual and rerendering SAT output.",
+    "scores": {
+      "ts808_drive_drv100_in_p0": 0.6590927950367987
+    },
+    "updated_at_unix": 1782393441.123328,
+    "used_cases": [
+      "ts808_drive_drv100_in_p0"
+    ],
+    "variant": "core-residual"
+  },
+  "ts808_drive_drv100_in_p0:sat_voiced": {
+    "case_id": "ts808_drive_drv100_in_p0",
+    "fit_dir": "analysis_out\\ts808_core_only\\overdrive_cases\\ts808_drive_drv100_in_p0\\overdrive_id_fit_voiced",
+    "fit_summary": "analysis_out\\ts808_core_only\\overdrive_cases\\ts808_drive_drv100_in_p0\\overdrive_id_fit_voiced\\fit_summary.json",
+    "note": "Lower score is better. Baseline promotion is analysis-only unless --apply-ts808-post-residual is used.",
+    "optimizer": "least-squares",
+    "sat_render": "sat_voiced",
+    "score": 0.10154800405355492,
+    "updated_at_unix": 1782308136.9313605
+  },
+  "ts808_drive_drv100_in_p0:sat_voiced:core-residual:dsp_peak_biquad": {
+    "case_id": "ts808_drive_drv100_in_p0",
+    "filter_model": "dsp_peak_biquad",
+    "fit_dir": "analysis_out\\ts808_core_residual\\overdrive_cases\\ts808_drive_drv100_in_p0\\overdrive_id_fit_voiced",
+    "fit_summary": "analysis_out\\ts808_core_residual\\overdrive_cases\\ts808_drive_drv100_in_p0\\overdrive_id_fit_voiced\\fit_summary.json",
+    "note": "Lower score is better. Baseline promotion is analysis-only unless --apply-ts808-post-residual is used.",
+    "optimizer": "least-squares",
+    "sat_render": "sat_voiced",
+    "sat_voicing_variant": "core-residual",
+    "score": 1.3527288043305916,
+    "updated_at_unix": 1782313757.4026542
+  },
+  "ts808_drive_drv100_in_p0:sat_voiced:unknown_variant:legacy_unknown_filter_model": {
+    "case_id": "ts808_drive_drv100_in_p0",
+    "filter_model": "legacy_unknown_filter_model",
+    "fit_dir": "analysis_out\\ts808_core_residual\\overdrive_cases\\ts808_drive_drv100_in_p0\\overdrive_id_fit_voiced",
+    "fit_summary": "analysis_out\\ts808_core_residual\\overdrive_cases\\ts808_drive_drv100_in_p0\\overdrive_id_fit_voiced\\fit_summary.json",
+    "note": "Lower score is better. Baseline promotion is analysis-only unless --apply-ts808-post-residual is used.",
+    "optimizer": "least-squares",
+    "sat_render": "sat_voiced",
+    "sat_voicing_variant": "unknown_variant",
+    "score": 1.6724177312849817,
+    "updated_at_unix": 1782311268.9539256
+  }
+}
