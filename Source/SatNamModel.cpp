@@ -1,5 +1,6 @@
 #include "SatNamModel.h"
 
+#include <algorithm>
 #include <cmath>
 #include <exception>
 #include <filesystem>
@@ -188,16 +189,14 @@ void SatNamModel::process (juce::AudioBuffer<float>& buffer, int numSamples)
 			const auto* in = buffer.getReadPointer (ch, offset);
 			auto* scratchIn = inputScratch_.getWritePointer (ch);
 			auto* scratchOut = outputScratch_.getWritePointer (ch);
-			for (int i = 0; i < chunk; ++i)
-				scratchIn[i] = static_cast<double> (in[i]);
+			std::copy (in, in + chunk, scratchIn);
 
 			inputPtrs_[0] = inputScratch_.getWritePointer (ch);
 			outputPtrs_[0] = scratchOut;
 			model->process (inputPtrs_.data(), outputPtrs_.data(), chunk);
 
 			auto* out = buffer.getWritePointer (ch, offset);
-			for (int i = 0; i < chunk; ++i)
-				out[i] = static_cast<float> (scratchOut[i]);
+			std::copy (scratchOut, scratchOut + chunk, out);
 		}
 	}
 
@@ -220,16 +219,14 @@ void SatNamModel::processMonoToStereo (juce::AudioBuffer<float>& buffer, int num
 		const auto* in = buffer.getReadPointer (0, offset);
 		auto* scratchIn = inputScratch_.getWritePointer (0);
 		auto* scratchOut = outputScratch_.getWritePointer (0);
-		for (int i = 0; i < chunk; ++i)
-			scratchIn[i] = static_cast<double> (in[i]);
+		std::copy (in, in + chunk, scratchIn);
 
 		inputPtrs_[0] = inputScratch_.getWritePointer (0);
 		outputPtrs_[0] = scratchOut;
 		channelModels_[0]->process (inputPtrs_.data(), outputPtrs_.data(), chunk);
 
 		auto* out = buffer.getWritePointer (0, offset);
-		for (int i = 0; i < chunk; ++i)
-			out[i] = static_cast<float> (scratchOut[i]);
+		std::copy (scratchOut, scratchOut + chunk, out);
 	}
 
 	if (buffer.getNumChannels() > 1)

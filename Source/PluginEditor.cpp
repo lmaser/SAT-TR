@@ -152,8 +152,8 @@ namespace
 		return juce::String (safeMs, 3);
 	}
 
-	constexpr int kFooterMixValueWidthPx = 56;
-	constexpr int kFooterDbValueWidthPx = 66;
+	constexpr int kFooterMixValueWidthPx = TR::kLoaderFooterMixValueWidthPx;
+	constexpr int kFooterDbValueWidthPx = TR::kLoaderFooterDbValueWidthPx;
 	constexpr int kCompactLoaderColumnWidthPx = 360;
 	constexpr int kCompactFixedHeightPx = 752;
 	constexpr int kCompactMinVisibleLoaders = 1;
@@ -181,14 +181,12 @@ namespace
 
 	juce::Rectangle<int> makeFooterValueArea (const juce::Rectangle<int>& barBounds, int valueWidthPx)
 	{
-		return { barBounds.getRight() + 4, barBounds.getY(), valueWidthPx, barBounds.getHeight() };
+		return TR::makeLoaderFooterValueArea (barBounds, valueWidthPx);
 	}
 
 	juce::Rectangle<int> makeExpandedFooterValueArea (int panelRight, const juce::Rectangle<int>& barBounds)
 	{
-		return { barBounds.getRight() + 10, barBounds.getY() - 2,
-		         juce::jmax (0, panelRight - barBounds.getRight() - 10),
-		         barBounds.getHeight() + 4 };
+		return TR::makeExpandedLoaderFooterValueArea (panelRight, barBounds);
 	}
 
 	constexpr int satTypeModelToVisibleComboId (int modelIndex) noexcept
@@ -1090,114 +1088,23 @@ void SATTRAudioProcessorEditor::paint (juce::Graphics& g)
 		TR::drawLoaderHeaderAndVersion (g, activeScheme, "SAT-TR", InfoContent::version,
 		                                cachedHeaderTitleX_, getInfoIconArea());
 
-		if (footerExpanded_ && ! cachedFooterTitleArea_.isEmpty())
-			TR::drawLoaderFooterTitle (g, activeScheme, cachedFooterTitleArea_);
-
-		auto drawFooterComboLabel = [&] (juce::ComboBox& combo, const juce::String& text)
-		{
-			TR::drawLoaderComboTopLabel (g, activeScheme, combo, text, lnf.getComboBoxFont (combo));
-		};
-
-		drawFooterComboLabel (routeCombo, "ROUTE");
-		drawFooterComboLabel (matchCombo, "OS");
-
-		drawFooterComboLabel (mixModeCombo, "MIX");
-
-		// Global MIX label + value (right of bar)
-		if (globalMixSlider.isVisible())
-		{
-			const auto mixBounds = globalMixSlider.getBounds();
-			if (! footerExpanded_)
-			{
-				const auto mixArea = mixBounds.withHeight (16).translated (0, -18);
-				TR::drawLoaderSmallTopLabel (g, activeScheme, mixArea, "MIX");
-			}
-
-			const int gMixPct = juce::roundToInt (globalMixSlider.getValue() * 100.0);
-			if (footerExpanded_)
-			{
-				const auto valArea = makeExpandedFooterValueArea (cachedFooterPanelArea_.getRight(), mixBounds);
-				const auto txt = juce::String (gMixPct) + "%";
-				TR::drawLoaderValueLegend (g, activeScheme, valArea, txt + " MIX", txt + " MIX", txt);
-			}
-			else
-			{
-				const auto valArea = makeFooterValueArea (mixBounds, kFooterMixValueWidthPx);
-				TR::drawLoaderCompactValue (g, activeScheme, valArea, juce::String (gMixPct) + "%");
-			}
-		}
-		else if (dualMixBar_.isVisible())
-		{
-			const auto mixBounds = dualMixBar_.getBounds();
-			if (! footerExpanded_)
-			{
-				const auto mixArea = mixBounds.withHeight (16).translated (0, -18);
-				TR::drawLoaderSmallTopLabel (g, activeScheme, mixArea, "MIX");
-			}
-
-			if (footerExpanded_)
-			{
-				const auto valArea = makeExpandedFooterValueArea (cachedFooterPanelArea_.getRight(), mixBounds);
-				TR::drawLoaderValueLegend (g, activeScheme, valArea, cachedMixTextFull + " MIX", cachedMixTextShort + " MIX", cachedMixIntOnly);
-			}
-			else
-			{
-				const auto valArea = makeFooterValueArea (mixBounds, kFooterMixValueWidthPx);
-				TR::drawLoaderCompactValue (g, activeScheme, valArea, cachedMixIntOnly);
-			}
-		}
-
-		// Global OUTPUT label + value (right of bar)
-		if (globalOutputSlider.isVisible())
-		{
-			const auto outBounds = globalOutputSlider.getBounds();
-			if (! footerExpanded_)
-			{
-				const auto outArea = outBounds.withHeight (16).translated (0, -18);
-				TR::drawLoaderSmallTopLabel (g, activeScheme, outArea, "OUTPUT");
-			}
-
-			const float gOutDb = (float) globalOutputSlider.getValue();
-			juce::String outTxt = formatGainFaderDb (gOutDb);
-			if (footerExpanded_)
-			{
-				const auto valArea = makeExpandedFooterValueArea (cachedFooterPanelArea_.getRight(), outBounds);
-				TR::drawLoaderValueLegend (g, activeScheme, valArea, outTxt + " OUT", outTxt + " OUT", outTxt);
-			}
-			else
-			{
-				const auto valArea = makeFooterValueArea (outBounds, kFooterDbValueWidthPx);
-				TR::drawLoaderCompactValue (g, activeScheme, valArea, outTxt);
-			}
-		}
-
-		// LIM THRESHOLD label + value (right of bar)
-		if (limThresholdSlider.isVisible())
-		{
-			const auto limBounds = limThresholdSlider.getBounds();
-			if (! footerExpanded_)
-			{
-				const auto limArea = limBounds.withHeight (16).translated (0, -18);
-				TR::drawLoaderSmallTopLabel (g, activeScheme, limArea, "LIM");
-			}
-
-			const float limDb = (float) limThresholdSlider.getValue();
-			juce::String limTxt = (limDb <= -35.9f) ? "-36.0 dB" : juce::String (limDb, 1) + " dB";
-			if (footerExpanded_)
-			{
-				const auto valArea = makeExpandedFooterValueArea (cachedFooterPanelArea_.getRight(), limBounds);
-				TR::drawLoaderValueLegend (g, activeScheme, valArea, limTxt + " LIM", limTxt + " LIM", limTxt);
-			}
-			else
-			{
-				const auto valArea = makeFooterValueArea (limBounds, kFooterDbValueWidthPx);
-				TR::drawLoaderCompactValue (g, activeScheme, valArea, limTxt);
-			}
-		}
-
-		drawFooterComboLabel (limModeCombo, "LIMIT");
-		drawFooterComboLabel (invPolCombo, "INV POL");
-		drawFooterComboLabel (invStrCombo, "INV STR");
+		TR::paintLoaderFooterGlobalControls (g, activeScheme,
+		                                      footerExpanded_,
+		                                      cachedFooterPanelArea_,
+		                                      cachedFooterTitleArea_,
+		                                      routeCombo, matchCombo, mixModeCombo,
+		                                      limModeCombo, invPolCombo, invStrCombo,
+		                                      globalMixSlider, dualMixBar_,
+		                                      globalOutputSlider, limThresholdSlider,
+		                                      "OS",
+		                                      cachedMixTextFull, cachedMixTextShort, cachedMixIntOnly,
+		                                      [this] (juce::ComboBox& combo) { return lnf.getComboBoxFont (combo); },
+		                                      [] (float db) { return formatGainFaderDb (db); },
+		                                      [] (float db)
+		                                      {
+			                                      return (db <= -35.9f) ? juce::String ("-36.0 dB")
+			                                                             : juce::String (db, 1) + " dB";
+		                                      });
 	}
 
 	// Per-loader MODE IN / MODE OUT labels (only when that loader is expanded)
