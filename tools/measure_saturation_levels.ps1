@@ -3,6 +3,10 @@ param(
     [int] $SampleRate = 48000,
     [double] $InputPeak = 0.5,
     [double] $ToneHz = 997.0,
+    [ValidateSet("sine", "white", "pink", "brown")]
+    [string] $SignalType = "sine",
+    [uint32] $Seed = 305419896,
+    [switch] $RawMode,
     [int] $WarmupSamples = 48000,
     [int] $MeasureSamples = 48000
 )
@@ -11,13 +15,24 @@ $ErrorActionPreference = "Stop"
 
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $sourceDir = Join-Path $repo "Source"
-$workDir = Join-Path $repo ".level-measure"
-$stubDir = Join-Path $workDir "stub"
-New-Item -ItemType Directory -Force -Path $workDir, $stubDir | Out-Null
 
 if ([string]::IsNullOrWhiteSpace($OutCsv)) {
-    $OutCsv = Join-Path $workDir "sat_level_measurements.csv"
+    $OutCsv = Join-Path (Join-Path $repo ".level-measure") "sat_level_measurements.csv"
 }
+
+$outDir = Split-Path -Parent $OutCsv
+if ([string]::IsNullOrWhiteSpace($outDir)) {
+    $outDir = Join-Path $repo ".level-measure"
+}
+
+$workName = [System.IO.Path]::GetFileNameWithoutExtension($OutCsv)
+if ([string]::IsNullOrWhiteSpace($workName)) {
+    $workName = "sat_level_measurements"
+}
+
+$workDir = Join-Path (Join-Path $repo ".level-measure") $workName
+$stubDir = Join-Path $workDir "stub"
+New-Item -ItemType Directory -Force -Path $outDir, $workDir, $stubDir | Out-Null
 
 $juceStub = @'
 #pragma once
@@ -60,6 +75,9 @@ $inputPeakForCpp = ([double] $InputPeak).ToString("R", [System.Globalization.Cul
 if ($inputPeakForCpp -notmatch '[\.eE]') {
     $inputPeakForCpp += ".0"
 }
+$signalTypeForCpp = $SignalType.ToLowerInvariant()
+$seedForCpp = ([uint32] $Seed).ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$rawModeForCpp = if ($RawMode.IsPresent) { "true" } else { "false" }
 
 $harness = @"
 #define SAT_DSP_DIAG 0
@@ -84,12 +102,106 @@ struct Stats
     double peakOut = 0.0;
 };
 
+static unsigned int rngNext (unsigned int& state)
+{
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return state;
+}
+
+static float randBipolar (unsigned int& state)
+{
+    const unsigned int v = rngNext (state);
+    return ((float) (v & 0x00FFFFFFu) / 8388607.5f) - 1.0f;
+}
+
+static void generateSignal (std::vector<float>& left,
+                            std::vector<float>& right,
+                            const char* signalType,
+                            int sampleRate,
+                            double toneHz,
+                            double inputPeak,
+                            unsigned int seed)
+{
+    const int totalSamples = (int) left.size();
+    double maxAbs = 0.0;
+
+    if (std::strcmp (signalType, "white") == 0)
+    {
+        unsigned int s = seed != 0u ? seed : 0x12345678u;
+        for (int i = 0; i < totalSamples; ++i)
+        {
+            const float x = randBipolar (s);
+            left[(size_t) i] = x;
+            right[(size_t) i] = x;
+            maxAbs = std::max (maxAbs, std::abs ((double) x));
+        }
+    }
+    else if (std::strcmp (signalType, "pink") == 0)
+    {
+        // Paul Kellet style pinking filter: deterministic and cheap for trim calibration.
+        unsigned int s = seed != 0u ? seed : 0x12345678u;
+        double b0 = 0.0, b1 = 0.0, b2 = 0.0, b3 = 0.0, b4 = 0.0, b5 = 0.0, b6 = 0.0;
+        for (int i = 0; i < totalSamples; ++i)
+        {
+            const double white = (double) randBipolar (s);
+            b0 = 0.99886 * b0 + white * 0.0555179;
+            b1 = 0.99332 * b1 + white * 0.0750759;
+            b2 = 0.96900 * b2 + white * 0.1538520;
+            b3 = 0.86650 * b3 + white * 0.3104856;
+            b4 = 0.55000 * b4 + white * 0.5329522;
+            b5 = -0.7616 * b5 - white * 0.0168980;
+            const double y = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
+            b6 = white * 0.115926;
+            const float x = (float) (y * 0.11);
+            left[(size_t) i] = x;
+            right[(size_t) i] = x;
+            maxAbs = std::max (maxAbs, std::abs ((double) x));
+        }
+    }
+    else if (std::strcmp (signalType, "brown") == 0)
+    {
+        unsigned int s = seed != 0u ? seed : 0x12345678u;
+        double acc = 0.0;
+        for (int i = 0; i < totalSamples; ++i)
+        {
+            // Leaky Brownian noise: low-frequency weighted, bounded, deterministic.
+            acc = acc * 0.9975 + (double) randBipolar (s) * 0.055;
+            acc = std::max (-1.0, std::min (1.0, acc));
+            const float x = (float) acc;
+            left[(size_t) i] = x;
+            right[(size_t) i] = x;
+            maxAbs = std::max (maxAbs, std::abs (acc));
+        }
+    }
+    else
+    {
+        for (int i = 0; i < totalSamples; ++i)
+        {
+            const float x = (float) std::sin (2.0 * SatEngine::kPi * toneHz * (double) i / (double) sampleRate);
+            left[(size_t) i] = x;
+            right[(size_t) i] = x;
+            maxAbs = std::max (maxAbs, std::abs ((double) x));
+        }
+    }
+
+    const float scale = (float) (inputPeak / std::max (1.0e-12, maxAbs));
+    for (int i = 0; i < totalSamples; ++i)
+    {
+        left[(size_t) i] *= scale;
+        right[(size_t) i] *= scale;
+    }
+}
+
 static Stats measure (SatEngine::Model model,
                       float drive, float character, float type, float bias, float react,
                       int seriesCount,
                       int sampleRate,
                       double toneHz,
                       double inputPeak,
+                      const char* signalType,
+                      unsigned int seed,
                       int warmupSamples,
                       int measureSamples)
 {
@@ -97,13 +209,8 @@ static Stats measure (SatEngine::Model model,
     const int totalSamples = warmupSamples + measureSamples;
     std::vector<float> left ((size_t) totalSamples);
     std::vector<float> right ((size_t) totalSamples);
-
-    for (int i = 0; i < totalSamples; ++i)
-    {
-        const float x = (float) (inputPeak * std::sin (2.0 * SatEngine::kPi * toneHz * (double) i / (double) sampleRate));
-        left[(size_t) i] = x;
-        right[(size_t) i] = x;
-    }
+    generateSignal (left, right, signalType, sampleRate, toneHz, inputPeak, seed);
+    const std::vector<float> input = left;
 
     SatEngine::processBlock (*state,
                              left.data(), right.data(), totalSamples,
@@ -113,13 +220,13 @@ static Stats measure (SatEngine::Model model,
                              (float) sampleRate,
                              seriesCount,
                              true,
-                             false,
+                             $rawModeForCpp,
                              nullptr);
 
     Stats s;
     for (int i = warmupSamples; i < totalSamples; ++i)
     {
-        const double in = inputPeak * std::sin (2.0 * SatEngine::kPi * toneHz * (double) i / (double) sampleRate);
+        const double in = (double) input[(size_t) i];
         const double out = (double) left[(size_t) i];
         s.rmsIn += in * in;
         s.rmsOut += out * out;
@@ -138,7 +245,7 @@ int main()
     if (fopen_s (&f, "$csvForCpp", "wb") != 0 || f == nullptr)
         return 2;
 
-    std::fprintf (f, "model,drive,char,type,bias,react,series,inputPeak,rmsIn,rmsOut,deltaDb,peakIn,peakOut,peakDeltaDb\n");
+    std::fprintf (f, "signal,model,drive,char,type,bias,react,series,inputPeak,rmsIn,rmsOut,deltaDb,peakIn,peakOut,peakDeltaDb\n");
 
     struct ModelDef { SatEngine::Model model; const char* name; };
     const ModelDef models[] = {
@@ -146,7 +253,7 @@ int main()
         { SatEngine::Model::Tube, "Tube" },
         { SatEngine::Model::Transistor, "Transistor" },
         { SatEngine::Model::Diode, "Diode" },
-        { SatEngine::Model::Clipper, "Clipper" }
+        { SatEngine::Model::OverdriveA, "OverdriveA" }
     };
 
     const float drives[] = { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f };
@@ -166,11 +273,12 @@ int main()
                     {
                         const Stats s = measure (m.model, drive, character, type, 0.0f, 0.0f, series,
                                              $SampleRate, $ToneHz, $inputPeakForCpp,
+                                             "$signalTypeForCpp", $seedForCpp,
                                              $WarmupSamples, $MeasureSamples);
                         const double deltaDb = db (s.rmsOut / s.rmsIn);
                         const double peakDeltaDb = db (s.peakOut / s.peakIn);
-                        std::fprintf (f, "%s,%.2f,%.2f,%.2f,0.00,0.00,%d,%.6f,%.9f,%.9f,%.4f,%.9f,%.9f,%.4f\n",
-                                      m.name, drive, character, type, series, $inputPeakForCpp,
+                        std::fprintf (f, "%s,%s,%.2f,%.2f,%.2f,0.00,0.00,%d,%.6f,%.9f,%.9f,%.4f,%.9f,%.9f,%.4f\n",
+                                      "$signalTypeForCpp", m.name, drive, character, type, series, $inputPeakForCpp,
                                       s.rmsIn, s.rmsOut, deltaDb,
                                       s.peakIn, s.peakOut, peakDeltaDb);
                     }

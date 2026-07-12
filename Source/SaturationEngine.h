@@ -3,6 +3,7 @@
 #include <cstring>
 #include <algorithm>
 #include <atomic>
+#include <vector>
 #include "SatDspDiag.h"
 
 // ----------------------------------------------------------------
@@ -30,8 +31,11 @@ enum class Model : int
     Tube        = 2,   // 12AX7 -> EL34/6L6-inspired morph via MOD
     Transistor  = 3,   // BJT <-> FET preamp stages
     Diode       = 4,   // feedback/hard/open diode clipper topologies
-    Clipper     = 5,   // broadband/pedal clipper - classic -> TS -> Klon voice
-    NumModels   = 6
+    OverdriveA  = 5,   // OVERDRIVE A - TS808-style feedback diode overdrive
+    Clipper     = 6,   // CLIPPER - transparent mastering-style sample clipper
+    NAM         = 7,   // External Neural Amp Modeler black box
+    OverdriveB  = 8,   // OVERDRIVE B - Klon-style split clean/dirty overdrive
+    NumModels   = 9
 };
 
 // ----------------------------------------------------------------
@@ -43,10 +47,13 @@ static constexpr float kTwoPi      = 6.28318530717958647692f;
 static constexpr float kInvPi      = 0.31830988618379067154f;
 static constexpr float kLn2        = 0.69314718055994530942f;
 static constexpr float kSmoothCoeff = 0.995f;   // ~10ms @ 48kHz
+static constexpr float kRawCeiling  = 1.0f;       // 0 dBFS internal sample ceiling for RAW mode
 static constexpr int   kReactBufSize = 8192;
 static constexpr int   kTriodeSagBufSize = 512;
 static constexpr int   kTriodeBloomSlotCount = 1024;
 static constexpr int   kMaxSeries    = 4;
+static constexpr bool  kOverdriveResidualMatchingEnabled = false;
+
 
 // ----------------------------------------------------------------
 //  ADAA1 helpers  (1st-order antiderivative anti-aliasing)
@@ -561,35 +568,301 @@ struct KlonBiquadState
     }
 };
 
-struct ClipperKlonState
+enum class KlonEqKind
+{
+    Peak,
+    LowShelf,
+    HighShelf,
+    LowPass,
+    HighPass,
+    TiltShelf
+};
+
+enum class KlonEqAmount
+{
+    Fixed,
+    Reference,
+    Classic,
+    ClassicDrive
+};
+
+struct KlonEqBandSpec
+{
+    KlonEqKind kind;
+    float freqHz;
+    float q;
+    float gainDb;
+    int stages;
+    KlonEqAmount amount;
+};
+
+constexpr int kKlonPreEqBands = 64;
+constexpr int kKlonPostEqBands = 64;
+constexpr int kClassicPreEqBands = 32;
+constexpr int kClassicPostEqBands = 64;
+constexpr int kMaxKlonEqStages = 4;
+constexpr int kComponentVoicingBands = 3;
+
+struct ComponentVoicingBand
+{
+    bool enabled = false;
+    KlonEqKind kind = KlonEqKind::Peak;
+    float freqHz = 1000.0f;
+    float q = 0.707f;
+    float gainDb = 0.0f;
+    int stages = 1;
+};
+
+struct ComponentVoicingSet
+{
+    ComponentVoicingBand pre[kComponentVoicingBands];
+    ComponentVoicingBand post[kComponentVoicingBands];
+};
+
+struct ComponentVoicingState
+{
+    KlonBiquadState pre[kComponentVoicingBands][kMaxKlonEqStages];
+    KlonBiquadState post[kComponentVoicingBands][kMaxKlonEqStages];
+
+    void reset() noexcept
+    {
+        for (auto& band : pre)
+            for (auto& s : band)
+                s.reset();
+        for (auto& band : post)
+            for (auto& s : band)
+                s.reset();
+    }
+};
+#include "OverdriveVoicingData.h"
+
+#ifndef SAT_TS808_RUNTIME_TUNING
+#define SAT_TS808_RUNTIME_TUNING 0
+#endif
+
+#if SAT_TS808_RUNTIME_TUNING
+namespace OverdriveVoicing
+{
+inline Ts808CoreTuning& mutableTs808CoreForAnalysis() noexcept
+{
+    static Ts808CoreTuning runtimeCore = kTs808Core;
+    return runtimeCore;
+}
+
+inline KlonCoreTuning& mutableKlonCoreForAnalysis() noexcept
+{
+    static KlonCoreTuning runtimeCore = kKlonCore;
+    return runtimeCore;
+}
+
+template <size_t N>
+inline std::vector<KlonEqBandSpec> makeRuntimeLayer (const KlonEqBandSpec (&src)[N])
+{
+    return std::vector<KlonEqBandSpec> (src, src + N);
+}
+
+inline std::vector<KlonEqBandSpec>& mutableTs808PreAForAnalysis() { static auto layer = makeRuntimeLayer (kTs808PreA); return layer; }
+inline std::vector<KlonEqBandSpec>& mutableTs808PreNdspForAnalysis() { static auto layer = makeRuntimeLayer (kTs808PreNdsp); return layer; }
+inline std::vector<KlonEqBandSpec>& mutableTs808PreBForAnalysis() { static auto layer = makeRuntimeLayer (kTs808PreB); return layer; }
+inline std::vector<KlonEqBandSpec>& mutableTs808PostAForAnalysis() { static auto layer = makeRuntimeLayer (kTs808PostA); return layer; }
+inline std::vector<KlonEqBandSpec>& mutableTs808PostNdspForAnalysis() { static auto layer = makeRuntimeLayer (kTs808PostNdsp); return layer; }
+inline std::vector<KlonEqBandSpec>& mutableTs808PostBForAnalysis() { static auto layer = makeRuntimeLayer (kTs808PostB); return layer; }
+inline std::vector<KlonEqBandSpec>& mutableKlonPreAForAnalysis() { static auto layer = makeRuntimeLayer (kKlonPreA); return layer; }
+inline std::vector<KlonEqBandSpec>& mutableKlonPreNdspForAnalysis() { static auto layer = makeRuntimeLayer (kKlonPreNdsp); return layer; }
+inline std::vector<KlonEqBandSpec>& mutableKlonPreBForAnalysis() { static auto layer = makeRuntimeLayer (kKlonPreB); return layer; }
+inline std::vector<KlonEqBandSpec>& mutableKlonPostAForAnalysis() { static auto layer = makeRuntimeLayer (kKlonPostA); return layer; }
+inline std::vector<KlonEqBandSpec>& mutableKlonPostNdspForAnalysis() { static auto layer = makeRuntimeLayer (kKlonPostNdsp); return layer; }
+inline std::vector<KlonEqBandSpec>& mutableKlonPostBForAnalysis() { static auto layer = makeRuntimeLayer (kKlonPostB); return layer; }
+
+inline void resetTs808RuntimeTuningForAnalysis()
+{
+    mutableTs808CoreForAnalysis() = kTs808Core;
+    mutableKlonCoreForAnalysis() = kKlonCore;
+    mutableTs808PreAForAnalysis() = makeRuntimeLayer (kTs808PreA);
+    mutableTs808PreNdspForAnalysis() = makeRuntimeLayer (kTs808PreNdsp);
+    mutableTs808PreBForAnalysis() = makeRuntimeLayer (kTs808PreB);
+    mutableTs808PostAForAnalysis() = makeRuntimeLayer (kTs808PostA);
+    mutableTs808PostNdspForAnalysis() = makeRuntimeLayer (kTs808PostNdsp);
+    mutableTs808PostBForAnalysis() = makeRuntimeLayer (kTs808PostB);
+    mutableKlonPreAForAnalysis() = makeRuntimeLayer (kKlonPreA);
+    mutableKlonPreNdspForAnalysis() = makeRuntimeLayer (kKlonPreNdsp);
+    mutableKlonPreBForAnalysis() = makeRuntimeLayer (kKlonPreB);
+    mutableKlonPostAForAnalysis() = makeRuntimeLayer (kKlonPostA);
+    mutableKlonPostNdspForAnalysis() = makeRuntimeLayer (kKlonPostNdsp);
+    mutableKlonPostBForAnalysis() = makeRuntimeLayer (kKlonPostB);
+}
+}
+#endif
+
+inline const OverdriveVoicing::Ts808CoreTuning& getTs808CoreTuning() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableTs808CoreForAnalysis();
+#else
+    return OverdriveVoicing::kTs808Core;
+#endif
+}
+
+inline const OverdriveVoicing::KlonCoreTuning& getKlonCoreTuning() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableKlonCoreForAnalysis();
+#else
+    return OverdriveVoicing::kKlonCore;
+#endif
+}
+
+
+inline const auto& getTs808PreAForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableTs808PreAForAnalysis();
+#else
+    return OverdriveVoicing::kTs808PreA;
+#endif
+}
+
+inline const auto& getTs808PreNdspForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableTs808PreNdspForAnalysis();
+#else
+    return OverdriveVoicing::kTs808PreNdsp;
+#endif
+}
+
+inline const auto& getTs808PreBForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableTs808PreBForAnalysis();
+#else
+    return OverdriveVoicing::kTs808PreB;
+#endif
+}
+
+inline const auto& getTs808PostAForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableTs808PostAForAnalysis();
+#else
+    return OverdriveVoicing::kTs808PostA;
+#endif
+}
+
+inline const auto& getTs808PostNdspForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableTs808PostNdspForAnalysis();
+#else
+    return OverdriveVoicing::kTs808PostNdsp;
+#endif
+}
+
+inline const auto& getTs808PostBForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableTs808PostBForAnalysis();
+#else
+    return OverdriveVoicing::kTs808PostB;
+#endif
+}
+
+inline const auto& getKlonPreAForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableKlonPreAForAnalysis();
+#else
+    return OverdriveVoicing::kKlonPreA;
+#endif
+}
+
+inline const auto& getKlonPreNdspForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableKlonPreNdspForAnalysis();
+#else
+    return OverdriveVoicing::kKlonPreNdsp;
+#endif
+}
+
+inline const auto& getKlonPreBForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableKlonPreBForAnalysis();
+#else
+    return OverdriveVoicing::kKlonPreB;
+#endif
+}
+
+inline const auto& getKlonPostAForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableKlonPostAForAnalysis();
+#else
+    return OverdriveVoicing::kKlonPostA;
+#endif
+}
+
+inline const auto& getKlonPostNdspForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableKlonPostNdspForAnalysis();
+#else
+    return OverdriveVoicing::kKlonPostNdsp;
+#endif
+}
+
+inline const auto& getKlonPostBForAnalysis() noexcept
+{
+#if SAT_TS808_RUNTIME_TUNING
+    return OverdriveVoicing::mutableKlonPostBForAnalysis();
+#else
+    return OverdriveVoicing::kKlonPostB;
+#endif
+}
+
+using KlonPostEqBank = KlonBiquadState[kKlonPostEqBands][kMaxKlonEqStages];
+
+struct KlonPostEqState
+{
+    KlonPostEqBank klonPostEq;
+
+    void reset() noexcept
+    {
+        for (auto& band : klonPostEq)
+            for (auto& s : band)
+                s.reset();
+    }
+};
+
+struct OverdriveAPostEqState
+{
+    KlonBiquadState overdriveAPostEq[kClassicPostEqBands][kMaxKlonEqStages];
+    float overdriveAPostHiCutLP = 0.0f;
+
+    void reset() noexcept
+    {
+        for (auto& band : overdriveAPostEq)
+            for (auto& s : band)
+                s.reset();
+        overdriveAPostHiCutLP = 0.0f;
+    }
+};
+
+struct OverdriveToneState
 {
     float cleanLP = 0.0f;
     float dirtyLowLP = 0.0f;
     float dirtyLP = 0.0f;
-    float preEqLP = 0.0f;
-    KlonBiquadState preBell;
-    KlonBiquadState postBell;
-    KlonBiquadState preCorrectBell500;
-    KlonBiquadState preCorrectBell1200;
-    KlonBiquadState preCorrectBell4000;
-    KlonBiquadState postCorrectBell116[4];
-    KlonBiquadState postCorrectBell139[3];
-    KlonBiquadState postCorrectBell1200[2];
-    KlonBiquadState postCorrectBell5631[2];
-    KlonBiquadState preResidualEq[6][2];
-    KlonBiquadState postResidualEq[24][2];
-    KlonBiquadState postResidualEq2[24][2];
-    KlonBiquadState postManualEq[3][2];
-    KlonBiquadState preReferenceEq[6][2];
-    KlonBiquadState postReferenceEq[12][2];
-    KlonBiquadState classicPreEq[2][2];
-    KlonBiquadState classicPostLowShelf;
-    KlonBiquadState classicPostBell515[4];
-    KlonBiquadState classicPostBell1586[3];
-    KlonBiquadState classicDrivePostBell21;
-    KlonBiquadState classicDrivePostBell18229;
-    KlonBiquadState classicPostHiCut;
-    float classicPostHiCutLP = 0.0f;
+    KlonBiquadState klonPreEq[kKlonPreEqBands][kMaxKlonEqStages];
+    KlonPostEqBank klonPostEq;
+    KlonBiquadState overdriveAPreEq[kClassicPreEqBands][kMaxKlonEqStages];
+    KlonBiquadState overdriveAPostEq[kClassicPostEqBands][kMaxKlonEqStages];
+    float overdriveAPostHiCutLP = 0.0f;
+    float tsFeedbackLP = 0.0f;
+    float tsDiodeMemory = 0.0f;
+    float tsOpAmpRecovery = 0.0f;
+    bool tsFeedbackInitialised = false;
     adaa::StableTanhADAA softAdaa;
 
     void reset() noexcept
@@ -597,46 +870,23 @@ struct ClipperKlonState
         cleanLP = 0.0f;
         dirtyLowLP = 0.0f;
         dirtyLP = 0.0f;
-        preEqLP = 0.0f;
-        preBell.reset();
-        postBell.reset();
-        preCorrectBell500.reset();
-        preCorrectBell1200.reset();
-        preCorrectBell4000.reset();
-        for (auto& s : postCorrectBell116)  s.reset();
-        for (auto& s : postCorrectBell139)  s.reset();
-        for (auto& s : postCorrectBell1200) s.reset();
-        for (auto& s : postCorrectBell5631) s.reset();
-        for (auto& band : preResidualEq)
+        for (auto& band : klonPreEq)
             for (auto& s : band)
                 s.reset();
-        for (auto& band : postResidualEq)
+        for (auto& band : klonPostEq)
             for (auto& s : band)
                 s.reset();
-        for (auto& band : postResidualEq2)
+        for (auto& band : overdriveAPreEq)
             for (auto& s : band)
                 s.reset();
-        for (auto& band : postManualEq)
+        for (auto& band : overdriveAPostEq)
             for (auto& s : band)
                 s.reset();
-        for (auto& band : preReferenceEq)
-            for (auto& s : band)
-                s.reset();
-        for (auto& band : postReferenceEq)
-            for (auto& s : band)
-                s.reset();
-        for (auto& band : classicPreEq)
-            for (auto& s : band)
-                s.reset();
-        classicPostLowShelf.reset();
-        for (auto& s : classicPostBell515)
-            s.reset();
-        for (auto& s : classicPostBell1586)
-            s.reset();
-        classicDrivePostBell21.reset();
-        classicDrivePostBell18229.reset();
-        classicPostHiCut.reset();
-        classicPostHiCutLP = 0.0f;
+        overdriveAPostHiCutLP = 0.0f;
+        tsFeedbackLP = 0.0f;
+        tsDiodeMemory = 0.0f;
+        tsOpAmpRecovery = 0.0f;
+        tsFeedbackInitialised = false;
         softAdaa.reset();
     }
 };
@@ -827,12 +1077,14 @@ struct DriftOsc
 struct InstabilityState
 {
     DriftOsc gainDrift;
+    DriftOsc inputDrift;
     DriftOsc shapeDrift;
     bool     tolerancesReady = false;
 
     void initTolerances (uint32_t seed) noexcept
     {
         gainDrift.initTolerance  (seed, 0);
+        inputDrift.initTolerance (seed, 1);
         shapeDrift.initTolerance (seed, 2);
         tolerancesReady = true;
     }
@@ -840,6 +1092,7 @@ struct InstabilityState
     void reset() noexcept
     {
         gainDrift.reset();
+        inputDrift.reset();
         shapeDrift.reset();
     }
 };
@@ -900,7 +1153,9 @@ struct State
     float sagEnvelope[kMaxSeries][2] = {};
     DynamicsCompState dynamicsComp[kMaxSeries][2];
     ClipperPeakState clipperPeak[kMaxSeries][2];
-    ClipperKlonState clipperKlon[kMaxSeries][2];
+    OverdriveToneState overdriveTone[kMaxSeries][2];
+    KlonPostEqState overdriveBNativePost[kMaxSeries][2];
+    OverdriveAPostEqState overdriveANativePost[kMaxSeries][2];
     TransistorPeakCatchState transistorPeakCatch[kMaxSeries][2];
     TriodeReactState triodeReact[kMaxSeries][2];
 
@@ -924,9 +1179,12 @@ struct State
     float triodeBodyPreLP[kMaxSeries][2] = {};
     float triodeBodyPostLP[kMaxSeries][2] = {};
     float triodeCouplingDc[kMaxSeries][2] = {};
+    float tubeBiasPostDcX[kMaxSeries][2] = {};
+    float tubeBiasPostDcY[kMaxSeries][2] = {};
 
     // Internal emphasis/de-emphasis (per-stage / per-channel)
     EmphasisState emphasis[kMaxSeries][2];
+    ComponentVoicingState componentVoicing[kMaxSeries][2];
 
     // DETAIL preservation path (post-series / per-channel).
     // The clipped residual is filtered and used as an RMSC-like sidechain
@@ -975,6 +1233,8 @@ struct State
     // Current series pass / total series count (set by processBlock before waveshapers)
     int currentSeriesPass = 0;
     int currentSeriesCount = 1;
+    bool deferOverdriveAPostEq = false;
+    bool deferFullKlonPostEq = false;
 
     // Model-switch detection (reset filters/feedback on change to prevent transients)
     Model lastModel = Model::Clean;
@@ -1006,16 +1266,19 @@ struct State
             detailState[ch].reset();
             for (int sp = 0; sp < kMaxSeries; ++sp)
             {
+                overdriveBNativePost[sp][ch].reset();
+                overdriveANativePost[sp][ch].reset();
                 react[sp][ch].reset();
                 mbReact[sp][ch].reset();
                 sagEnvelope[sp][ch] = 0.0f;
                 dynamicsComp[sp][ch].reset();
                 clipperPeak[sp][ch].reset();
-                clipperKlon[sp][ch].reset();
+                overdriveTone[sp][ch].reset();
                 transistorPeakCatch[sp][ch].reset();
                 triodeReact[sp][ch].reset();
                 dcX[sp][ch] = dcY[sp][ch] = 0.0f;
                 emphasis[sp][ch].reset();
+                componentVoicing[sp][ch].reset();
                 bumpZ1[sp][ch] = bumpZ2[sp][ch] = 0.0f;
                 triodeBlock[sp][ch] = 0.0f;
                 powerSag[sp][ch] = 0.0f;
@@ -1024,6 +1287,8 @@ struct State
                 triodeBodyPreLP[sp][ch] = 0.0f;
                 triodeBodyPostLP[sp][ch] = 0.0f;
                 triodeCouplingDc[sp][ch] = 0.0f;
+                tubeBiasPostDcX[sp][ch] = 0.0f;
+                tubeBiasPostDcY[sp][ch] = 0.0f;
                 triodeAdaa[sp][ch].reset();
                 transistorCoreAdaa[sp][ch].reset();
                 tapeAdaa[sp][ch].reset();
@@ -1049,6 +1314,8 @@ struct State
         flutterPhase = 0.0f;
         currentSeriesPass = 0;
         currentSeriesCount = 1;
+        deferOverdriveAPostEq = false;
+        deferFullKlonPostEq = false;
         lastModel = Model::Clean;
         instability.reset();
         sDrive = sDetailDrive = sGirth = sBias = sReact = sMod = sDetail = sInstability = 0.0f;
@@ -1077,6 +1344,19 @@ struct State
             fl (detailState[ch].lastReduction);
             for (int sp = 0; sp < kMaxSeries; ++sp)
             {
+                for (auto& band : overdriveBNativePost[sp][ch].klonPostEq)
+                    for (auto& s : band)
+                    {
+                        fl (s.z1);
+                        fl (s.z2);
+                    }
+                for (auto& band : overdriveANativePost[sp][ch].overdriveAPostEq)
+                    for (auto& s : band)
+                    {
+                        fl (s.z1);
+                        fl (s.z2);
+                    }
+                fl (overdriveANativePost[sp][ch].overdriveAPostHiCutLP);
                 fl (sagEnvelope[sp][ch]);
                 fl (dcX[sp][ch]);
                 fl (dcY[sp][ch]);
@@ -1084,91 +1364,55 @@ struct State
                 fl (emphasis[sp][ch].preSh);
                 fl (emphasis[sp][ch].postHP);
                 fl (emphasis[sp][ch].postLP);
+                for (auto& band : componentVoicing[sp][ch].pre)
+                    for (auto& s : band)
+                    {
+                        fl (s.z1);
+                        fl (s.z2);
+                    }
+                for (auto& band : componentVoicing[sp][ch].post)
+                    for (auto& s : band)
+                    {
+                        fl (s.z1);
+                        fl (s.z2);
+                    }
                 fl (dynamicsComp[sp][ch].scLP);
                 fl (dynamicsComp[sp][ch].env);
                 fl (dynamicsComp[sp][ch].hfEnv);
                 fl (dynamicsComp[sp][ch].gain);
                 fl (clipperPeak[sp][ch].peakEnv);
                 fl (clipperPeak[sp][ch].bodyEnv);
-                fl (clipperKlon[sp][ch].cleanLP);
-                fl (clipperKlon[sp][ch].dirtyLowLP);
-                fl (clipperKlon[sp][ch].dirtyLP);
-                fl (clipperKlon[sp][ch].preEqLP);
-                fl (clipperKlon[sp][ch].preBell.z1);
-                fl (clipperKlon[sp][ch].preBell.z2);
-                fl (clipperKlon[sp][ch].postBell.z1);
-                fl (clipperKlon[sp][ch].postBell.z2);
-                fl (clipperKlon[sp][ch].preCorrectBell500.z1);
-                fl (clipperKlon[sp][ch].preCorrectBell500.z2);
-                fl (clipperKlon[sp][ch].preCorrectBell1200.z1);
-                fl (clipperKlon[sp][ch].preCorrectBell1200.z2);
-                fl (clipperKlon[sp][ch].preCorrectBell4000.z1);
-                fl (clipperKlon[sp][ch].preCorrectBell4000.z2);
-                for (auto& s : clipperKlon[sp][ch].postCorrectBell116)  { fl (s.z1); fl (s.z2); }
-                for (auto& s : clipperKlon[sp][ch].postCorrectBell139)  { fl (s.z1); fl (s.z2); }
-                for (auto& s : clipperKlon[sp][ch].postCorrectBell1200) { fl (s.z1); fl (s.z2); }
-                for (auto& s : clipperKlon[sp][ch].postCorrectBell5631) { fl (s.z1); fl (s.z2); }
-                for (auto& band : clipperKlon[sp][ch].preResidualEq)
+                fl (overdriveTone[sp][ch].cleanLP);
+                fl (overdriveTone[sp][ch].dirtyLowLP);
+                fl (overdriveTone[sp][ch].dirtyLP);
+                for (auto& band : overdriveTone[sp][ch].klonPreEq)
                     for (auto& s : band)
                     {
                         fl (s.z1);
                         fl (s.z2);
                     }
-                for (auto& band : clipperKlon[sp][ch].postResidualEq)
+                for (auto& band : overdriveTone[sp][ch].klonPostEq)
                     for (auto& s : band)
                     {
                         fl (s.z1);
                         fl (s.z2);
                     }
-                for (auto& band : clipperKlon[sp][ch].postResidualEq2)
+                for (auto& band : overdriveTone[sp][ch].overdriveAPreEq)
                     for (auto& s : band)
                     {
                         fl (s.z1);
                         fl (s.z2);
                     }
-                for (auto& band : clipperKlon[sp][ch].postManualEq)
+                for (auto& band : overdriveTone[sp][ch].overdriveAPostEq)
                     for (auto& s : band)
                     {
                         fl (s.z1);
                         fl (s.z2);
                     }
-                for (auto& band : clipperKlon[sp][ch].preReferenceEq)
-                    for (auto& s : band)
-                    {
-                        fl (s.z1);
-                        fl (s.z2);
-                    }
-                for (auto& band : clipperKlon[sp][ch].postReferenceEq)
-                    for (auto& s : band)
-                    {
-                        fl (s.z1);
-                        fl (s.z2);
-                    }
-                for (auto& band : clipperKlon[sp][ch].classicPreEq)
-                    for (auto& s : band)
-                    {
-                        fl (s.z1);
-                        fl (s.z2);
-                    }
-                fl (clipperKlon[sp][ch].classicPostLowShelf.z1);
-                fl (clipperKlon[sp][ch].classicPostLowShelf.z2);
-                for (auto& s : clipperKlon[sp][ch].classicPostBell515)
-                {
-                    fl (s.z1);
-                    fl (s.z2);
-                }
-                for (auto& s : clipperKlon[sp][ch].classicPostBell1586)
-                {
-                    fl (s.z1);
-                    fl (s.z2);
-                }
-                fl (clipperKlon[sp][ch].classicDrivePostBell21.z1);
-                fl (clipperKlon[sp][ch].classicDrivePostBell21.z2);
-                fl (clipperKlon[sp][ch].classicDrivePostBell18229.z1);
-                fl (clipperKlon[sp][ch].classicDrivePostBell18229.z2);
-                fl (clipperKlon[sp][ch].classicPostHiCut.z1);
-                fl (clipperKlon[sp][ch].classicPostHiCut.z2);
-                fl (clipperKlon[sp][ch].classicPostHiCutLP);
+                fl (overdriveTone[sp][ch].overdriveAPostHiCutLP);
+                fl (overdriveTone[sp][ch].tsFeedbackLP);
+                fl (overdriveTone[sp][ch].tsDiodeMemory);
+                fl (overdriveTone[sp][ch].tsOpAmpRecovery);
                 fl (transistorPeakCatch[sp][ch].peakEnv);
                 fl (transistorPeakCatch[sp][ch].bodyEnv);
                 fl (transistorPeakCatch[sp][ch].gain);
@@ -1215,6 +1459,8 @@ struct State
                 fl (triodeBodyPreLP[sp][ch]);
                 fl (triodeBodyPostLP[sp][ch]);
                 fl (triodeCouplingDc[sp][ch]);
+                fl (tubeBiasPostDcX[sp][ch]);
+                fl (tubeBiasPostDcY[sp][ch]);
             }
         }
     }
@@ -1300,6 +1546,17 @@ namespace detail
         return t * t * (3.0f - 2.0f * t);
     }
 
+    inline float modulateUnitAtEdges (float base, float delta) noexcept
+    {
+        float y = clampF (base, 0.0f, 1.0f) + delta;
+        if (y > 1.0f)
+            y = 1.0f - (y - 1.0f);
+        else if (y < 0.0f)
+            y = -y;
+
+        return clampF (y, 0.0f, 1.0f);
+    }
+
     inline float hotDetectorMagnitude (float x) noexcept
     {
         const float mag = std::abs (x);
@@ -1347,6 +1604,13 @@ namespace detail
 
         const float t = smoothStep01 ((d - 0.75f) / 0.25f);
         return juce::jmap (t, p75, p100);
+    }
+
+    inline float clipperADrive (float drive, float type) noexcept
+    {
+        const float typeT = smoothStep01 (clampF (type, 0.0f, 1.0f));
+        const float typeDriveScale = juce::jmap (typeT, 1.1765f, 0.95f);
+        return clampF (drive, 0.0f, 1.0f) * 0.68f * typeDriveScale;
     }
 } // namespace detail
 
@@ -2187,70 +2451,70 @@ inline float getTapeLevelCorrection (float drive, float girth, float mod, int se
     {
         {
             {
-                { 0.6752f, 0.5677f, 0.6460f, 0.7959f, 0.9966f },
-                { 0.6694f, 0.7421f, 0.9009f, 1.5175f, 2.0841f },
-                { 0.9308f, 1.1343f, 1.4494f, 2.2313f, 2.7029f },
+                { 0.5070f, 0.5754f, 1.5487f, 2.4091f, 2.8021f },
+                { 0.6019f, 0.7650f, 1.5354f, 1.9830f, 2.3674f },
+                { 1.0305f, 1.1990f, 1.4901f, 2.0575f, 2.5000f },
             },
             {
-                { 0.7398f, 0.6148f, 0.6673f, 0.7911f, 0.9667f },
-                { 0.6638f, 0.7238f, 0.8608f, 1.4083f, 1.9225f },
-                { 0.8806f, 1.0602f, 1.3422f, 2.0475f, 2.4784f },
+                { 0.5605f, 0.5457f, 1.4064f, 2.2068f, 2.6081f },
+                { 0.5009f, 0.6336f, 1.4207f, 1.8634f, 2.2230f },
+                { 0.7659f, 0.9595f, 1.4464f, 1.9999f, 2.4271f },
             },
             {
-                { 0.9441f, 0.7490f, 0.6737f, 0.6802f, 0.7464f },
-                { 0.5781f, 0.5891f, 0.6422f, 0.9211f, 1.2193f },
-                { 0.6336f, 0.7221f, 0.8747f, 1.2759f, 1.5356f },
-            },
-        },
-        {
-            {
-                { 0.3458f, 0.3426f, 0.4693f, 0.6384f, 0.9068f },
-                { 0.4279f, 0.5703f, 0.7997f, 1.4781f, 1.9930f },
-                { 0.8724f, 1.2160f, 1.6867f, 2.1980f, 2.5942f },
-            },
-            {
-                { 0.4078f, 0.3943f, 0.4991f, 0.6335f, 0.8540f },
-                { 0.4380f, 0.5547f, 0.7441f, 1.3515f, 1.8342f },
-                { 0.7774f, 1.0652f, 1.4649f, 1.9968f, 2.3868f },
-            },
-            {
-                { 0.7188f, 0.6181f, 0.5809f, 0.5748f, 0.6214f },
-                { 0.4559f, 0.4763f, 0.5309f, 0.8647f, 1.1735f },
-                { 0.4849f, 0.5970f, 0.7813f, 1.2312f, 1.5029f },
+                { 0.4758f, 0.4054f, 0.9766f, 1.5621f, 1.9496f },
+                { 0.3173f, 0.4132f, 1.0028f, 1.4221f, 1.7007f },
+                { 0.4483f, 0.6486f, 1.1248f, 1.5867f, 1.9283f },
             },
         },
         {
             {
-                { 0.2958f, 0.2921f, 0.4185f, 0.5766f, 0.8507f },
-                { 0.3181f, 0.4924f, 0.7431f, 1.4531f, 1.9789f },
-                { 0.8234f, 1.2700f, 1.8509f, 2.1835f, 2.5934f },
+                { 0.1734f, 0.3161f, 1.2342f, 2.0484f, 2.6059f },
+                { 0.2306f, 0.4571f, 1.3097f, 1.9390f, 2.3745f },
+                { 0.6716f, 1.0383f, 1.4003f, 2.0646f, 2.5465f },
             },
             {
-                { 0.3516f, 0.3416f, 0.4524f, 0.5786f, 0.7931f },
-                { 0.3423f, 0.4857f, 0.6883f, 1.3279f, 1.8239f },
-                { 0.7027f, 1.0578f, 1.5254f, 1.9835f, 2.3867f },
+                { 0.2600f, 0.3357f, 1.1455f, 1.8806f, 2.3840f },
+                { 0.2297f, 0.3943f, 1.2057f, 1.8111f, 2.2181f },
+                { 0.4283f, 0.7478f, 1.3461f, 1.9995f, 2.4648f },
             },
             {
-                { 0.6771f, 0.5972f, 0.5689f, 0.5601f, 0.5997f },
-                { 0.4273f, 0.4530f, 0.5070f, 0.8583f, 1.1565f },
-                { 0.4364f, 0.5527f, 0.7431f, 1.2287f, 1.4856f },
+                { 0.3313f, 0.2985f, 0.8545f, 1.3889f, 1.7230f },
+                { 0.1918f, 0.2810f, 0.8494f, 1.3466f, 1.6572f },
+                { 0.2316f, 0.4555f, 0.9951f, 1.5472f, 1.9329f },
             },
         },
         {
             {
-                { 0.2831f, 0.2786f, 0.4027f, 0.5547f, 0.8159f },
-                { 0.2714f, 0.4557f, 0.7117f, 1.4446f, 1.9765f },
-                { 0.7822f, 1.3070f, 1.9736f, 2.1797f, 2.5930f },
+                { 0.1261f, 0.2660f, 1.1208f, 1.8615f, 2.3876f },
+                { 0.1306f, 0.3640f, 1.2113f, 1.8882f, 2.3331f },
+                { 0.4576f, 0.9224f, 1.3279f, 2.0038f, 2.4844f },
             },
             {
-                { 0.3383f, 0.3280f, 0.4400f, 0.5630f, 0.7706f },
-                { 0.3017f, 0.4561f, 0.6619f, 1.3219f, 1.8225f },
-                { 0.6485f, 1.0460f, 1.5564f, 1.9809f, 2.3864f },
+                { 0.2065f, 0.2964f, 1.0567f, 1.7350f, 2.1960f },
+                { 0.1645f, 0.3361f, 1.1233f, 1.7685f, 2.1841f },
+                { 0.2916f, 0.6427f, 1.2761f, 1.9490f, 2.4149f },
             },
             {
-                { 0.6719f, 0.5972f, 0.5696f, 0.5595f, 0.5969f },
-                { 0.4218f, 0.4495f, 0.5033f, 0.8578f, 1.1535f },
-                { 0.4194f, 0.5366f, 0.7287f, 1.2280f, 1.4799f },
+                { 0.3001f, 0.2826f, 0.8188f, 1.3354f, 1.6531f },
+                { 0.1730f, 0.2622f, 0.8161f, 1.3264f, 1.6402f },
+                { 0.1840f, 0.4028f, 0.9462f, 1.5215f, 1.8910f },
+            },
+        },
+        {
+            {
+                { 0.1202f, 0.2587f, 1.0968f, 1.8138f, 2.2875f },
+                { 0.1071f, 0.3384f, 1.1670f, 1.8694f, 2.3182f },
+                { 0.3317f, 0.8372f, 1.2992f, 1.9929f, 2.4729f },
+            },
+            {
+                { 0.1990f, 0.2901f, 1.0394f, 1.7076f, 2.1419f },
+                { 0.1485f, 0.3213f, 1.0878f, 1.7549f, 2.1738f },
+                { 0.2351f, 0.5930f, 1.2488f, 1.9454f, 2.4111f },
+            },
+            {
+                { 0.2969f, 0.2830f, 0.8216f, 1.3381f, 1.6532f },
+                { 0.1707f, 0.2604f, 0.8117f, 1.3282f, 1.6408f },
+                { 0.1736f, 0.3899f, 0.9367f, 1.5266f, 1.8908f },
             },
         },
     };
@@ -2278,9 +2542,8 @@ inline float getTriodeLevelTrim (float drive, float mod, int seriesCount) noexce
     const float tubeMorph = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
     juce::ignoreUnused (seriesCount);
 
-    // Final post-chain trim only. Do not compensate per-series here:
-    // if the stage itself is calibrated correctly, repeating it N times
-    // should not need a special series loudness hack.
+    // Static per-stage trim. Series-dependent correction is handled separately
+    // at the end of the chain.
     const float trim12AX7 = detail::interpDrive5 (d,
                                                   1.16f, 1.13f, 1.09f, 1.04f, 0.99f);
     const float trimPower = detail::interpDrive5 (d,
@@ -2299,70 +2562,70 @@ inline float getTriodeLevelCorrection (float drive, float girth, float mod, int 
     {
         {
             {
-                { 0.9932f, 0.9417f, 0.7991f, 0.6025f, 0.5112f },
-                { 1.0132f, 0.9504f, 0.7829f, 0.5830f, 0.4950f },
-                { 1.1283f, 1.0403f, 0.8224f, 0.6070f, 0.5625f },
+                { 1.4278f, 1.0453f, 0.2993f, 0.2399f, 0.2578f },
+                { 1.5200f, 1.0561f, 0.2851f, 0.2259f, 0.2536f },
+                { 1.7760f, 1.1450f, 0.3191f, 0.2560f, 0.2894f },
             },
             {
-                { 0.9997f, 0.9489f, 0.8086f, 0.6165f, 0.5320f },
-                { 1.0231f, 0.9611f, 0.7959f, 0.5998f, 0.5168f },
-                { 1.1414f, 1.0542f, 0.8384f, 0.6264f, 0.5851f },
+                { 1.2384f, 0.8842f, 0.2748f, 0.2266f, 0.2487f },
+                { 1.3256f, 0.9012f, 0.2612f, 0.2125f, 0.2433f },
+                { 1.5626f, 0.9888f, 0.2882f, 0.2353f, 0.2707f },
             },
             {
-                { 0.9349f, 0.8912f, 0.7717f, 0.6125f, 0.5465f },
-                { 0.9588f, 0.9052f, 0.7641f, 0.6011f, 0.5334f },
-                { 1.0660f, 0.9900f, 0.8041f, 0.6252f, 0.5906f },
-            },
-        },
-        {
-            {
-                { 1.1408f, 1.0205f, 0.7238f, 0.4225f, 0.4135f },
-                { 1.1444f, 1.0039f, 0.6778f, 0.4127f, 0.3974f },
-                { 1.3613f, 1.1559f, 0.7271f, 0.4479f, 0.4605f },
-            },
-            {
-                { 1.1533f, 1.0345f, 0.7421f, 0.4434f, 0.4362f },
-                { 1.1642f, 1.0248f, 0.7016f, 0.4345f, 0.4212f },
-                { 1.3890f, 1.1838f, 0.7553f, 0.4745f, 0.4862f },
-            },
-            {
-                { 1.0050f, 0.9119f, 0.6858f, 0.4604f, 0.4594f },
-                { 1.0200f, 0.9103f, 0.6597f, 0.4552f, 0.4490f },
-                { 1.2065f, 1.0432f, 0.7070f, 0.4907f, 0.5037f },
+                { 0.8970f, 0.6445f, 0.2494f, 0.2160f, 0.2504f },
+                { 0.9587f, 0.6579f, 0.2391f, 0.2056f, 0.2466f },
+                { 1.1363f, 0.7260f, 0.2556f, 0.2195f, 0.2652f },
             },
         },
         {
             {
-                { 1.3071f, 1.1038f, 0.6584f, 0.3737f, 0.3956f },
-                { 1.2869f, 1.0578f, 0.5936f, 0.3713f, 0.3811f },
-                { 1.6265f, 1.2761f, 0.6523f, 0.3851f, 0.4383f },
+                { 1.5433f, 0.8702f, 0.2278f, 0.1597f, 0.2052f },
+                { 1.7093f, 0.8700f, 0.2092f, 0.1512f, 0.2010f },
+                { 2.2420f, 0.9856f, 0.2313f, 0.1785f, 0.2290f },
             },
             {
-                { 1.3252f, 1.1242f, 0.6848f, 0.3927f, 0.4180f },
-                { 1.3168f, 1.0886f, 0.6263f, 0.3912f, 0.4049f },
-                { 1.6707f, 1.3184f, 0.6897f, 0.4090f, 0.4639f },
+                { 1.1779f, 0.6382f, 0.2200f, 0.1597f, 0.2057f },
+                { 1.3206f, 0.6511f, 0.2015f, 0.1500f, 0.1999f },
+                { 1.7668f, 0.7571f, 0.2135f, 0.1717f, 0.2207f },
             },
             {
-                { 1.0729f, 0.9296f, 0.6213f, 0.4133f, 0.4431f },
-                { 1.0771f, 0.9132f, 0.5868f, 0.4149f, 0.4354f },
-                { 1.3478f, 1.0903f, 0.6394f, 0.4366f, 0.4868f },
+                { 0.6559f, 0.3840f, 0.2000f, 0.1645f, 0.2174f },
+                { 0.7298f, 0.3933f, 0.1886f, 0.1578f, 0.2134f },
+                { 0.9771f, 0.4565f, 0.1946f, 0.1720f, 0.2270f },
             },
         },
         {
             {
-                { 1.4943f, 1.1918f, 0.6017f, 0.3533f, 0.3912f },
-                { 1.4411f, 1.1121f, 0.5261f, 0.3551f, 0.3772f },
-                { 1.9244f, 1.4006f, 0.5937f, 0.3660f, 0.4341f },
+                { 1.6002f, 0.7002f, 0.2164f, 0.1503f, 0.2051f },
+                { 1.8324f, 0.6906f, 0.1928f, 0.1442f, 0.2012f },
+                { 2.6788f, 0.8135f, 0.2139f, 0.1635f, 0.2271f },
             },
             {
-                { 1.5176f, 1.2182f, 0.6354f, 0.3713f, 0.4132f },
-                { 1.4813f, 1.1524f, 0.5661f, 0.3739f, 0.4010f },
-                { 1.9869f, 1.4574f, 0.6380f, 0.3872f, 0.4596f },
+                { 1.0842f, 0.4589f, 0.2106f, 0.1505f, 0.2063f },
+                { 1.2644f, 0.4669f, 0.1890f, 0.1438f, 0.2006f },
+                { 1.9022f, 0.5680f, 0.1991f, 0.1586f, 0.2197f },
             },
             {
-                { 1.1391f, 0.9450f, 0.5725f, 0.3938f, 0.4392f },
-                { 1.1306f, 0.9144f, 0.5355f, 0.3999f, 0.4321f },
-                { 1.4897f, 1.1323f, 0.5918f, 0.4159f, 0.4842f },
+                { 0.4930f, 0.2698f, 0.1859f, 0.1572f, 0.2189f },
+                { 0.5608f, 0.2741f, 0.1746f, 0.1525f, 0.2160f },
+                { 0.8219f, 0.3180f, 0.1803f, 0.1632f, 0.2278f },
+            },
+        },
+        {
+            {
+                { 1.6183f, 0.5551f, 0.2070f, 0.1486f, 0.2090f },
+                { 1.9178f, 0.5433f, 0.1798f, 0.1438f, 0.2049f },
+                { 3.1288f, 0.6679f, 0.2020f, 0.1619f, 0.2313f },
+            },
+            {
+                { 0.9771f, 0.3422f, 0.2046f, 0.1494f, 0.2113f },
+                { 1.1857f, 0.3481f, 0.1801f, 0.1433f, 0.2049f },
+                { 2.0056f, 0.4359f, 0.1894f, 0.1567f, 0.2238f },
+            },
+            {
+                { 0.3849f, 0.2220f, 0.1778f, 0.1574f, 0.2242f },
+                { 0.4431f, 0.2247f, 0.1667f, 0.1533f, 0.2208f },
+                { 0.6950f, 0.2577f, 0.1722f, 0.1624f, 0.2332f },
             },
         },
     };
@@ -2419,70 +2682,70 @@ inline float getTransistorLevelCorrection (float drive, float girth, float mod, 
     {
         {
             {
-                { 1.0051f, 0.9688f, 1.0042f, 1.0315f, 1.0226f },
-                { 0.9920f, 0.9634f, 1.0109f, 1.0327f, 1.0065f },
-                { 1.0052f, 0.9685f, 1.0491f, 1.0766f, 1.0450f },
+                { 1.8412f, 1.1754f, 0.5667f, 0.5761f, 0.5324f },
+                { 1.5580f, 1.1826f, 0.5929f, 0.5774f, 0.5258f },
+                { 1.3951f, 1.2365f, 0.6724f, 0.6199f, 0.5509f },
             },
             {
-                { 0.8875f, 0.9162f, 1.0785f, 1.1807f, 1.1921f },
-                { 0.8976f, 0.9162f, 1.0534f, 1.1474f, 1.1445f },
-                { 0.9267f, 0.9281f, 1.0676f, 1.1603f, 1.1590f },
+                { 1.2925f, 0.9136f, 0.6327f, 0.6746f, 0.6328f },
+                { 1.1620f, 0.9448f, 0.6316f, 0.6495f, 0.6018f },
+                { 1.1209f, 1.0506f, 0.6921f, 0.6719f, 0.6095f },
             },
             {
-                { 0.8524f, 0.9183f, 1.1596f, 1.3103f, 1.2852f },
-                { 0.8680f, 0.9142f, 1.1080f, 1.2462f, 1.2384f },
-                { 0.9008f, 0.9241f, 1.1015f, 1.2339f, 1.2516f },
-            },
-        },
-        {
-            {
-                { 1.0102f, 0.9408f, 0.9638f, 0.9864f, 1.0076f },
-                { 0.9841f, 0.9312f, 0.9852f, 0.9813f, 0.9793f },
-                { 1.0104f, 0.9403f, 1.0586f, 1.0483f, 1.0026f },
-            },
-            {
-                { 0.7877f, 0.8534f, 1.0432f, 1.1429f, 1.1811f },
-                { 0.8059f, 0.8516f, 1.0312f, 1.1004f, 1.1219f },
-                { 0.8590f, 0.8699f, 1.0763f, 1.1353f, 1.1210f },
-            },
-            {
-                { 0.7267f, 0.8579f, 1.1318f, 1.2758f, 1.2752f },
-                { 0.7538f, 0.8495f, 1.0957f, 1.2032f, 1.2173f },
-                { 0.8119f, 0.8639f, 1.1206f, 1.2154f, 1.2156f },
+                { 1.1643f, 0.8780f, 0.6630f, 0.7168f, 0.6758f },
+                { 1.0583f, 0.8992f, 0.6600f, 0.6916f, 0.6445f },
+                { 1.0388f, 1.0034f, 0.7184f, 0.7128f, 0.6513f },
             },
         },
         {
             {
-                { 1.0154f, 0.9158f, 0.9334f, 0.9785f, 1.0079f },
-                { 0.9763f, 0.9029f, 0.9586f, 0.9634f, 0.9781f },
-                { 1.0156f, 0.9151f, 1.0541f, 1.0246f, 0.9946f },
+                { 2.1441f, 0.8661f, 0.5029f, 0.5405f, 0.5134f },
+                { 1.7422f, 0.9402f, 0.5101f, 0.5326f, 0.4998f },
+                { 1.5269f, 1.0669f, 0.5586f, 0.5591f, 0.5140f },
             },
             {
-                { 0.6993f, 0.8061f, 1.0175f, 1.1378f, 1.1815f },
-                { 0.7238f, 0.8018f, 1.0064f, 1.0865f, 1.1213f },
-                { 0.7965f, 0.8229f, 1.0685f, 1.1145f, 1.1147f },
+                { 1.0565f, 0.6428f, 0.5890f, 0.6477f, 0.6183f },
+                { 0.9696f, 0.6834f, 0.5730f, 0.6160f, 0.5830f },
+                { 0.9860f, 0.8147f, 0.6040f, 0.6256f, 0.5809f },
             },
             {
-                { 0.6197f, 0.8130f, 1.1092f, 1.2714f, 1.2756f },
-                { 0.6549f, 0.8007f, 1.0745f, 1.1908f, 1.2168f },
-                { 0.7321f, 0.8162f, 1.1174f, 1.1969f, 1.2097f },
+                { 0.8575f, 0.6403f, 0.6251f, 0.6925f, 0.6619f },
+                { 0.8050f, 0.6563f, 0.6093f, 0.6615f, 0.6275f },
+                { 0.8474f, 0.7662f, 0.6406f, 0.6717f, 0.6258f },
             },
         },
         {
             {
-                { 1.0206f, 0.8936f, 0.9162f, 0.9776f, 1.0081f },
-                { 0.9686f, 0.8782f, 0.9386f, 0.9588f, 0.9781f },
-                { 1.0208f, 0.8927f, 1.0451f, 1.0119f, 0.9936f },
+                { 2.3282f, 0.6659f, 0.4786f, 0.5306f, 0.5085f },
+                { 1.8353f, 0.7566f, 0.4790f, 0.5174f, 0.4932f },
+                { 1.5977f, 0.9185f, 0.5181f, 0.5359f, 0.5021f },
             },
             {
-                { 0.6210f, 0.7704f, 1.0053f, 1.1373f, 1.1818f },
-                { 0.6504f, 0.7633f, 0.9894f, 1.0836f, 1.1213f },
-                { 0.7388f, 0.7849f, 1.0573f, 1.1042f, 1.1140f },
+                { 0.8046f, 0.5206f, 0.5677f, 0.6389f, 0.6134f },
+                { 0.7618f, 0.5451f, 0.5459f, 0.6025f, 0.5767f },
+                { 0.8291f, 0.6606f, 0.5662f, 0.6030f, 0.5693f },
             },
             {
-                { 0.5288f, 0.7797f, 1.0988f, 1.2709f, 1.2760f },
-                { 0.5694f, 0.7638f, 1.0596f, 1.1882f, 1.2168f },
-                { 0.6606f, 0.7784f, 1.1087f, 1.1877f, 1.2091f },
+                { 0.5883f, 0.5360f, 0.6049f, 0.6841f, 0.6571f },
+                { 0.5767f, 0.5356f, 0.5837f, 0.6485f, 0.6209f },
+                { 0.6610f, 0.6220f, 0.6035f, 0.6487f, 0.6141f },
+            },
+        },
+        {
+            {
+                { 2.4634f, 0.5518f, 0.4682f, 0.5274f, 0.5063f },
+                { 1.8944f, 0.6370f, 0.4643f, 0.5124f, 0.4910f },
+                { 1.6362f, 0.7999f, 0.4947f, 0.5255f, 0.4980f },
+            },
+            {
+                { 0.5966f, 0.4634f, 0.5587f, 0.6360f, 0.6113f },
+                { 0.5865f, 0.4744f, 0.5331f, 0.5987f, 0.5745f },
+                { 0.6822f, 0.5633f, 0.5456f, 0.5931f, 0.5651f },
+            },
+            {
+                { 0.3930f, 0.4868f, 0.5970f, 0.6812f, 0.6547f },
+                { 0.4049f, 0.4750f, 0.5716f, 0.6446f, 0.6187f },
+                { 0.5047f, 0.5360f, 0.5838f, 0.6390f, 0.6098f },
             },
         },
     };
@@ -2515,70 +2778,70 @@ inline float getDiodeLevelTrim (float drive, float girth, float mod, int seriesC
     {
         {
             {
-                { 0.7965f, 0.6278f, 0.4468f, 0.3956f, 0.3874f },
-                { 0.7014f, 0.4599f, 0.4073f, 0.3931f, 0.3912f },
-                { 0.6589f, 0.4874f, 0.3937f, 0.3683f, 0.3601f },
+                { 1.4598f, 0.6594f, 0.2075f, 0.2082f, 0.2167f },
+                { 1.1489f, 0.2633f, 0.1624f, 0.1893f, 0.2074f },
+                { 1.0023f, 0.3567f, 0.1606f, 0.1789f, 0.1917f },
             },
             {
-                { 1.0822f, 0.8208f, 0.4876f, 0.4030f, 0.3903f },
-                { 0.9560f, 0.5219f, 0.4185f, 0.3965f, 0.3926f },
-                { 0.8834f, 0.6168f, 0.4133f, 0.3749f, 0.3633f },
+                { 2.1910f, 1.0128f, 0.2324f, 0.2160f, 0.2212f },
+                { 1.7754f, 0.3400f, 0.1677f, 0.1920f, 0.2090f },
+                { 1.5163f, 0.5376f, 0.1703f, 0.1835f, 0.1944f },
             },
             {
-                { 1.1852f, 0.8987f, 0.5129f, 0.4064f, 0.3917f },
-                { 1.0438f, 0.5636f, 0.4228f, 0.3978f, 0.3930f },
-                { 0.9578f, 0.6706f, 0.4217f, 0.3772f, 0.3642f },
-            },
-        },
-        {
-            {
-                { 0.6485f, 0.4622f, 0.3910f, 0.3780f, 0.3801f },
-                { 0.5160f, 0.3979f, 0.3825f, 0.3833f, 0.3811f },
-                { 0.4654f, 0.3757f, 0.3440f, 0.3377f, 0.3331f },
-            },
-            {
-                { 1.1737f, 0.6705f, 0.4025f, 0.3789f, 0.3804f },
-                { 0.9135f, 0.4229f, 0.3847f, 0.3830f, 0.3809f },
-                { 0.7781f, 0.4244f, 0.3512f, 0.3380f, 0.3363f },
-            },
-            {
-                { 1.4110f, 0.8057f, 0.4108f, 0.3795f, 0.3805f },
-                { 1.0898f, 0.4357f, 0.3857f, 0.3828f, 0.3807f },
-                { 0.9165f, 0.4564f, 0.3539f, 0.3376f, 0.3353f },
+                { 2.2680f, 1.1000f, 0.2435f, 0.2178f, 0.2221f },
+                { 1.8797f, 0.3695f, 0.1692f, 0.1926f, 0.2093f },
+                { 1.5930f, 0.5875f, 0.1727f, 0.1838f, 0.1942f },
             },
         },
         {
             {
-                { 0.5511f, 0.4258f, 0.3854f, 0.3765f, 0.3785f },
-                { 0.4460f, 0.3832f, 0.3815f, 0.3791f, 0.3807f },
-                { 0.3941f, 0.3483f, 0.3359f, 0.3318f, 0.3305f },
+                { 0.8525f, 0.1888f, 0.1413f, 0.1688f, 0.1870f },
+                { 0.5893f, 0.1131f, 0.1423f, 0.1747f, 0.1921f },
+                { 0.5608f, 0.1241f, 0.1263f, 0.1510f, 0.1671f },
             },
             {
-                { 1.2760f, 0.5480f, 0.3906f, 0.3770f, 0.3786f },
-                { 0.8725f, 0.3949f, 0.3813f, 0.3786f, 0.3804f },
-                { 0.6831f, 0.3753f, 0.3368f, 0.3304f, 0.3301f },
+                { 1.9729f, 0.3299f, 0.1434f, 0.1689f, 0.1869f },
+                { 1.4046f, 0.1262f, 0.1430f, 0.1747f, 0.1921f },
+                { 1.2671f, 0.1599f, 0.1276f, 0.1507f, 0.1682f },
             },
             {
-                { 1.6865f, 0.7204f, 0.3939f, 0.3773f, 0.3786f },
-                { 1.1384f, 0.4020f, 0.3811f, 0.3782f, 0.3801f },
-                { 0.8761f, 0.3917f, 0.3370f, 0.3291f, 0.3289f },
+                { 2.0907f, 0.3949f, 0.1449f, 0.1689f, 0.1867f },
+                { 1.5783f, 0.1300f, 0.1433f, 0.1747f, 0.1921f },
+                { 1.4292f, 0.1725f, 0.1275f, 0.1498f, 0.1669f },
             },
         },
         {
             {
-                { 0.4973f, 0.4241f, 0.3887f, 0.3761f, 0.3774f },
-                { 0.4177f, 0.3804f, 0.3822f, 0.3784f, 0.3807f },
-                { 0.3669f, 0.3387f, 0.3355f, 0.3301f, 0.3303f },
+                { 0.4706f, 0.1150f, 0.1361f, 0.1667f, 0.1855f },
+                { 0.3289f, 0.1030f, 0.1405f, 0.1717f, 0.1905f },
+                { 0.3302f, 0.0952f, 0.1219f, 0.1483f, 0.1646f },
             },
             {
-                { 1.3899f, 0.4729f, 0.3983f, 0.3765f, 0.3775f },
-                { 0.8330f, 0.3845f, 0.3817f, 0.3780f, 0.3804f },
-                { 0.5974f, 0.3547f, 0.3345f, 0.3287f, 0.3292f },
+                { 1.6943f, 0.1586f, 0.1348f, 0.1667f, 0.1853f },
+                { 1.0537f, 0.1062f, 0.1405f, 0.1716f, 0.1904f },
+                { 0.9508f, 0.1035f, 0.1220f, 0.1475f, 0.1639f },
             },
             {
-                { 2.0224f, 0.6420f, 0.4022f, 0.3767f, 0.3776f },
-                { 1.1895f, 0.3880f, 0.3813f, 0.3777f, 0.3801f },
-                { 0.8366f, 0.3652f, 0.3334f, 0.3274f, 0.3279f },
+                { 1.8255f, 0.2054f, 0.1341f, 0.1666f, 0.1852f },
+                { 1.2678f, 0.1076f, 0.1404f, 0.1714f, 0.1903f },
+                { 1.1681f, 0.1067f, 0.1215f, 0.1463f, 0.1627f },
+            },
+        },
+        {
+            {
+                { 0.2774f, 0.1016f, 0.1358f, 0.1663f, 0.1850f },
+                { 0.1976f, 0.1010f, 0.1400f, 0.1707f, 0.1898f },
+                { 0.2096f, 0.0903f, 0.1214f, 0.1477f, 0.1640f },
+            },
+            {
+                { 1.4230f, 0.1108f, 0.1363f, 0.1662f, 0.1848f },
+                { 0.7706f, 0.1027f, 0.1399f, 0.1706f, 0.1897f },
+                { 0.6927f, 0.0943f, 0.1206f, 0.1466f, 0.1629f },
+            },
+            {
+                { 1.5564f, 0.1468f, 0.1363f, 0.1662f, 0.1846f },
+                { 0.9997f, 0.1034f, 0.1398f, 0.1706f, 0.1896f },
+                { 0.9319f, 0.0956f, 0.1197f, 0.1454f, 0.1616f },
             },
         },
     };
@@ -2600,6 +2863,48 @@ inline float getDiodeLevelTrim (float drive, float girth, float mod, int seriesC
     return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
 }
 
+inline float getClipperLevelTrim (float drive, float girth, float mod) noexcept
+{
+    const float d = detail::clipperADrive (drive, mod);
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float m = detail::clampF (mod, 0.0f, 1.0f);
+
+    static constexpr float trims[3][3][5] =
+    {
+        {
+            { 4.7562f, 4.2937f, 1.9506f, 2.0236f, 2.1185f },
+            { 2.3205f, 3.1355f, 2.0069f, 2.0759f, 2.1820f },
+            { 4.7665f, 3.6648f, 2.6112f, 2.4270f, 2.4201f },
+        },
+        {
+            { 4.4815f, 4.0448f, 1.9772f, 2.0381f, 2.1195f },
+            { 2.4018f, 3.1549f, 2.0133f, 2.0787f, 2.1822f },
+            { 4.6200f, 4.2327f, 3.1330f, 2.5604f, 2.4790f },
+        },
+        {
+            { 4.3951f, 3.9026f, 2.0472f, 2.0763f, 2.1221f },
+            { 2.5654f, 3.2097f, 2.0311f, 2.0863f, 2.1829f },
+            { 4.6161f, 4.1841f, 3.6594f, 3.3946f, 2.9365f },
+        },
+    };
+
+    auto interpDrive = [d] (const float (&v)[5]) noexcept
+    {
+        return detail::interpDrive5 (d, v[0], v[1], v[2], v[3], v[4]);
+    };
+
+    float charTrim[3];
+    for (int charIndex = 0; charIndex < 3; ++charIndex)
+    {
+        const float trimType0 = interpDrive (trims[charIndex][0]);
+        const float trimType1 = interpDrive (trims[charIndex][1]);
+        const float trimType2 = interpDrive (trims[charIndex][2]);
+        charTrim[charIndex] = detail::morphThreeWay (m, trimType0, trimType1, trimType2);
+    }
+
+    return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
+}
+
 inline float getClipperLevelCorrection (float drive, float girth, float mod, int seriesCount) noexcept
 {
     const float d = detail::clampF (drive, 0.0f, 1.0f);
@@ -2611,70 +2916,70 @@ inline float getClipperLevelCorrection (float drive, float girth, float mod, int
     {
         {
             {
-                { 1.1947f, 1.0844f, 0.9598f, 0.8698f, 0.8194f },
-                { 1.4078f, 1.2698f, 1.1015f, 0.9591f, 0.9067f },
-                { 1.1973f, 1.1136f, 0.9961f, 0.8773f, 0.8273f },
+                { 0.4299f, 0.1584f, 0.2066f, 0.1969f, 0.1888f },
+                { 2.9580f, 1.8556f, 0.9628f, 0.8238f, 0.7749f },
+                { 0.6833f, 0.4841f, 0.3444f, 0.3807f, 0.4106f },
             },
             {
-                { 1.1257f, 1.0160f, 0.9191f, 0.8560f, 0.8145f },
-                { 1.3509f, 1.1967f, 1.0350f, 0.9401f, 0.9018f },
-                { 1.1605f, 1.0632f, 0.9437f, 0.8600f, 0.8224f },
+                { 0.6144f, 0.2128f, 0.2061f, 0.1959f, 0.1890f },
+                { 2.8578f, 1.8432f, 0.9712f, 0.8254f, 0.7748f },
+                { 0.9396f, 0.6508f, 0.3895f, 0.3654f, 0.4038f },
             },
             {
-                { 1.1040f, 0.9803f, 0.9068f, 0.8511f, 0.8127f },
-                { 1.3488f, 1.1747f, 1.0087f, 0.9337f, 0.9001f },
-                { 1.1595f, 1.0510f, 0.9192f, 0.8541f, 0.8206f },
-            },
-        },
-        {
-            {
-                { 1.3685f, 1.1336f, 0.9154f, 0.8092f, 0.7848f },
-                { 1.9093f, 1.5390f, 1.1710f, 0.9515f, 0.8880f },
-                { 1.4052f, 1.2139f, 0.9844f, 0.8123f, 0.7752f },
-            },
-            {
-                { 1.2469f, 1.0163f, 0.8622f, 0.8028f, 0.7837f },
-                { 1.8220f, 1.4076f, 1.0570f, 0.9240f, 0.8822f },
-                { 1.3456f, 1.1227f, 0.9007f, 0.7970f, 0.7729f },
-            },
-            {
-                { 1.2189f, 0.9581f, 0.8544f, 0.8009f, 0.7834f },
-                { 1.8192f, 1.3800f, 1.0187f, 0.9135f, 0.8804f },
-                { 1.3445f, 1.1046f, 0.8708f, 0.7931f, 0.7722f },
+                { 0.9107f, 0.3164f, 0.2049f, 0.1931f, 0.1891f },
+                { 2.6756f, 1.8100f, 0.9948f, 0.8296f, 0.7745f },
+                { 1.5638f, 1.8014f, 0.9099f, 0.4670f, 0.3837f },
             },
         },
         {
             {
-                { 1.5370f, 1.1649f, 0.8800f, 0.7844f, 0.7817f },
-                { 2.5751f, 1.8311f, 1.2350f, 0.9764f, 0.8893f },
-                { 1.6344f, 1.3069f, 0.9715f, 0.7797f, 0.7618f },
+                { 0.1869f, 0.0812f, 0.1761f, 0.1706f, 0.1642f },
+                { 2.1234f, 0.5301f, 0.7415f, 0.7744f, 0.7664f },
+                { 0.3495f, 0.2470f, 0.2718f, 0.3241f, 0.3439f },
             },
             {
-                { 1.3767f, 1.0108f, 0.8277f, 0.7810f, 0.7816f },
-                { 2.4575f, 1.6535f, 1.0845f, 0.9439f, 0.8806f },
-                { 1.5603f, 1.1819f, 0.8695f, 0.7665f, 0.7610f },
+                { 0.3100f, 0.0867f, 0.1738f, 0.1693f, 0.1641f },
+                { 1.9820f, 0.5312f, 0.7396f, 0.7735f, 0.7662f },
+                { 0.6819f, 0.3156f, 0.2446f, 0.2884f, 0.3332f },
             },
             {
-                { 1.3457f, 0.9394f, 0.8226f, 0.7800f, 0.7815f },
-                { 2.4537f, 1.6212f, 1.0381f, 0.9297f, 0.8777f },
-                { 1.5590f, 1.1610f, 0.8376f, 0.7639f, 0.7608f },
+                { 0.6448f, 0.0922f, 0.1689f, 0.1662f, 0.1638f },
+                { 1.7373f, 0.5366f, 0.7339f, 0.7707f, 0.7657f },
+                { 2.0380f, 2.0910f, 0.4230f, 0.2807f, 0.2965f },
             },
         },
         {
             {
-                { 1.7088f, 1.1851f, 0.8540f, 0.7750f, 0.7811f },
-                { 3.4730f, 2.1560f, 1.2804f, 0.9844f, 0.8924f },
-                { 1.8955f, 1.3964f, 0.9611f, 0.7633f, 0.7596f },
+                { 0.1130f, 0.0785f, 0.1702f, 0.1650f, 0.1589f },
+                { 1.2813f, 0.3173f, 0.7264f, 0.7713f, 0.7661f },
+                { 0.1850f, 0.1954f, 0.2561f, 0.3072f, 0.3211f },
             },
             {
-                { 1.5199f, 1.0029f, 0.8053f, 0.7728f, 0.7808f },
-                { 3.3146f, 1.9424f, 1.1022f, 0.9508f, 0.8813f },
-                { 1.8092f, 1.2427f, 0.8479f, 0.7513f, 0.7593f },
+                { 0.1568f, 0.0835f, 0.1681f, 0.1639f, 0.1588f },
+                { 1.1555f, 0.3162f, 0.7241f, 0.7704f, 0.7660f },
+                { 0.4092f, 0.2007f, 0.2212f, 0.2735f, 0.3110f },
             },
             {
-                { 1.4857f, 0.9233f, 0.8015f, 0.7722f, 0.7807f },
-                { 3.3095f, 1.9045f, 1.0515f, 0.9344f, 0.8771f },
-                { 1.8077f, 1.2202f, 0.8132f, 0.7493f, 0.7592f },
+                { 0.3749f, 0.0871f, 0.1635f, 0.1608f, 0.1586f },
+                { 0.9499f, 0.3137f, 0.7170f, 0.7675f, 0.7653f },
+                { 2.4097f, 1.7070f, 0.2673f, 0.2610f, 0.2777f },
+            },
+        },
+        {
+            {
+                { 0.0989f, 0.0776f, 0.1681f, 0.1630f, 0.1570f },
+                { 0.7356f, 0.2960f, 0.7248f, 0.7712f, 0.7661f },
+                { 0.1246f, 0.1797f, 0.2513f, 0.3006f, 0.3131f },
+            },
+            {
+                { 0.1052f, 0.0824f, 0.1661f, 0.1619f, 0.1569f },
+                { 0.6435f, 0.2944f, 0.7224f, 0.7702f, 0.7660f },
+                { 0.2397f, 0.1653f, 0.2156f, 0.2674f, 0.3028f },
+            },
+            {
+                { 0.1930f, 0.0859f, 0.1617f, 0.1589f, 0.1567f },
+                { 0.5153f, 0.2901f, 0.7152f, 0.7674f, 0.7653f },
+                { 2.5476f, 1.2056f, 0.2375f, 0.2554f, 0.2711f },
             },
         },
     };
@@ -2697,8 +3002,427 @@ inline float getClipperLevelCorrection (float drive, float girth, float mod, int
     const float midType = std::pow (detail::clampF (1.0f - std::abs (m - 0.5f) * 2.0f, 0.0f, 1.0f), 1.5f);
     const float driveTrim = detail::smoothStep01 (d * 2.0f);
     const float midAttenuationDb = -9.0f * midType * driveTrim;
-    return baseTrim * std::pow (10.0f, midAttenuationDb / 20.0f);
+    const float klonVoice = m <= 0.5f ? 0.0f : detail::smoothStep01 ((m - 0.5f) * 2.0f);
+    const float klonHotDrive = detail::smoothStep01 ((d - 0.45f) / 0.55f);
+    static constexpr float klonSeriesDb[4] = { -1.65f, -0.85f, -0.40f, -0.20f };
+    const float klonHotTrimDb = klonSeriesDb[seriesIndex] * klonVoice * klonHotDrive;
+
+    const float overdriveAVoiceAmount = 1.0f - detail::smoothStep01 (detail::clampF (m * 2.0f, 0.0f, 1.0f));
+    const float measuredOverdriveAOutputDb = -13.5f * overdriveAVoiceAmount;
+    return baseTrim * std::pow (10.0f, (midAttenuationDb + klonHotTrimDb + measuredOverdriveAOutputDb) / 20.0f);
 }
+
+inline float getStageTrimMigrationCorrection (Model model, int seriesCount) noexcept
+{
+    const int seriesIndex = juce::jlimit (1, kMaxSeries, seriesCount) - 1;
+
+    // Brown/white peak-normalized migration trim: keeps the output envelope
+    // close to the pre-migration calibration while the static trim now feeds
+    // every repeated stage at a stable nominal level.
+    static constexpr float tape[4] = { 1.0f, 1.0310f, 1.0351f, 1.0292f };
+    static constexpr float tube[4] = { 1.0f, 0.9611f, 0.9273f, 0.8995f };
+
+    switch (model)
+    {
+        case Model::Tape: return tape[seriesIndex];
+        case Model::Tube: return tube[seriesIndex];
+        default:          return 1.0f;
+    }
+}
+
+inline float getRawModeLevelCorrection (Model model, float drive, float girth, float mod, int seriesCount) noexcept
+{
+    int modelIndex = -1;
+    switch (model)
+    {
+        case Model::Tape:       modelIndex = 0; break;
+        case Model::Tube:       modelIndex = 1; break;
+        case Model::Transistor: modelIndex = 2; break;
+        case Model::Diode:      modelIndex = 3; break;
+        case Model::OverdriveA:
+        case Model::OverdriveB: modelIndex = 4; break;
+        default: return 1.0f;
+    }
+
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float g = detail::clampF (girth, 0.0f, 1.0f);
+    const float m = detail::clampF (mod, 0.0f, 1.0f);
+    const int seriesIndex = juce::jlimit (1, kMaxSeries, seriesCount) - 1;
+
+    // Brown/white RAW calibration. Each point uses the worst measured
+    // peak/RMS excess against the normal route, so RAW does not jump in
+    // output while keeping the raw core tone unchanged.
+    static constexpr float trims[5][4][3][3][5] =
+    {
+        {
+            {
+                {
+                    { 0.8701f, 0.9063f, 0.9371f, 0.9524f, 0.9623f },
+                    { 0.8419f, 0.8761f, 0.9061f, 0.9358f, 0.9619f },
+                    { 0.8321f, 0.8790f, 0.9156f, 0.9519f, 0.9685f },
+                },
+                {
+                    { 0.8015f, 0.8436f, 0.8858f, 0.9081f, 0.9154f },
+                    { 0.7693f, 0.8099f, 0.8476f, 0.8944f, 0.9367f },
+                    { 0.7528f, 0.8116f, 0.8614f, 0.9248f, 0.9527f },
+                },
+                {
+                    { 0.8682f, 0.8886f, 0.9005f, 0.9058f, 0.9030f },
+                    { 0.8037f, 0.8161f, 0.8295f, 0.8616f, 0.9083f },
+                    { 0.7432f, 0.7751f, 0.8160f, 0.8945f, 0.9309f },
+                },
+            },
+            {
+                {
+                    { 0.8700f, 0.9166f, 0.9397f, 0.9568f, 0.9658f },
+                    { 0.8260f, 0.8713f, 0.8967f, 0.9408f, 0.9560f },
+                    { 0.7965f, 0.8466f, 0.8723f, 0.9519f, 0.9761f },
+                },
+                {
+                    { 0.7968f, 0.8537f, 0.8895f, 0.9079f, 0.9198f },
+                    { 0.7528f, 0.8046f, 0.8374f, 0.9170f, 0.9529f },
+                    { 0.7100f, 0.7712f, 0.8087f, 0.9445f, 0.9865f },
+                },
+                {
+                    { 0.8886f, 0.9126f, 0.9188f, 0.9045f, 0.8965f },
+                    { 0.8477f, 0.8555f, 0.8563f, 0.9390f, 0.8635f },
+                    { 0.7591f, 0.7800f, 0.8033f, 0.9747f, 0.8777f },
+                },
+            },
+            {
+                {
+                    { 0.8826f, 0.9244f, 0.9349f, 0.9455f, 0.9509f },
+                    { 0.8354f, 0.8785f, 0.8962f, 0.9320f, 0.9485f },
+                    { 0.7811f, 0.8286f, 0.8461f, 0.9410f, 0.9739f },
+                },
+                {
+                    { 0.8065f, 0.8647f, 0.8875f, 0.8957f, 0.9061f },
+                    { 0.7657f, 0.8184f, 0.8427f, 0.9114f, 0.9433f },
+                    { 0.6949f, 0.7524f, 0.7805f, 0.9329f, 0.9684f },
+                },
+                {
+                    { 0.9018f, 0.9261f, 0.9313f, 0.9097f, 0.8935f },
+                    { 0.8950f, 0.8989f, 0.8905f, 0.9371f, 0.8751f },
+                    { 0.8097f, 0.8139f, 0.8199f, 0.9559f, 0.8884f },
+                },
+            },
+            {
+                {
+                    { 0.8925f, 0.9231f, 0.9251f, 0.9314f, 0.9315f },
+                    { 0.8512f, 0.8858f, 0.8966f, 0.9273f, 0.9403f },
+                    { 0.7737f, 0.8168f, 0.8281f, 0.9371f, 0.9700f },
+                },
+                {
+                    { 0.8170f, 0.8684f, 0.8826f, 0.8845f, 0.8909f },
+                    { 0.7874f, 0.8348f, 0.8507f, 0.9114f, 0.9396f },
+                    { 0.6924f, 0.7438f, 0.7637f, 0.9324f, 0.9739f },
+                },
+                {
+                    { 0.9213f, 0.9428f, 0.9455f, 0.9192f, 0.8925f },
+                    { 0.9258f, 0.9256f, 0.9123f, 0.9403f, 0.8833f },
+                    { 0.8585f, 0.8482f, 0.8415f, 0.9524f, 0.8906f },
+                },
+            },
+        },
+        {
+            {
+                {
+                    { 0.7585f, 0.7546f, 0.7466f, 0.7706f, 0.8113f },
+                    { 0.7437f, 0.7428f, 0.7410f, 0.7654f, 0.8049f },
+                    { 0.7388f, 0.7408f, 0.7480f, 0.7755f, 0.8116f },
+                },
+                {
+                    { 0.7655f, 0.7618f, 0.7570f, 0.7839f, 0.8190f },
+                    { 0.7493f, 0.7486f, 0.7493f, 0.7755f, 0.8093f },
+                    { 0.7430f, 0.7453f, 0.7538f, 0.7819f, 0.8139f },
+                },
+                {
+                    { 0.7862f, 0.7847f, 0.7853f, 0.8119f, 0.8453f },
+                    { 0.7689f, 0.7698f, 0.7756f, 0.8025f, 0.8347f },
+                    { 0.7601f, 0.7640f, 0.7772f, 0.8067f, 0.8369f },
+                },
+            },
+            {
+                {
+                    { 0.6847f, 0.6784f, 0.6976f, 0.7974f, 0.8618f },
+                    { 0.6611f, 0.6601f, 0.6783f, 0.7762f, 0.8642f },
+                    { 0.6743f, 0.6774f, 0.6958f, 0.7907f, 0.8520f },
+                },
+                {
+                    { 0.6988f, 0.6952f, 0.7200f, 0.8203f, 0.8630f },
+                    { 0.6689f, 0.6696f, 0.6942f, 0.7916f, 0.8591f },
+                    { 0.6769f, 0.6804f, 0.7035f, 0.7964f, 0.8460f },
+                },
+                {
+                    { 0.7445f, 0.7452f, 0.7692f, 0.8499f, 0.8803f },
+                    { 0.7091f, 0.7138f, 0.7423f, 0.8224f, 0.8733f },
+                    { 0.7092f, 0.7174f, 0.7500f, 0.8268f, 0.8588f },
+                },
+            },
+            {
+                {
+                    { 0.6333f, 0.6278f, 0.6867f, 0.8472f, 0.8796f },
+                    { 0.6212f, 0.6116f, 0.6621f, 0.8240f, 0.8863f },
+                    { 0.7464f, 0.7289f, 0.7107f, 0.8699f, 0.8817f },
+                },
+                {
+                    { 0.6544f, 0.6529f, 0.7246f, 0.8697f, 0.8791f },
+                    { 0.6193f, 0.6221f, 0.6842f, 0.8335f, 0.8783f },
+                    { 0.6833f, 0.6734f, 0.7162f, 0.8621f, 0.8728f },
+                },
+                {
+                    { 0.7267f, 0.7318f, 0.7877f, 0.8923f, 0.8949f },
+                    { 0.6796f, 0.6895f, 0.7486f, 0.8563f, 0.8893f },
+                    { 0.7166f, 0.7285f, 0.7802f, 0.8780f, 0.8794f },
+                },
+            },
+            {
+                {
+                    { 0.5921f, 0.5913f, 0.6923f, 0.8839f, 0.8842f },
+                    { 0.6123f, 0.5857f, 0.6743f, 0.8723f, 0.8925f },
+                    { 0.8519f, 0.8266f, 0.7789f, 0.9564f, 0.9013f },
+                },
+                {
+                    { 0.6201f, 0.6229f, 0.7435f, 0.9013f, 0.8819f },
+                    { 0.5880f, 0.5939f, 0.6983f, 0.8689f, 0.8824f },
+                    { 0.7485f, 0.7161f, 0.7798f, 0.9325f, 0.8912f },
+                },
+                {
+                    { 0.7185f, 0.7289f, 0.8128f, 0.9176f, 0.8976f },
+                    { 0.6676f, 0.6839f, 0.7719f, 0.8810f, 0.8925f },
+                    { 0.7773f, 0.7906f, 0.8487f, 0.9262f, 0.8937f },
+                },
+            },
+        },
+        {
+            {
+                {
+                    { 0.8867f, 0.9054f, 0.9442f, 0.9790f, 0.9865f },
+                    { 0.8674f, 0.8817f, 0.9130f, 0.9475f, 0.9557f },
+                    { 0.8527f, 0.8589f, 0.8782f, 0.9101f, 0.9180f },
+                },
+                {
+                    { 0.8534f, 0.8889f, 0.9470f, 0.9824f, 0.9896f },
+                    { 0.8301f, 0.8579f, 0.9089f, 0.9478f, 0.9574f },
+                    { 0.8136f, 0.8296f, 0.8661f, 0.9059f, 0.9171f },
+                },
+                {
+                    { 0.8454f, 0.8881f, 0.9523f, 0.9863f, 0.9924f },
+                    { 0.8208f, 0.8539f, 0.9114f, 0.9507f, 0.9603f },
+                    { 0.8040f, 0.8233f, 0.8654f, 0.9066f, 0.9185f },
+                },
+            },
+            {
+                {
+                    { 0.8072f, 0.8454f, 0.8948f, 0.9465f, 0.9547f },
+                    { 0.7784f, 0.8115f, 0.8549f, 0.9151f, 0.9307f },
+                    { 0.7595f, 0.7808f, 0.8101f, 0.8682f, 0.8977f },
+                },
+                {
+                    { 0.7553f, 0.8225f, 0.8943f, 0.9518f, 0.9606f },
+                    { 0.7248f, 0.7814f, 0.8463f, 0.9191f, 0.9352f },
+                    { 0.7083f, 0.7469f, 0.7936f, 0.8667f, 0.8994f },
+                },
+                {
+                    { 0.7521f, 0.8287f, 0.9034f, 0.9577f, 0.9654f },
+                    { 0.7228f, 0.7862f, 0.8544f, 0.9247f, 0.9400f },
+                    { 0.7083f, 0.7510f, 0.8007f, 0.8708f, 0.9026f },
+                },
+            },
+            {
+                {
+                    { 0.7449f, 0.8016f, 0.8644f, 0.9328f, 0.9395f },
+                    { 0.7107f, 0.7620f, 0.8185f, 0.9016f, 0.9151f },
+                    { 0.6909f, 0.7278f, 0.7660f, 0.8520f, 0.8859f },
+                },
+                {
+                    { 0.6832f, 0.7799f, 0.8675f, 0.9385f, 0.9435f },
+                    { 0.6576f, 0.7354f, 0.8151f, 0.9070f, 0.9184f },
+                    { 0.6397f, 0.6993f, 0.7552f, 0.8534f, 0.8870f },
+                },
+                {
+                    { 0.7076f, 0.8019f, 0.8837f, 0.9448f, 0.9470f },
+                    { 0.7005f, 0.7596f, 0.8345f, 0.9120f, 0.9223f },
+                    { 0.6926f, 0.7244f, 0.7782f, 0.8589f, 0.8895f },
+                },
+            },
+            {
+                {
+                    { 0.6929f, 0.7672f, 0.8503f, 0.9383f, 0.9355f },
+                    { 0.6554f, 0.7243f, 0.7988f, 0.9097f, 0.9122f },
+                    { 0.6359f, 0.6880f, 0.7374f, 0.8587f, 0.8874f },
+                },
+                {
+                    { 0.6730f, 0.7535f, 0.8612f, 0.9429f, 0.9393f },
+                    { 0.6643f, 0.7087f, 0.8057f, 0.9129f, 0.9152f },
+                    { 0.6424f, 0.6714f, 0.7379f, 0.8619f, 0.8870f },
+                },
+                {
+                    { 0.7592f, 0.8012f, 0.8841f, 0.9491f, 0.9431f },
+                    { 0.7506f, 0.7630f, 0.8376f, 0.9191f, 0.9191f },
+                    { 0.7303f, 0.7271f, 0.7812f, 0.8677f, 0.8907f },
+                },
+            },
+        },
+        {
+            {
+                {
+                    { 0.2889f, 0.2749f, 0.2820f, 0.3629f, 0.4409f },
+                    { 0.4049f, 0.5004f, 0.6180f, 0.6488f, 0.6829f },
+                    { 0.5752f, 0.6331f, 0.7645f, 0.8521f, 0.9251f },
+                },
+                {
+                    { 0.3000f, 0.2788f, 0.2576f, 0.3283f, 0.4351f },
+                    { 0.4012f, 0.4458f, 0.5765f, 0.6361f, 0.6804f },
+                    { 0.6390f, 0.5770f, 0.7001f, 0.8053f, 0.9140f },
+                },
+                {
+                    { 0.3106f, 0.2821f, 0.2588f, 0.3158f, 0.4327f },
+                    { 0.4196f, 0.4315f, 0.5606f, 0.6316f, 0.6795f },
+                    { 0.6717f, 0.5652f, 0.6798f, 0.7875f, 0.9093f },
+                },
+            },
+            {
+                {
+                    { 0.1503f, 0.1673f, 0.2431f, 0.3886f, 0.4515f },
+                    { 0.2802f, 0.4798f, 0.6479f, 0.6803f, 0.6930f },
+                    { 0.5909f, 0.7645f, 0.9809f, 1.0082f, 0.9890f },
+                },
+                {
+                    { 0.1369f, 0.1546f, 0.2036f, 0.3519f, 0.4505f },
+                    { 0.2614f, 0.3574f, 0.6151f, 0.6798f, 0.6928f },
+                    { 0.6231f, 0.6117f, 0.9165f, 1.0026f, 0.9893f },
+                },
+                {
+                    { 0.1361f, 0.1589f, 0.2047f, 0.3334f, 0.4505f },
+                    { 0.2541f, 0.3256f, 0.5978f, 0.6795f, 0.6927f },
+                    { 0.6973f, 0.5778f, 0.8838f, 0.9970f, 0.9891f },
+                },
+            },
+            {
+                {
+                    { 0.1074f, 0.1287f, 0.2573f, 0.4024f, 0.4615f },
+                    { 0.2475f, 0.5542f, 0.6687f, 0.6926f, 0.6942f },
+                    { 0.7131f, 0.9852f, 1.0867f, 1.0686f, 1.0321f },
+                },
+                {
+                    { 0.1110f, 0.1350f, 0.1893f, 0.3824f, 0.4619f },
+                    { 0.1851f, 0.3687f, 0.6552f, 0.6941f, 0.6944f },
+                    { 0.6113f, 0.7655f, 1.0756f, 1.0713f, 1.0369f },
+                },
+                {
+                    { 0.1006f, 0.1395f, 0.1883f, 0.3702f, 0.4623f },
+                    { 0.1680f, 0.3163f, 0.6420f, 0.6947f, 0.6943f },
+                    { 0.7029f, 0.6930f, 1.0639f, 1.0707f, 1.0376f },
+                },
+            },
+            {
+                {
+                    { 0.0991f, 0.1265f, 0.2817f, 0.4083f, 0.4636f },
+                    { 0.2270f, 0.6181f, 0.6723f, 0.6986f, 0.6942f },
+                    { 0.8889f, 1.1004f, 1.1157f, 1.1005f, 1.0517f },
+                },
+                {
+                    { 0.0962f, 0.1242f, 0.1901f, 0.3976f, 0.4640f },
+                    { 0.1241f, 0.4147f, 0.6697f, 0.7013f, 0.6945f },
+                    { 0.6202f, 0.9584f, 1.1188f, 1.1039f, 1.0587f },
+                },
+                {
+                    { 0.0810f, 0.1268f, 0.1857f, 0.3914f, 0.4646f },
+                    { 0.1192f, 0.3380f, 0.6608f, 0.7023f, 0.6944f },
+                    { 0.7447f, 0.8693f, 1.1170f, 1.1025f, 1.0610f },
+                },
+            },
+        },
+        {
+        {
+            {
+                { 0.1424f, 0.1395f, 0.2716f, 0.2631f, 0.2526f },
+                { 0.4120f, 0.3966f, 0.7425f, 0.7223f, 0.6912f },
+                { 0.1341f, 0.1379f, 0.1567f, 0.1471f, 0.1375f },
+            },
+            {
+                { 0.1494f, 0.1455f, 0.2684f, 0.2615f, 0.2525f },
+                { 0.4081f, 0.3988f, 0.7406f, 0.7216f, 0.6911f },
+                { 0.1556f, 0.1299f, 0.1433f, 0.1443f, 0.1374f },
+            },
+            {
+                { 0.1638f, 0.1552f, 0.2606f, 0.2574f, 0.2523f },
+                { 0.4059f, 0.4048f, 0.7354f, 0.7196f, 0.6910f },
+                { 0.3568f, 0.1500f, 0.1113f, 0.1323f, 0.1364f },
+            },
+        },
+        {
+            {
+                { 0.0583f, 0.1563f, 0.3231f, 0.3044f, 0.2914f },
+                { 0.3040f, 0.6412f, 0.7724f, 0.7318f, 0.6905f },
+                { 0.1414f, 0.2057f, 0.2202f, 0.2129f, 0.2063f },
+            },
+            {
+                { 0.0607f, 0.1495f, 0.3234f, 0.3046f, 0.2912f },
+                { 0.3027f, 0.6382f, 0.7720f, 0.7316f, 0.6905f },
+                { 0.0954f, 0.1487f, 0.2079f, 0.2118f, 0.2061f },
+            },
+            {
+                { 0.0627f, 0.1281f, 0.3242f, 0.3053f, 0.2909f },
+                { 0.3145f, 0.6299f, 0.7710f, 0.7311f, 0.6904f },
+                { 0.2349f, 0.0529f, 0.1284f, 0.2077f, 0.2060f },
+            },
+        },
+        {
+            {
+                { 0.0548f, 0.2485f, 0.3375f, 0.3183f, 0.3057f },
+                { 0.3577f, 0.7772f, 0.7789f, 0.7354f, 0.6907f },
+                { 0.2215f, 0.2767f, 0.2547f, 0.2427f, 0.2317f },
+            },
+            {
+                { 0.0545f, 0.2288f, 0.3387f, 0.3186f, 0.3056f },
+                { 0.3699f, 0.7763f, 0.7786f, 0.7352f, 0.6906f },
+                { 0.1199f, 0.2278f, 0.2527f, 0.2423f, 0.2340f },
+            },
+            {
+                { 0.0508f, 0.1843f, 0.3418f, 0.3197f, 0.3056f },
+                { 0.3915f, 0.7734f, 0.7779f, 0.7348f, 0.6906f },
+                { 0.1420f, 0.0367f, 0.2033f, 0.2421f, 0.2339f },
+            },
+        },
+        {
+            {
+                { 0.0661f, 0.3335f, 0.3427f, 0.3280f, 0.3143f },
+                { 0.4671f, 0.8044f, 0.7793f, 0.7354f, 0.6906f },
+                { 0.2555f, 0.3153f, 0.2712f, 0.2536f, 0.2439f },
+            },
+            {
+                { 0.0574f, 0.3135f, 0.3436f, 0.3296f, 0.3144f },
+                { 0.4894f, 0.8045f, 0.7791f, 0.7352f, 0.6906f },
+                { 0.1760f, 0.2814f, 0.2724f, 0.2557f, 0.2436f },
+            },
+            {
+                { 0.0516f, 0.2574f, 0.3501f, 0.3318f, 0.3144f },
+                { 0.5188f, 0.8044f, 0.7785f, 0.7348f, 0.6905f },
+                { 0.1110f, 0.0351f, 0.2553f, 0.2557f, 0.2456f },
+            },
+        },
+        },
+    };
+
+    auto interpDrive = [d] (const float (&v)[5]) noexcept
+    {
+        return detail::interpDrive5 (d, v[0], v[1], v[2], v[3], v[4]);
+    };
+
+    float charTrim[3];
+    for (int charIndex = 0; charIndex < 3; ++charIndex)
+    {
+        const float trimType0 = interpDrive (trims[modelIndex][seriesIndex][charIndex][0]);
+        const float trimType1 = interpDrive (trims[modelIndex][seriesIndex][charIndex][1]);
+        const float trimType2 = interpDrive (trims[modelIndex][seriesIndex][charIndex][2]);
+        charTrim[charIndex] = detail::morphThreeWay (m, trimType0, trimType1, trimType2);
+    }
+
+    return detail::morphThreeWay (g, charTrim[0], charTrim[1], charTrim[2]);
+}
+
 
 inline float getBroadbandDriveReferenceTrim (Model model, float drive) noexcept
 {
@@ -2707,16 +3431,16 @@ inline float getBroadbandDriveReferenceTrim (Model model, float drive) noexcept
     switch (model)
     {
         case Model::Tape:
-            return detail::interpDrive5 (d, 0.8309f, 0.7647f, 0.7221f, 0.6554f, 0.7037f);
+            return detail::interpDrive5 (d, 0.8794f, 0.6841f, 0.5592f, 0.5027f, 0.5375f);
 
         case Model::Tube:
-            return detail::interpDrive5 (d, 1.0083f, 1.0549f, 1.0550f, 0.9551f, 0.6525f);
+            return detail::interpDrive5 (d, 0.8907f, 0.9079f, 0.7788f, 0.7045f, 0.4813f);
 
         case Model::Transistor:
-            return detail::interpDrive5 (d, 1.1173f, 0.9350f, 0.6909f, 0.5999f, 0.6226f);
+            return detail::interpDrive5 (d, 0.9118f, 0.7075f, 0.5081f, 0.4440f, 0.4627f);
 
         case Model::Diode:
-            return detail::interpDrive5 (d, 1.5604f, 1.2751f, 0.8984f, 0.7366f, 0.6625f);
+            return detail::interpDrive5 (d, 1.0612f, 0.8826f, 0.6549f, 0.5420f, 0.4897f);
 
         default:
             return 1.0f;
@@ -3074,10 +3798,10 @@ inline float applyTapeGirth (float shaped, float girth) noexcept
 {
     if (girth < 0.01f) return shaped;
 
-    const float girthCurve = girth * girth;
-    const float density = detail::fastTanh (shaped * (1.0f + girth * 1.2f));
+    const float girthCurve = 1.0f - std::pow (1.0f - detail::clampF (girth, 0.0f, 1.0f), 1.35f);
+    const float density = detail::fastTanh (shaped * (1.0f + girth * 1.55f));
     const float body = shaped + shaped * (1.0f - std::min (1.0f, std::abs (shaped)))
-                                 * girth * 0.12f;
+                                 * girth * 0.18f;
     const float tapeLike = density * 0.82f + body * 0.18f;
     return juce::jmap (girthCurve, shaped, tapeLike);
 }
@@ -3088,13 +3812,13 @@ inline float applyTriodeGirth (float shaped, float girth) noexcept
 
     const float g = detail::clampF (girth, 0.0f, 1.0f);
     const float g2 = g * g;
-    const float density = detail::fastTanh (shaped * (1.0f + g * 0.50f));
+    const float density = detail::fastTanh (shaped * (1.0f + g * 0.70f));
     const float body = shaped + shaped * (1.0f - std::min (1.0f, std::abs (shaped)))
-                                 * (0.035f + g * 0.045f);
-    const float oddDensity = shaped + shaped * std::abs (shaped) * (0.010f + g * 0.028f);
+                                 * (0.045f + g * 0.065f);
+    const float oddDensity = shaped + shaped * std::abs (shaped) * (0.016f + g * 0.045f);
     const float thick = density * 0.70f + body * 0.18f + oddDensity * 0.12f;
-    const float out = juce::jmap (g2 * 0.60f, shaped, thick);
-    return out * (1.0f - g2 * 0.08f);
+    const float out = juce::jmap (g2 * 0.82f, shaped, thick);
+    return out * (1.0f - g2 * 0.10f);
 }
 
 inline float applyTriodePreGirth (float x, float girth, float drive) noexcept
@@ -3161,24 +3885,22 @@ inline float preEmphasize (float x, EmphasisState& st, Model model,
                              + edge * (0.004f + drive * 0.012f);
             return juce::jmap (u, hard, open);
         }
-        case Model::Clipper:
+        case Model::OverdriveA:
+        {
+            // OVERDRIVE A keeps the TS808 analysis contract: no TYPE-driven
+            // pre-emphasis morph. TYPE is reserved for diode smoothing inside
+            // the TS feedback core.
+            return x;
+        }
+        case Model::OverdriveB:
         {
             st.preHP += (x - st.preHP) * ec.preHP;
             const float hp = x - st.preHP;
             st.preSh += (hp - st.preSh) * ec.preSh;
             const float edge = hp - st.preSh;
-            const float voice = detail::clampF (mod, 0.0f, 1.0f);
-            const float ts = hp + edge * (0.050f + drive * 0.080f);
-            if (voice <= 0.5f)
-            {
-                const float t = detail::smoothStep01 (voice * 2.0f);
-                return juce::jmap (t, x, ts);
-            }
-            const float u = detail::smoothStep01 ((voice - 0.5f) * 2.0f);
             const float lowRetain = 0.74f + drive * 0.20f;
-            const float klon = juce::jmap (lowRetain, x, hp)
-                             + edge * (0.0008f + drive * 0.0014f);
-            return juce::jmap (u, ts, klon);
+            return juce::jmap (lowRetain, x, hp)
+                 + edge * (0.0008f + drive * 0.0014f);
         }
         case Model::Tape:
         {
@@ -3235,21 +3957,16 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
                              + bright * (0.026f + (1.0f - drive) * 0.018f);
             return juce::jmap (u, hard, open);
         }
-        case Model::Clipper:
+        case Model::OverdriveA:
+        {
+            return y;
+        }
+        case Model::OverdriveB:
         {
             st.postLP += (y - st.postLP) * ec.postLP;
-            const float voice = detail::clampF (mod, 0.0f, 1.0f);
-            const float ts = y + (st.postLP - y) * (0.22f + drive * 0.36f);
-            if (voice <= 0.5f)
-            {
-                const float t = detail::smoothStep01 (voice * 2.0f);
-                return juce::jmap (t, y, ts);
-            }
-            const float u = detail::smoothStep01 ((voice - 0.5f) * 2.0f);
             const float klonBase = y + (st.postLP - y) * (0.42f + drive * 0.45f);
             const float bright = y - st.postLP;
-            const float klon = klonBase + bright * ((1.0f - drive) * 0.002f);
-            return juce::jmap (u, ts, klon);
+            return klonBase + bright * ((1.0f - drive) * 0.002f);
         }
         case Model::Tape:
         {
@@ -3268,6 +3985,14 @@ inline float deEmphasize (float y, EmphasisState& st, Model model,
     }
 }
 
+inline bool hasExtendedDriveRange (Model model) noexcept
+{
+    return model == Model::Tape
+        || model == Model::Tube
+        || model == Model::Transistor
+        || model == Model::Diode;
+}
+
 inline float applyDriveCurve (float driveParam, Model model) noexcept
 {
     float exp;
@@ -3276,11 +4001,22 @@ inline float applyDriveCurve (float driveParam, Model model) noexcept
         case Model::Tube:        exp = 1.85f; break;
         case Model::Transistor:  exp = 0.62f; break;
         case Model::Diode:       exp = 1.3f; break;
-        case Model::Clipper:     exp = 1.0f; break;
+        case Model::OverdriveA:
+        case Model::OverdriveB:
+        case Model::Clipper:    exp = 1.0f; break;
         case Model::Tape:        exp = 1.0f; break;
         default:                 exp = 1.5f; break;
     }
     return std::pow (driveParam, exp);
+}
+
+inline float mapDriveParamToEffective (float driveParam, Model model) noexcept
+{
+    const float scaled = detail::clampF (driveParam, 0.0f, 1.0f)
+                       * (hasExtendedDriveRange (model) ? 2.0f : 1.0f);
+    const float base = applyDriveCurve (detail::clampF (scaled, 0.0f, 1.0f), model);
+    const float extra = std::max (0.0f, scaled - 1.0f);
+    return base + extra;
 }
 
 struct SafetyLPFCoeffs { float b0=0, b1=0, b2=0, a1=0, a2=0; };
@@ -3307,6 +4043,8 @@ inline float processTriode (float x, float drive, float girth, float bias, float
 {
     const int sp = state.currentSeriesPass;
     const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float driveOver = std::max (0.0f, drive - 1.0f);
+    const float driveExtraGain = 1.0f + driveOver;
     const float g = detail::clampF (girth, 0.0f, 1.0f);
     const float m = detail::clampF (mod,   0.0f, 1.0f);
     const float b = detail::clampF (bias, -1.0f, 1.0f);
@@ -3317,15 +4055,19 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     auto& bodyPostLp = state.triodeBodyPostLP[sp][ch];
     const float sagInput = x;
     float xStage = x;
-    float bEff = b;
+    // Treat BIAS as the tube operating-point control. Keep the full UI range
+    // useful instead of hard-clamping by ~33%, otherwise the polarity extremes
+    // stop behaving like mirrored bias points.
+    const float bEff = detail::clampF (b * 1.25f, -1.0f, 1.0f);
     float bodyControl = g;
     constexpr float bodyUpperPivot = 2.0f / 3.0f;
     if (bodyControl > bodyUpperPivot)
     {
         const float t = (bodyControl - bodyUpperPivot) / (1.0f - bodyUpperPivot);
-        bodyControl = bodyUpperPivot + (1.0f - bodyUpperPivot) * std::pow (t, 2.0f);
+        bodyControl = bodyUpperPivot + (1.0f - bodyUpperPivot) * std::pow (t, 1.55f);
     }
-    const float bodyCurve = 1.0f - std::pow (1.0f - bodyControl, 1.55f);
+    const float bodyCurve = 1.0f - std::pow (1.0f - bodyControl, 1.80f);
+    const float bodyImpact = 1.0f + bodyCurve * 0.78f;
 
     {
         const float bodyPreHz12AX7 = 210.0f - d * 45.0f;
@@ -3336,7 +4078,8 @@ inline float processTriode (float x, float drive, float girth, float bias, float
 
         const float lfFeedAmt12AX7 = 0.08f + d * 0.10f;
         const float lfFeedAmtPower = 0.06f + d * 0.08f;
-        const float lfFeedAmt = juce::jmap (tubeMorph, lfFeedAmt12AX7, lfFeedAmtPower);
+        const float lfFeedAmt = juce::jmap (tubeMorph, lfFeedAmt12AX7, lfFeedAmtPower)
+                              * bodyImpact;
         xStage += bodyPreLp * bodyCurve * lfFeedAmt;
     }
 
@@ -3377,10 +4120,10 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     // overheats the repeated series stages and buries sag, because later
     // passes hit the same hard ceiling even at drive=0.
     const float inputPad12AX7 = detail::interpDrive5 (d,
-                                                      0.42f, 0.52f, 0.66f, 0.82f, 2.00f);
+                                                      0.42f, 0.54f, 0.72f, 1.02f, 2.95f);
     const float inputPadPower = detail::interpDrive5 (d,
-                                                      0.48f, 0.58f, 0.72f, 0.90f, 2.16f);
-    const float inputPad = juce::jmap (tubeMorph, inputPad12AX7, inputPadPower);
+                                                      0.48f, 0.61f, 0.79f, 1.10f, 3.10f);
+    const float inputPad = juce::jmap (tubeMorph, inputPad12AX7, inputPadPower) * driveExtraGain;
     xStage *= inputPad;
     const float sagAmt = triodeSag.lastSag;
     const float sagCore = detail::smoothStep01 (juce::jlimit (0.0f, 1.0f, sagAmt));
@@ -3426,27 +4169,30 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     // pre-distortion input waveform. If we only deform the input and then hit
     // the same hard ceiling, the effect becomes inaudible. Sag therefore also
     // tightens headroom and shifts the operating point of the Tube2ustyle core.
-    const float biasPos = std::max (0.0f, bEff);
-    const float biasNeg = std::max (0.0f, -bEff);
+    const float biasAbs = std::abs (bEff);
+    const float biasDrive = biasAbs * (0.62f + d * 0.38f);
     const float burnBiasShift = burnCore * (0.004f + tubeMorph * 0.006f);
-    const float stageBias12AX7 = bEff * 0.050f - sagCore * 0.095f
-                               - supplyCore * 0.040f - burnBiasShift;
-    const float stageBiasPower = bEff * 0.028f - sagCore * 0.072f
-                               - supplyCore * 0.055f - burnBiasShift * 1.25f;
-    const float stageBias = juce::jmap (tubeMorph, stageBias12AX7, stageBiasPower);
+    const float userStageBias12AX7 = bEff * (0.250f + d * 0.055f);
+    const float userStageBiasPower = bEff * (0.245f + d * 0.065f + tubeMorph * 0.030f);
+    const float sagStageBias12AX7 = -sagCore * 0.095f - supplyCore * 0.040f - burnBiasShift;
+    const float sagStageBiasPower = -sagCore * 0.072f - supplyCore * 0.055f - burnBiasShift * 1.25f;
+    const float userStageBias = juce::jmap (tubeMorph, userStageBias12AX7, userStageBiasPower);
+    const float stageBias = userStageBias + juce::jmap (tubeMorph, sagStageBias12AX7, sagStageBiasPower);
+
     const float cathodeDepth12AX7 = bodyCurve * (0.040f + d * 0.050f);
     const float cathodeDepthPower = bodyCurve * (0.026f + d * 0.032f);
-    const float cathodeDepth = juce::jmap (tubeMorph, cathodeDepth12AX7, cathodeDepthPower);
+    const float cathodeDepth = juce::jmap (tubeMorph, cathodeDepth12AX7, cathodeDepthPower)
+                             * (1.0f + bodyCurve * 0.32f);
     const float bloomHeadroomRecovery = bloomRecoveryCore * (0.066f + tubeMorph * 0.154f);
 
     const float headroom12AX7 = juce::jlimit (0.54f, 1.0f,
                                               1.0f - sagCore * 0.40f
                                                     - supplyCore * 0.16f
-                                                    - biasPos * 0.05f + biasNeg * 0.02f);
+                                                    - biasAbs * 0.075f);
     const float headroomPower = juce::jlimit (0.58f, 1.08f,
                                               1.04f - sagCore * 0.28f
                                                      - supplyCore * 0.18f
-                                                     - biasPos * 0.08f + biasNeg * 0.05f);
+                                                     - biasAbs * 0.105f);
     const float stageHeadroomBase = juce::jlimit (
         0.52f, 1.08f,
         juce::jmap (tubeMorph, headroom12AX7, headroomPower) + bloomHeadroomRecovery);
@@ -3457,6 +4203,8 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     s += stageBias;
     s = detail::clampF (s, -stageHeadroom, stageHeadroom);
     s /= stageHeadroom;
+    const float userBiasReference = detail::clampF (userStageBias / stageHeadroom, -1.0f, 1.0f);
+
 
     const float iterations12AX7 = 1.0f - d;
     const float iterationsPower = juce::jlimit (0.0f, 1.0f, 1.0f - d * 0.82f);
@@ -3468,20 +4216,37 @@ inline float processTriode (float x, float drive, float girth, float bias, float
     const float gainScaling = 1.0f / (float) (powerFactor + 1);
 
     // First Tube2 asymmetry section.
-    const float asymAmt12AX7 = 0.25f + sagCore * 0.36f + biasPos * 0.08f;
-    const float asymAmtPower = 0.14f + sagCore * 0.20f + biasNeg * 0.06f;
+    const float asymAmt12AX7 = 0.25f + sagCore * 0.36f + biasDrive * 0.64f;
+    const float asymAmtPower = 0.18f + sagCore * 0.24f + biasDrive * 0.78f;
     const float asymAmt = juce::jmap (tubeMorph, asymAmt12AX7, asymAmtPower)
                         + juce::jmap (tubeMorph,
-                                      bodyCurve * (0.018f + d * 0.012f),
-                                      bodyCurve * (0.010f + d * 0.008f));
+                                      bodyCurve * (0.026f + d * 0.018f),
+                                      bodyCurve * (0.015f + d * 0.012f));
     s = detail::tube2AsymSection (s, asymPad, asymAmt);
     // Original Tube curve.
     s = detail::airwindowsTubeCurve (s, powerFactor);
+    if (biasAbs > 0.0001f)
+    {
+        float biasReference = detail::tube2AsymSection (userBiasReference, asymPad, asymAmt);
+        biasReference = detail::airwindowsTubeCurve (biasReference, powerFactor);
+
+        const auto addSignedEven = [bEff, d, tubeMorph] (float v) noexcept
+        {
+            const float signedEven = bEff * (v * v) / (0.85f + std::abs (v))
+                                   * (0.045f + d * 0.090f + tubeMorph * 0.075f);
+            return detail::clampF (v + signedEven, -1.24f, 1.24f);
+        };
+
+        s = addSignedEven (s);
+        biasReference = addSignedEven (biasReference);
+        s = detail::clampF (s - biasReference, -1.24f, 1.24f);
+    }
+
 
     if (tubeMorph > 0.001f)
     {
-        const float hotness = detail::clampF (0.55f + bEff * 0.35f, 0.0f, 1.0f);
-        const float idleBias = 0.010f + hotness * (0.012f + d * 0.010f);
+        const float hotness = detail::clampF (0.55f + biasAbs * 0.18f, 0.0f, 1.0f);
+        const float idleBias = bEff * (0.010f + hotness * (0.012f + d * 0.010f));
         const float crossover = 0.010f + (1.0f - hotness) * (0.012f + d * 0.008f);
         const float bloomPower = juce::jlimit (0.0f, 1.0f,
                                                bloomRecoveryCore * (0.65f + tubeMorph * 1.05f));
@@ -3498,21 +4263,53 @@ inline float processTriode (float x, float drive, float girth, float bias, float
         const float powerGain = (1.0f + d * (0.70f + tubeMorph * 0.55f))
                               * supplyPowerLoss * powerBloomLift * burnPowerMod;
 
-        const float posV = s * powerGain + idleBias;
-        const float negV = -s * powerGain + idleBias;
-        const float posC = detail::smoothRect (posV, crossover);
-        const float negC = detail::smoothRect (negV, crossover);
+        const auto makePowerShape = [powerGain, idleBias, crossover, bEff, d, tubeMorph, hotness] (float v) noexcept
+        {
+            const float posV = v * powerGain + idleBias;
+            const float negV = -v * powerGain + idleBias;
+            const float posC = detail::smoothRect (posV, crossover);
+            const float negC = detail::smoothRect (negV, crossover);
 
-        float powerShape = posC - negC;
-        powerShape += s * std::abs (s) * (0.010f + tubeMorph * 0.035f);
-        powerShape = detail::clampF (powerShape * (0.92f + hotness * 0.08f), -1.20f, 1.20f);
+            float y = posC - negC;
+            y += bEff * (v * v) * (0.060f + d * 0.115f + tubeMorph * 0.045f);
+            y += v * std::abs (v) * (0.010f + tubeMorph * 0.035f);
+            return detail::clampF (y * (0.92f + hotness * 0.08f), -1.20f, 1.20f);
+        };
+
+        float powerShape = makePowerShape (s);
+        if (biasAbs > 0.0001f)
+            powerShape = detail::clampF (powerShape - makePowerShape (0.0f), -1.20f, 1.20f);
+
+        // Local power-stage negative feedback. This belongs mostly to the
+        // power/tube side of TYPE: it trades some open-loop dirt for tighter
+        // damping and lower nonlinear residue, without making the 12AX7 end
+        // of the morph feel hi-fi or sterile.
+        const float nfbAmt = tubeMorph2 * (0.035f + d * 0.075f)
+                           * (1.0f - biasAbs * 0.10f)
+                           * (1.0f + react * 0.10f);
+        if (nfbAmt > 0.0001f)
+        {
+            const float forwardDelta = powerShape - s;
+            powerShape = detail::clampF (powerShape - forwardDelta * nfbAmt, -1.20f, 1.20f);
+        }
 
         const float satDrive = 1.0f + tubeMorph * (0.10f + 0.18f * d);
         const float satK = 0.85f + d * (0.55f + 0.25f * tubeMorph);
         const float satRaw = adaaState.process (powerShape * satDrive, satK);
         const float satNorm = detail::normalizeSmallSignal (satRaw, 0.0f, satK * satDrive);
-        const float powerMix = tubeMorph * (0.35f + 0.35f * d);
+        const float powerMix = tubeMorph * (0.35f + 0.35f * d) * (1.0f - nfbAmt * 0.16f);
         s = juce::jmap (powerMix, s, satNorm);
+    }
+
+    if (bodyCurve > 0.0001f)
+    {
+        const float grit = detail::smoothStep01 (bodyCurve);
+        const float absS = std::abs (s);
+        const float oddEdge = s * absS * grit * (0.020f + d * 0.060f + tubeMorph * 0.018f);
+        const float cubicEdge = s * s * s * grit * (0.006f + d * 0.026f);
+        const float evenEdge = bEff * (s * s) / (1.0f + absS)
+                           * grit * (0.055f + d * 0.135f + tubeMorph * 0.042f);
+        s = detail::clampF (s + oddEdge + cubicEdge + evenEdge, -1.30f, 1.30f);
     }
 
     {
@@ -3571,12 +4368,25 @@ inline float processTriode (float x, float drive, float girth, float bias, float
 
         const float depthAmt12AX7 = 0.055f + d * 0.040f;
         const float depthAmtPower = 0.070f + d * 0.045f;
-        const float depthAmt = juce::jmap (tubeMorph, depthAmt12AX7, depthAmtPower);
+        const float depthAmt = juce::jmap (tubeMorph, depthAmt12AX7, depthAmtPower)
+                             * (1.0f + bodyCurve * 0.28f);
         const float depth = bodyPostLp * bodyCurve * depthAmt;
         s = (s + depth) / (1.0f + bodyCurve * depthAmt * 0.35f);
     }
 
     s *= atrophyGain;
+
+    if (biasAbs > 0.0001f)
+    {
+        // Small residual even-order curvature only. The main bias behaviour is
+        // already generated by the operating-point shift and its zero reference;
+        // keeping this low avoids a second post-coupling bias stage.
+        const float signedCurve = bEff * (0.026f + d * 0.052f + tubeMorph * 0.022f);
+        const float evenCurve = (s * s) / (0.42f + std::abs (s));
+        s = detail::clampF (s + evenCurve * signedCurve, -1.34f, 1.34f);
+    }
+
+
 
     state.triodeBlock[sp][ch] = 0.0f;
     return s;
@@ -3591,60 +4401,34 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
                                      adaa::ClipperADAA& clipAdaa) noexcept
 {
     const int sp = state.currentSeriesPass;
-    auto& preHP = state.transistorPreHP[sp][ch];
-    auto& preEdge = state.transistorPreEdge[sp][ch];
-    auto& postLP = state.transistorPostLP[sp][ch];
     auto& compState = state.dynamicsComp[sp][ch];
     auto& peakCatchState = state.transistorPeakCatch[sp][ch];
     auto& coreAdaa = state.transistorCoreAdaa[sp][ch];
+    juce::ignoreUnused (rawMode);
 
     const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float driveOver = std::max (0.0f, drive - 1.0f);
+    const float driveExtraGain = 1.0f + driveOver;
     const float body = detail::clampF (girth, 0.0f, 1.0f);
     const float b = detail::clampF (bias, -1.0f, 1.0f);
-    const float type = detail::smoothStep01 (detail::clampF (mod, 0.0f, 1.0f));
-    const float bodyToneCurve = 1.0f - std::pow (1.0f - body, 1.85f);
-    const float bodyClipCurve = 1.0f - std::pow (1.0f - body, 1.10f);
+    const float type = detail::smoothStep01 (detail::clampF (0.5f + (mod - 0.5f) * 1.35f, 0.0f, 1.0f));
+    const float bodyToneCurve = 1.0f - std::pow (1.0f - body, 2.15f);
+    const float bodyClipCurve = 1.0f - std::pow (1.0f - body, 1.35f);
+    const float degenerationLift = bodyToneCurve * juce::jmap (type, 0.34f, 0.22f);
+    const float emitterGain = 1.0f + degenerationLift * (0.72f + d * 0.24f);
+    const float coreDegeneration = 1.0f - degenerationLift * (0.28f + d * 0.10f);
     auto trackDbg = [] (float& dst, float v) noexcept
     {
         dst = std::max (dst, std::abs (v));
     };
 
-    if (!rawMode)
-    {
-        const float hpHz = juce::jmap (type,
-                                       34.0f + bodyToneCurve * 18.0f,
-                                       22.0f + bodyToneCurve * 13.0f);
-        const float hpC = detail::onePoleCoeff (hpHz, sr);
-        preHP += (x - preHP) * hpC;
-        const float hp = x - preHP;
-
-        const float edgeHz = juce::jmap (type,
-                                         2100.0f + d * 1200.0f,
-                                         1200.0f + d * 650.0f);
-        const float edgeC = detail::onePoleCoeff (edgeHz, sr);
-        preEdge += (hp - preEdge) * edgeC;
-        const float edge = hp - preEdge;
-
-        const float lowRetain = juce::jmap (type,
-                                            0.12f + bodyToneCurve * 0.16f,
-                                            0.28f + bodyToneCurve * 0.20f);
-        const float edgeAmt = juce::jmap (type,
-                                          0.010f + d * 0.050f,
-                                          0.004f + d * 0.025f);
-        x = juce::jmap (lowRetain, x, hp) + edge * edgeAmt;
-    }
-    else
-    {
-        preHP = preEdge = postLP = 0.0f;
-    }
-
     const float inputPadBjt = detail::interpDrive5 (d,
                                                     0.14f, 0.30f, 0.68f, 1.32f, 5.50f)
-                            * juce::jmap (bodyToneCurve, 1.00f, 1.22f);
+                            * juce::jmap (bodyToneCurve, 1.00f, 1.22f) * emitterGain;
     const float inputPadFet = detail::interpDrive5 (d,
                                                     0.18f, 0.36f, 0.74f, 1.26f, 4.40f)
-                            * juce::jmap (bodyToneCurve, 1.00f, 1.14f);
-    const float inputPad = juce::jmap (type, inputPadBjt, inputPadFet);
+                            * juce::jmap (bodyToneCurve, 1.00f, 1.16f) * juce::jmap (type, emitterGain, 1.0f + degenerationLift * 0.42f);
+    const float inputPad = juce::jmap (type, inputPadBjt, inputPadFet) * driveExtraGain;
 
     if (react > 0.001f)
     {
@@ -3671,27 +4455,34 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
 
     const float headroomBjt = juce::jlimit (0.48f, 1.14f,
                                             1.10f - d * 0.60f
-                                                  - bodyClipCurve * 0.05f
-                                                  - juce::jmax (0.0f, b) * 0.11f
-                                                  + juce::jmax (0.0f, -b) * 0.05f);
+                                                  - bodyClipCurve * 0.085f
+                                                  - juce::jmax (0.0f, b) * 0.055f
+                                                  + juce::jmax (0.0f, -b) * 0.040f);
     const float headroomFet = juce::jlimit (0.50f, 1.16f,
                                             1.10f - d * 0.44f
-                                                  - bodyClipCurve * 0.035f
-                                                  - juce::jmax (0.0f, b) * 0.08f
-                                                  + juce::jmax (0.0f, -b) * 0.03f);
+                                                  - bodyClipCurve * 0.060f
+                                                  - juce::jmax (0.0f, b) * 0.040f
+                                                  + juce::jmax (0.0f, -b) * 0.026f);
     const float headroom = juce::jmap (type, headroomBjt, headroomFet);
 
-    const float opBias = juce::jmap (type, b * 0.16f, b * 0.10f);
+    const float requestedOpBias = juce::jmap (type, b * 0.34f, b * 0.28f);
+    const float biasLimit = headroom * juce::jmap (type, 0.44f, 0.36f) * (1.0f - d * 0.08f);
+    const float opBias = detail::clampF (requestedOpBias, -biasLimit, biasLimit);
+    const float biasNormScale = juce::jmax (1.0e-4f, juce::jmap (type, 0.34f, 0.28f));
+    const float bEff = detail::clampF (opBias / biasNormScale, -1.0f, 1.0f);
+    const float evenAmt = bEff * (0.090f + d * 0.155f + bodyClipCurve * 0.120f);
     const float oddAmt = juce::jmap (type,
-                                     0.018f + bodyClipCurve * 0.016f + d * 0.040f,
-                                    -0.006f - bodyClipCurve * 0.007f - d * 0.012f);
+                                     0.026f + bodyClipCurve * 0.032f + d * 0.052f,
+                                    -0.010f - bodyClipCurve * 0.014f - d * 0.018f) * coreDegeneration;
     const float cubicAmt = juce::jmap (type,
-                                       0.008f + d * 0.038f,
-                                       0.014f + d * 0.020f);
+                                       0.012f + bodyClipCurve * 0.012f + d * 0.052f,
+                                       0.020f + bodyClipCurve * 0.010f + d * 0.030f)
+                         * (1.0f + degenerationLift * juce::jmap (type, 0.48f, 0.24f));
 
-    auto applyCoreShape = [oddAmt, cubicAmt] (float v) noexcept
+    auto applyCoreShape = [oddAmt, cubicAmt, evenAmt] (float v) noexcept
     {
         return v
+             + v * v * evenAmt
              + v * std::abs (v) * oddAmt
              + v * v * v * cubicAmt;
     };
@@ -3705,32 +4496,43 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
     const float shifted = applyCoreShape (z);
     const float z0 = applyCoreShape (biasNorm);
     const float preDeriv0 = 1.0f
+                          + 2.0f * biasNorm * evenAmt
                           + 2.0f * std::abs (biasNorm) * oddAmt
                           + 3.0f * biasNorm * biasNorm * cubicAmt;
 
     const float satK = juce::jmap (type,
                                    0.98f + d * (2.24f + bodyClipCurve * 0.24f),
-                                   0.84f + d * (1.55f + bodyClipCurve * 0.14f));
+                                   0.84f + d * (1.55f + bodyClipCurve * 0.14f))
+                    * (1.0f + degenerationLift * juce::jmap (type, 0.26f, 0.12f));
     state.transistorDbgSatK[sp][ch] = satK;
     const float raw = coreAdaa.process (satK * shifted, 1.0f);
     const float raw0 = std::tanh (satK * z0);
     const float slopeRef = satK * (1.0f - raw0 * raw0);
     const float slope0 = std::max (1.0e-4f, slopeRef * preDeriv0 * (1.0f / headroom));
     float core = detail::normalizeSmallSignal (raw, raw0, slope0);
+    if (std::abs (bEff) > 0.0001f)
+    {
+        const float symAbs = std::pow (std::abs (bEff), 0.62f);
+        const float emitterAsym = juce::jmap (type, 1.08f, 0.70f);
+        const float coreEven = (core * core) / (0.36f + std::abs (core));
+        core += bEff * symAbs * coreEven
+             * (0.115f + d * 0.235f + bodyClipCurve * 0.150f)
+             * emitterAsym;
+    }
     trackDbg (state.transistorDbgCoreOut[sp][ch], core);
 
     const float railDrive = juce::jmap (type,
                                         1.02f + d * 1.02f,
                                         0.96f + d * 0.68f)
-                          * juce::jmap (bodyClipCurve, 1.00f, 1.025f);
+                          * juce::jmap (bodyClipCurve, 1.00f, 1.080f);
     const float posThresh = juce::jmap (type, 1.24f - d * 0.24f,
                                               1.34f - d * 0.14f)
-                          * (1.0f - juce::jmax (0.0f, b) * 0.18f
-                                   + juce::jmax (0.0f, -b) * 0.04f);
+                          * (1.0f - juce::jmax (0.0f, bEff) * 0.090f
+                                   + juce::jmax (0.0f, -bEff) * 0.030f);
     const float negThresh = juce::jmap (type, 1.16f - d * 0.22f,
                                               1.28f - d * 0.12f)
-                          * (1.0f - juce::jmax (0.0f, -b) * 0.18f
-                                   + juce::jmax (0.0f,  b) * 0.04f);
+                          * (1.0f - juce::jmax (0.0f, -bEff) * 0.090f
+                                   + juce::jmax (0.0f,  bEff) * 0.030f);
     const float kneeBase = juce::jmap (type,
                                        juce::jmap (bodyClipCurve, 0.24f, 0.17f),
                                        juce::jmap (bodyClipCurve, 0.30f, 0.22f));
@@ -3738,23 +4540,33 @@ inline float processTransistorStage (float x, float drive, float girth, float bi
     const float kneeNeg = std::max (1.0e-4f, kneeBase * juce::jmap (type, 0.95f, 1.08f) * (1.0f - d * 0.08f));
     state.transistorDbgRailThresh[sp][ch] = 0.5f * (posThresh + negThresh);
 
-    const float railIn = core * railDrive;
+    const float railSignal = core * railDrive;
+    const float railBias = bEff * (0.052f + d * 0.095f + bodyClipCurve * 0.074f)
+                         * juce::jmap (type, 1.00f, 0.66f);
+    const float railIn = railSignal + railBias;
     trackDbg (state.transistorDbgRailIn[sp][ch], railIn);
     float out = clipAdaa.process (railIn, posThresh, negThresh, kneePos, kneeNeg);
-    trackDbg (state.transistorDbgRailOut[sp][ch], out);
-
-    if (!rawMode)
+    if (std::abs (railBias) > 1.0e-6f)
     {
-        const float lpHz = juce::jmap (type,
-                                       9800.0f - d * 2600.0f,
-                                       6200.0f - d * 1700.0f);
-        const float lpC = detail::onePoleCoeff (detail::clampF (lpHz, 1800.0f, 12000.0f), sr);
-        postLP += (out - postLP) * lpC;
-        const float lpMix = juce::jmap (type,
-                                        0.03f + d * 0.08f,
-                                        0.08f + d * 0.12f);
-        out = out + (postLP - out) * lpMix;
+        constexpr float eps = 1.0e-3f;
+        const float railRaw0 = adaa::ClipperADAA::clip (railBias, posThresh, negThresh, kneePos, kneeNeg);
+        const float yp = adaa::ClipperADAA::clip (railBias + eps, posThresh, negThresh, kneePos, kneeNeg);
+        const float yn = adaa::ClipperADAA::clip (railBias - eps, posThresh, negThresh, kneePos, kneeNeg);
+        const float slope = (yp - yn) / (2.0f * eps);
+        const float slopeComp = juce::jlimit (0.72f, 1.35f, 1.0f / std::max (std::abs (slope), 0.55f));
+        out = (out - railRaw0) * slopeComp;
     }
+    if (std::abs (bEff) > 0.0001f)
+    {
+        const float symAbs = std::pow (std::abs (bEff), 0.62f);
+        const float transistorSymTone = juce::jmap (type, 1.16f, 0.78f);
+        const float evenWave = (out * out) / (0.30f + std::abs (out));
+        out += bEff * symAbs * evenWave
+             * (0.155f + d * 0.305f + bodyClipCurve * 0.170f)
+             * transistorSymTone;
+    }
+
+    trackDbg (state.transistorDbgRailOut[sp][ch], out);
 
     trackDbg (state.transistorDbgPost[sp][ch], out);
     return out;
@@ -3765,21 +4577,34 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
                                 adaa::ClipperADAA& adaaState) noexcept
 {
     const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float driveOver = std::max (0.0f, drive - 1.0f);
+    const float driveExtraGain = 1.0f + driveOver;
     const float c = detail::clampF (girth, 0.0f, 1.0f);
     const float s = detail::clampF (bias, -1.0f, 1.0f);
-    const float diodeSym = s * 2.0f;
-    const float t = detail::clampF (mod, 0.0f, 1.0f);
-    const float bridgeWork = detail::smoothStep01 (detail::clampF (reactColor * 1.75f, 0.0f, 1.0f));
+    const float symUser = detail::clampF (s, -1.0f, 1.0f);
+    const float biasSign = std::abs (s) > 0.015f ? (s > 0.0f ? 1.0f : -1.0f) : 0.0f;
+    const float t = detail::clampF (0.5f + (mod - 0.5f) * 1.32f, 0.0f, 1.0f);
+    const float harmonic = detail::smoothStep01 (c);
+    const float percolatorVoice = detail::smoothStep01 (detail::clampF ((t - 0.35f) / 0.65f, 0.0f, 1.0f));
+    const float bridgeWork = detail::smoothStep01 (detail::clampF (reactColor * 1.55f, 0.0f, 1.0f));
+    const float percolatorAmt = detail::clampF (
+        harmonic * (0.58f + 0.88f * percolatorVoice)
+            + bridgeWork * (0.22f + percolatorVoice * 0.40f + harmonic * 0.30f),
+        0.0f, 1.0f);
+    const float reactPolarity = biasSign * bridgeWork * (0.060f + d * 0.095f)
+                              * (0.45f + percolatorVoice * 0.55f);
+    const float percolatorIntrinsic = percolatorVoice * percolatorAmt * (0.055f + d * 0.045f);
+    const float topologyPolarity = reactPolarity + percolatorIntrinsic;
 
-    const float condCurve = 1.0f - std::pow (1.0f - c, 1.7f);
-    const float condDriveCurve = 1.0f - std::pow (1.0f - c, 1.35f);
-    const float condThreshold = juce::jmap (condCurve, 0.68f, 1.14f);
-    const float condKnee = juce::jmap (condCurve, 0.24f, 0.075f);
-    const float condDrive = juce::jmap (condDriveCurve, 1.00f, 1.12f);
+    const float condCurve = 1.0f - std::pow (1.0f - c, 2.00f);
+    const float condDriveCurve = 1.0f - std::pow (1.0f - c, 1.65f);
+    const float condThreshold = juce::jmap (condCurve, 0.68f, 1.18f);
+    const float condKnee = juce::jmap (condCurve, 0.25f, 0.055f);
+    const float condDrive = juce::jmap (condDriveCurve, 1.00f, 1.34f);
 
-    const float driveFb = detail::interpDrive5 (d, 1.00f, 1.45f, 2.80f, 5.80f, 19.00f);
-    const float driveHard = detail::interpDrive5 (d, 1.00f, 2.20f, 5.20f, 10.80f, 36.00f);
-    const float driveOpen = detail::interpDrive5 (d, 1.00f, 1.65f, 3.40f, 6.10f, 19.20f);
+    const float driveFb = detail::interpDrive5 (d, 1.00f, 1.45f, 2.80f, 5.80f, 19.00f) * driveExtraGain;
+    const float driveHard = detail::interpDrive5 (d, 1.00f, 2.20f, 5.20f, 10.80f, 36.00f) * driveExtraGain;
+    const float driveOpen = detail::interpDrive5 (d, 1.00f, 1.65f, 3.40f, 6.10f, 19.20f) * driveExtraGain;
 
     float driveGain = driveHard;
     float thresholdMul = 1.0f;
@@ -3788,6 +4613,7 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
     float voiceTrim = 1.0f;
     float symRange = 0.34f;
     float edgeShape = 0.0f;
+    float evenShape = 0.0f;
 
     if (t <= 0.5f)
     {
@@ -3797,8 +4623,9 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
         kneeMul = juce::jmap (u, 1.35f, 0.58f);
         cleanBlend = juce::jmap (u, 0.0f, 0.02f);
         voiceTrim = juce::jmap (u, 1.00f, 0.96f);
-        symRange = juce::jmap (u, 0.28f, 0.38f);
+        symRange = juce::jmap (u, 0.72f, 0.94f);
         edgeShape = juce::jmap (u, 0.10f, 0.03f);
+        evenShape = juce::jmap (u, 0.12f, 0.20f);
     }
     else
     {
@@ -3808,29 +4635,110 @@ inline float processDiodeStage (float x, float drive, float girth, float bias, f
         kneeMul = juce::jmap (u, 0.58f, 1.00f);
         cleanBlend = juce::jmap (u, 0.02f, 0.07f);
         voiceTrim = juce::jmap (u, 0.96f, 1.07f);
-        symRange = juce::jmap (u, 0.36f, 0.32f);
+        symRange = juce::jmap (u, 0.94f, 0.82f);
         edgeShape = juce::jmap (u, 0.03f, 0.06f);
+        evenShape = juce::jmap (u, 0.20f, 0.38f);
     }
 
-    thresholdMul *= 1.0f - bridgeWork * 0.065f;
-    kneeMul      *= 1.0f - bridgeWork * 0.045f;
+    thresholdMul *= 1.0f - bridgeWork * (0.085f + percolatorVoice * 0.040f);
+    kneeMul      *= 1.0f + bridgeWork * (0.30f + harmonic * 0.22f);
+    cleanBlend   *= 1.0f - bridgeWork * 0.45f;
+    evenShape    *= 1.0f + harmonic * 0.60f + bridgeWork * (1.60f + harmonic * 1.20f);
 
     const float threshold = condThreshold * thresholdMul;
     const float knee = std::max (1.0e-4f, condKnee * kneeMul);
 
-    const float thresholdPos = detail::clampF (threshold * (1.0f + diodeSym * symRange), 0.22f, 1.65f);
-    const float thresholdNeg = detail::clampF (threshold * (1.0f - diodeSym * symRange), 0.22f, 1.65f);
-    const float kneePos = std::max (1.0e-4f, knee * (1.0f - diodeSym * 0.18f));
-    const float kneeNeg = std::max (1.0e-4f, knee * (1.0f + diodeSym * 0.18f));
+    const float diodeMismatch = detail::clampF (symUser * symRange + topologyPolarity, -0.86f, 0.86f);
+    const float thresholdPos = detail::clampF (threshold * (1.0f + diodeMismatch), 0.20f, 1.72f);
+    const float thresholdNeg = detail::clampF (threshold * (1.0f - diodeMismatch), 0.20f, 1.72f);
+    const float kneeSkew = detail::clampF (symUser * (0.160f + percolatorVoice * 0.075f), -0.26f, 0.26f);
+    const float kneePos = std::max (1.0e-4f, knee * (1.0f - kneeSkew));
+    const float kneeNeg = std::max (1.0e-4f, knee * (1.0f + kneeSkew));
 
     float clipIn = x * driveGain * condDrive;
+    clipIn *= 1.0f + bridgeWork * (0.12f + d * 0.22f);
     clipIn += x * std::abs (x) * edgeShape;
+    const float evenPolarity = detail::clampF (symUser + topologyPolarity, -1.0f, 1.0f);
+    const float evenIn = (clipIn * clipIn) / (1.0f + std::abs (clipIn));
+    const float pairImbalance = detail::clampF (
+        symUser * (0.42f + d * 0.62f + harmonic * 0.20f)
+      + topologyPolarity * (0.48f + harmonic * 0.22f),
+        -0.82f, 0.82f);
+    clipIn += evenPolarity * evenIn * evenShape * (0.18f + percolatorAmt)
+            + pairImbalance * evenIn * (0.48f + percolatorVoice * 0.42f);
 
-    float clipped = adaaState.process (clipIn, thresholdPos, thresholdNeg,
+    // SYM must bend diode conduction before the ADAA clipper, not only change
+    // post level. Keep the neutral point bit-identical: explicitSym is zero at
+    // SYM=0 and the branch is skipped.
+    const float explicitSymPre = std::pow (std::abs (symUser), 0.58f);
+    if (explicitSymPre > 1.0e-5f)
+    {
+        const float clipAbs = std::abs (clipIn);
+        const float bendFocus = detail::smoothStep01 (
+            clipAbs / (threshold * (0.72f + percolatorVoice * 0.22f) + 1.0e-4f));
+        const float clipPolarity = clipIn >= 0.0f ? 1.0f : -1.0f;
+        const float bendAmt = symUser * explicitSymPre
+                            * (0.22f + d * 0.42f + harmonic * 0.18f + bridgeWork * 0.10f)
+                            * juce::jmap (percolatorVoice, 1.12f, 0.96f);
+        const float bendGain = juce::jlimit (0.42f, 1.76f,
+                                             1.0f + bendAmt * clipPolarity * (0.28f + bendFocus * 0.72f));
+        clipIn *= bendGain;
+
+        const float bentEven = (clipIn * clipIn) / (1.0f + std::abs (clipIn));
+        clipIn += symUser * explicitSymPre * bentEven
+                * (0.085f + d * 0.185f + harmonic * 0.080f)
+                * juce::jmap (percolatorVoice, 1.06f, 0.88f);
+    }
+
+    const float diodeBiasOffset = symUser * (0.070f + d * 0.150f + harmonic * 0.060f + percolatorAmt * 0.075f)
+                                * (1.0f + bridgeWork * 0.18f);
+    float clipped = adaaState.process (clipIn + diodeBiasOffset, thresholdPos, thresholdNeg,
                                        kneePos, kneeNeg);
+    if (std::abs (diodeBiasOffset) > 1.0e-6f)
+    {
+        constexpr float eps = 1.0e-3f;
+        const float raw0 = adaa::ClipperADAA::clip (diodeBiasOffset, thresholdPos, thresholdNeg, kneePos, kneeNeg);
+        const float yp = adaa::ClipperADAA::clip (diodeBiasOffset + eps, thresholdPos, thresholdNeg, kneePos, kneeNeg);
+        const float yn = adaa::ClipperADAA::clip (diodeBiasOffset - eps, thresholdPos, thresholdNeg, kneePos, kneeNeg);
+        const float slope = (yp - yn) / (2.0f * eps);
+        const float slopeComp = juce::jlimit (0.72f, 1.38f, 1.0f / std::max (std::abs (slope), 0.52f));
+        clipped = (clipped - raw0) * slopeComp;
+    }
 
-    const float outputScale = 2.0f / (thresholdPos + thresholdNeg);
+    const float outputScale = (2.0f / (thresholdPos + thresholdNeg))
+                            * (1.0f + std::abs (evenPolarity) * percolatorAmt * 0.06f);
     clipped *= outputScale;
+    const float postEven = (clipped * clipped) / (1.0f + std::abs (clipped));
+
+    // SYM is modelled as diode-pair threshold/conduction mismatch before ADAA.
+    // This post-even term restores visible waveform bending after zero-reference
+    // compensation, without turning the control into plain output DC.
+    const float explicitSym = std::pow (std::abs (symUser), 0.62f);
+    const float topologySym = juce::jmap (percolatorVoice, 1.0f, 0.72f);
+    clipped += evenPolarity * postEven * explicitSym * topologySym
+             * (0.200f + d * 0.315f + harmonic * 0.110f + bridgeWork * 0.085f);
+    clipped += evenPolarity * postEven * percolatorAmt
+             * (0.100f + d * 0.180f + harmonic * 0.060f + bridgeWork * (0.070f + harmonic * 0.105f));
+
+    // At the open/percolator end, SYM should feel like one diode branch reaching
+    // conduction earlier and bending that half-cycle, not like simple level tilt.
+    const float openFoldAmt = percolatorVoice * explicitSym
+                            * (0.22f + d * 0.46f + harmonic * 0.18f + bridgeWork * 0.12f);
+    if (openFoldAmt > 0.0001f)
+    {
+        const float foldPolarity = evenPolarity >= 0.0f ? 1.0f : -1.0f;
+        const float selectedHalf = clipped * foldPolarity;
+        const float foldKnee = juce::jmap (d, 0.82f, 0.48f)
+                            * juce::jmap (harmonic, 1.06f, 0.88f);
+        if (selectedHalf > foldKnee)
+        {
+            const float over = selectedHalf - foldKnee;
+            const float foldedHalf = foldKnee
+                                   + over * (1.0f - openFoldAmt * 1.20f)
+                                   - (over * over) * openFoldAmt / (0.30f + over);
+            clipped = foldPolarity * foldedHalf;
+        }
+    }
 
     if (cleanBlend > 0.0001f)
     {
@@ -3875,7 +4783,7 @@ inline void updateKlonPeakEqCoeffs (KlonBiquadState& st, float sr,
                                     float freqHz, float q, float gainDb) noexcept
 {
     const float safeSr = std::max (sr, 1000.0f);
-    const float f0 = detail::clampF (freqHz, 20.0f, safeSr * 0.45f);
+    const float f0 = detail::clampF (freqHz, 5.0f, safeSr * 0.45f);
     const float safeQ = std::max (q, 0.025f);
     const float w0 = kTwoPi * f0 / safeSr;
     const float cosW = std::cos (w0);
@@ -3905,7 +4813,7 @@ inline void updateKlonShelfEqCoeffs (KlonBiquadState& st, float sr,
                                      float freqHz, float q, float gainDb, bool highShelf) noexcept
 {
     const float safeSr = std::max (sr, 1000.0f);
-    const float f0 = detail::clampF (freqHz, 20.0f, safeSr * 0.45f);
+    const float f0 = detail::clampF (freqHz, 5.0f, safeSr * 0.45f);
     const float safeQ = std::max (q, 0.025f);
     const float w0 = kTwoPi * f0 / safeSr;
     const float cosW = std::cos (w0);
@@ -3994,6 +4902,42 @@ inline float processKlonLowPassEq (float x, KlonBiquadState& st, float sr,
     return processCachedKlonBiquad (x, st);
 }
 
+inline void updateKlonHighPassEqCoeffs (KlonBiquadState& st, float sr,
+                                        float freqHz, float q) noexcept
+{
+    const float safeSr = std::max (sr, 1000.0f);
+    const float f0 = detail::clampF (freqHz, 20.0f, safeSr * 0.45f);
+    const float safeQ = std::max (q, 0.025f);
+    const float w0 = kTwoPi * f0 / safeSr;
+    const float cosW = std::cos (w0);
+    const float sinW = std::sin (w0);
+    const float alpha = sinW / (2.0f * safeQ);
+
+    float b0 = (1.0f + cosW) * 0.5f;
+    float b1 = -(1.0f + cosW);
+    float b2 = (1.0f + cosW) * 0.5f;
+    float a0 = 1.0f + alpha;
+    float a1 = -2.0f * cosW;
+    float a2 = 1.0f - alpha;
+
+    const float invA0 = 1.0f / std::max (a0, 1.0e-12f);
+    st.b0 = b0 * invA0;
+    st.b1 = b1 * invA0;
+    st.b2 = b2 * invA0;
+    st.a1 = a1 * invA0;
+    st.a2 = a2 * invA0;
+    cacheKlonBiquad (st, 4, sr, freqHz, q, 0.0f, false);
+}
+
+inline float processKlonHighPassEq (float x, KlonBiquadState& st, float sr,
+                                    float freqHz, float q) noexcept
+{
+    if (klonBiquadNeedsUpdate (st, 4, sr, freqHz, q, 0.0f, false))
+        updateKlonHighPassEqCoeffs (st, sr, freqHz, q);
+
+    return processCachedKlonBiquad (x, st);
+}
+
 inline bool klonFixedBiquadNeedsUpdate (const KlonBiquadState& st, int type, float sr) noexcept
 {
     return st.cachedType != type || st.cachedSr != sr;
@@ -4017,66 +4961,282 @@ inline float processKlonFixedShelfEq (float x, KlonBiquadState& st, float sr,
     return processCachedKlonBiquad (x, st);
 }
 
-template <int NumStages>
-inline float processKlonPeakEqStages (float x, KlonBiquadState (&states)[NumStages], float sr,
-                                      float freqHz, float q, float gainDb) noexcept
+inline float klonEqAmountFor (KlonEqAmount amount, float reference, float classic, float drive) noexcept
 {
-    const float stageGainDb = gainDb / (float) NumStages;
-    for (auto& state : states)
-        x = processKlonPeakEq (x, state, sr, freqHz, q, stageGainDb);
-    return x;
+    switch (amount)
+    {
+        case KlonEqAmount::Reference:    return reference;
+        case KlonEqAmount::Classic:      return classic;
+        case KlonEqAmount::ClassicDrive: return classic * detail::clampF (drive, 0.0f, 1.0f);
+        case KlonEqAmount::Fixed:
+        default:                         return 1.0f;
+    }
 }
 
-inline float processKlonPeakEqStages (float x, KlonBiquadState* states, int numStages, float sr,
-                                      float freqHz, float q, float gainDb) noexcept
+inline float processKlonEqBand (float x, KlonBiquadState* states, const KlonEqBandSpec& spec,
+                                float sr, float reference, float classic, float drive) noexcept
 {
-    const int stages = juce::jlimit (1, 4, numStages);
+    const int stages = juce::jlimit (1, kMaxKlonEqStages, spec.stages);
+    const float amount = klonEqAmountFor (spec.amount, reference, classic, drive);
+    const float gainDb = spec.gainDb * amount;
     const float stageGainDb = gainDb / (float) stages;
-    for (int i = 0; i < stages; ++i)
-        x = processKlonPeakEq (x, states[i], sr, freqHz, q, stageGainDb);
+    const bool fixed = spec.amount == KlonEqAmount::Fixed;
+
+    switch (spec.kind)
+    {
+        case KlonEqKind::Peak:
+        {
+            for (int i = 0; i < stages; ++i)
+                x = fixed ? processKlonFixedPeakEq (x, states[i], sr, spec.freqHz, spec.q, stageGainDb)
+                          : processKlonPeakEq      (x, states[i], sr, spec.freqHz, spec.q, stageGainDb);
+            break;
+        }
+
+        case KlonEqKind::LowShelf:
+        case KlonEqKind::HighShelf:
+        {
+            const bool highShelf = spec.kind == KlonEqKind::HighShelf;
+            for (int i = 0; i < stages; ++i)
+                x = fixed ? processKlonFixedShelfEq (x, states[i], sr, spec.freqHz, spec.q, stageGainDb, highShelf)
+                          : processKlonShelfEq      (x, states[i], sr, spec.freqHz, spec.q, stageGainDb, highShelf);
+            break;
+        }
+
+        case KlonEqKind::LowPass:
+        {
+            for (int i = 0; i < stages; ++i)
+                x = processKlonLowPassEq (x, states[i], sr, spec.freqHz, spec.q);
+            break;
+        }
+
+        case KlonEqKind::HighPass:
+        {
+            for (int i = 0; i < stages; ++i)
+                x = processKlonHighPassEq (x, states[i], sr, spec.freqHz, spec.q);
+            break;
+        }
+
+        case KlonEqKind::TiltShelf:
+        {
+            const int tiltStages = juce::jlimit (1, kMaxKlonEqStages / 2, spec.stages);
+            const float tiltStageGainDb = gainDb / (float) tiltStages;
+            for (int i = 0; i < tiltStages; ++i)
+            {
+                x = fixed ? processKlonFixedShelfEq (x, states[i * 2],     sr, spec.freqHz, spec.q, -tiltStageGainDb * 0.5f, false)
+                          : processKlonShelfEq      (x, states[i * 2],     sr, spec.freqHz, spec.q, -tiltStageGainDb * 0.5f, false);
+                x = fixed ? processKlonFixedShelfEq (x, states[i * 2 + 1], sr, spec.freqHz, spec.q,  tiltStageGainDb * 0.5f, true)
+                          : processKlonShelfEq      (x, states[i * 2 + 1], sr, spec.freqHz, spec.q,  tiltStageGainDb * 0.5f, true);
+            }
+            break;
+        }
+    }
+
     return x;
 }
 
-inline float processKlonShelfEqStages (float x, KlonBiquadState* states, int numStages, float sr,
-                                       float freqHz, float q, float gainDb, bool highShelf) noexcept
+inline bool isComponentVoicingModel (Model model) noexcept
 {
-    const int stages = juce::jlimit (1, 4, numStages);
-    const float stageGainDb = gainDb / (float) stages;
-    for (int i = 0; i < stages; ++i)
-        x = processKlonShelfEq (x, states[i], sr, freqHz, q, stageGainDb, highShelf);
-    return x;
+    return model == Model::Tube
+        || model == Model::Tape
+        || model == Model::Diode
+        || model == Model::Transistor;
 }
 
-template <int NumStages>
-inline float processKlonFixedPeakEqStages (float x, KlonBiquadState (&states)[NumStages], float sr,
-                                           float freqHz, float q, float gainDb) noexcept
+inline ComponentVoicingBand makeComponentBand (KlonEqKind kind, float freqHz, float q,
+                                               float gainDb, int stages = 1) noexcept
 {
-    const float stageGainDb = gainDb / (float) NumStages;
-    for (auto& state : states)
-        x = processKlonFixedPeakEq (x, state, sr, freqHz, q, stageGainDb);
-    return x;
+    ComponentVoicingBand band;
+    band.enabled = true;
+    band.kind = kind;
+    band.freqHz = freqHz;
+    band.q = q;
+    band.gainDb = gainDb;
+    band.stages = stages;
+    return band;
 }
 
-inline float processKlonFixedPeakEqStages (float x, KlonBiquadState* states, int numStages, float sr,
-                                           float freqHz, float q, float gainDb) noexcept
+inline ComponentVoicingBand lerpComponentBand (const ComponentVoicingBand& a,
+                                               const ComponentVoicingBand& b,
+                                               float t) noexcept
 {
-    const int stages = juce::jlimit (1, 4, numStages);
-    const float stageGainDb = gainDb / (float) stages;
-    for (int i = 0; i < stages; ++i)
-        x = processKlonFixedPeakEq (x, states[i], sr, freqHz, q, stageGainDb);
-    return x;
+    if (!a.enabled) return b;
+    if (!b.enabled) return a;
+
+    ComponentVoicingBand out;
+    out.enabled = true;
+    out.kind = a.kind;
+    out.freqHz = juce::jmap (t, a.freqHz, b.freqHz);
+    out.q = juce::jmap (t, a.q, b.q);
+    out.gainDb = juce::jmap (t, a.gainDb, b.gainDb);
+    out.stages = t < 0.5f ? a.stages : b.stages;
+    return out;
 }
 
-inline float processKlonFixedShelfEqStages (float x, KlonBiquadState* states, int numStages, float sr,
-                                            float freqHz, float q, float gainDb, bool highShelf) noexcept
+inline ComponentVoicingBand interpComponentBand3 (const ComponentVoicingBand& lo,
+                                                  const ComponentVoicingBand& mid,
+                                                  const ComponentVoicingBand& hi,
+                                                  float type) noexcept
 {
-    const int stages = juce::jlimit (1, 4, numStages);
-    const float stageGainDb = gainDb / (float) stages;
-    for (int i = 0; i < stages; ++i)
-        x = processKlonFixedShelfEq (x, states[i], sr, freqHz, q, stageGainDb, highShelf);
+    const float t = detail::smoothStep01 (detail::clampF (type, 0.0f, 1.0f));
+    return t <= 0.5f ? lerpComponentBand (lo, mid, t * 2.0f)
+                     : lerpComponentBand (mid, hi, (t - 0.5f) * 2.0f);
+}
+
+inline ComponentVoicingSet makeComponentVoicingSet (Model model, float drive, float character,
+                                                    float type, float bias = 0.0f) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float c = detail::smoothStep01 (detail::clampF (character, 0.0f, 1.0f));
+    const float b = detail::clampF (bias, -1.0f, 1.0f);
+    ComponentVoicingSet set;
+    ComponentVoicingSet a0, a1, a2;
+
+    switch (model)
+    {
+        case Model::Tube:
+        {
+            a0.pre[0] = makeComponentBand (KlonEqKind::HighPass, 24.0f, 0.707f, 0.0f);
+            a0.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 175.0f, 0.70f, 0.25f + c * 0.20f);
+            a0.pre[2] = makeComponentBand (KlonEqKind::Peak, 1850.0f, 1.05f, 0.35f + c * 0.45f + d * 0.18f);
+            a0.post[0] = makeComponentBand (KlonEqKind::LowPass, 15500.0f, 0.707f, 0.0f);
+            a0.post[1] = makeComponentBand (KlonEqKind::HighShelf, 8800.0f, 0.72f, -0.45f - d * 0.25f);
+            a0.post[2] = makeComponentBand (KlonEqKind::Peak, 1350.0f, 0.85f, 0.12f + c * 0.18f);
+            a1.pre[0] = makeComponentBand (KlonEqKind::HighPass, 26.0f, 0.707f, 0.0f);
+            a1.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 165.0f, 0.70f, 0.18f + c * 0.28f);
+            a1.pre[2] = makeComponentBand (KlonEqKind::Peak, 1450.0f, 1.05f, 0.25f + c * 0.55f + d * 0.14f);
+            a1.post[0] = makeComponentBand (KlonEqKind::LowPass, 12200.0f, 0.707f, 0.0f);
+            a1.post[1] = makeComponentBand (KlonEqKind::HighShelf, 7600.0f, 0.72f, -0.70f - d * 0.30f);
+            a1.post[2] = makeComponentBand (KlonEqKind::Peak, 980.0f, 0.85f, 0.16f + c * 0.22f);
+            a2.pre[0] = makeComponentBand (KlonEqKind::HighPass, 30.0f, 0.707f, 0.0f);
+            a2.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 145.0f, 0.70f, 0.30f + c * 0.34f);
+            a2.pre[2] = makeComponentBand (KlonEqKind::Peak, 1100.0f, 1.00f, 0.15f + c * 0.60f + d * 0.10f);
+            a2.post[0] = makeComponentBand (KlonEqKind::LowPass, 9300.0f, 0.707f, 0.0f);
+            a2.post[1] = makeComponentBand (KlonEqKind::HighShelf, 6200.0f, 0.72f, -0.95f - d * 0.36f);
+            a2.post[2] = makeComponentBand (KlonEqKind::Peak, 760.0f, 0.90f, 0.20f + c * 0.25f);
+            break;
+        }
+        case Model::Tape:
+        {
+            const float underBias = std::max (-b, 0.0f);
+            const float overBias = std::max (b, 0.0f);
+
+            // TYPE 0: Rabbit-style dense tape. The measured reference has a
+            // clear presence/head resonance around 1.1-1.4 kHz plus resonant
+            // band-limited edges, not a low-frequency 200 Hz bump.
+            a0.pre[0] = makeComponentBand (KlonEqKind::HighPass, 25.0f, 1.05f, 0.0f, 2);
+            a0.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 88.0f, 0.70f, 0.56f + c * 0.22f);
+            a0.pre[2] = makeComponentBand (KlonEqKind::Peak, 1250.0f, 1.26f, 1.35f + c * 0.46f + d * 0.30f);
+            a0.post[0] = makeComponentBand (KlonEqKind::LowPass, 17200.0f, 1.05f, 0.0f, 2);
+            a0.post[1] = makeComponentBand (KlonEqKind::HighShelf, 7200.0f, 0.86f,
+                                            -0.58f - d * 0.95f - overBias * 0.55f + underBias * 0.18f);
+            a0.post[2] = makeComponentBand (KlonEqKind::Peak, 1250.0f, 1.04f, 0.42f + c * 0.16f + d * 0.05f);
+
+            // TYPE 50: transition, still recognisably tape but less Rabbit-forward.
+            a1.pre[0] = makeComponentBand (KlonEqKind::HighPass, 22.0f, 0.95f, 0.0f, 2);
+            a1.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 120.0f, 0.72f, 0.04f + c * 0.14f);
+            a1.pre[2] = makeComponentBand (KlonEqKind::Peak, 1250.0f, 1.12f, 1.20f + c * 0.34f + d * 0.20f);
+            a1.post[0] = makeComponentBand (KlonEqKind::LowPass, 14800.0f, 0.95f, 0.0f, 2);
+            a1.post[1] = makeComponentBand (KlonEqKind::HighShelf, 6500.0f, 0.84f,
+                                            -0.98f - d * 1.04f - overBias * 0.72f + underBias * 0.12f);
+            a1.post[2] = makeComponentBand (KlonEqKind::Peak, 1250.0f, 0.98f, 0.36f + c * 0.12f + d * 0.04f);
+
+            // TYPE 100: smoother/warmer tape, less presence bump and stronger HF loss.
+            a2.pre[0] = makeComponentBand (KlonEqKind::HighPass, 18.0f, 0.90f, 0.0f, 2);
+            a2.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 175.0f, 0.74f, -0.48f + c * 0.10f);
+            a2.pre[2] = makeComponentBand (KlonEqKind::Peak, 1250.0f, 1.00f, 1.05f + c * 0.28f + d * 0.15f);
+            a2.post[0] = makeComponentBand (KlonEqKind::LowPass, 12200.0f, 0.90f, 0.0f, 2);
+            a2.post[1] = makeComponentBand (KlonEqKind::HighShelf, 5200.0f, 0.82f,
+                                            -1.45f - d * 1.18f - overBias * 0.90f + underBias * 0.06f);
+            a2.post[2] = makeComponentBand (KlonEqKind::Peak, 1250.0f, 0.94f, 0.30f + c * 0.10f);
+            break;
+        }
+
+        case Model::Diode:
+        {
+            a0.pre[0] = makeComponentBand (KlonEqKind::HighPass, 400.0f, 0.707f, 0.0f);
+            a0.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 135.0f, 0.72f, -0.55f - d * 0.10f);
+            a0.pre[2] = makeComponentBand (KlonEqKind::Peak, 850.0f, 0.90f, 0.28f + c * 0.22f);
+            a0.post[0] = makeComponentBand (KlonEqKind::LowPass, 5000.0f, 0.707f, 0.0f);
+            a0.post[1] = makeComponentBand (KlonEqKind::HighShelf, 3600.0f, 0.72f, -0.90f - d * 0.18f);
+            a0.post[2] = makeComponentBand (KlonEqKind::Peak, 1600.0f, 0.95f, -0.08f - d * 0.04f);
+            a1.pre[0] = makeComponentBand (KlonEqKind::HighPass, 220.0f, 0.707f, 0.0f);
+            a1.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 120.0f, 0.72f, -0.40f - d * 0.08f);
+            a1.pre[2] = makeComponentBand (KlonEqKind::Peak, 1350.0f, 0.95f, 0.12f + c * 0.20f);
+            a1.post[0] = makeComponentBand (KlonEqKind::LowPass, 4200.0f, 0.707f, 0.0f);
+            a1.post[1] = makeComponentBand (KlonEqKind::HighShelf, 3500.0f, 0.72f, -1.10f - d * 0.22f);
+            a1.post[2] = makeComponentBand (KlonEqKind::Peak, 2400.0f, 0.95f, -0.36f - d * 0.06f);
+            a2.pre[0] = makeComponentBand (KlonEqKind::HighPass, 115.0f, 0.707f, 0.0f);
+            a2.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 105.0f, 0.72f, -0.15f - d * 0.04f);
+            a2.pre[2] = makeComponentBand (KlonEqKind::Peak, 1850.0f, 1.00f, 0.36f + c * 0.26f);
+            a2.post[0] = makeComponentBand (KlonEqKind::LowPass, 7000.0f, 0.707f, 0.0f);
+            a2.post[1] = makeComponentBand (KlonEqKind::HighShelf, 5000.0f, 0.72f, -0.42f - d * 0.12f);
+            a2.post[2] = makeComponentBand (KlonEqKind::Peak, 2100.0f, 0.95f, 0.22f + c * 0.16f);
+            break;
+        }
+        case Model::Transistor:
+        {
+            a0.pre[0] = makeComponentBand (KlonEqKind::HighPass, 46.0f, 0.707f, 0.0f);
+            a0.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 180.0f, 0.70f, -0.65f + c * 0.20f);
+            a0.pre[2] = makeComponentBand (KlonEqKind::Peak, 2400.0f, 0.95f, 0.60f + d * 0.55f + c * 0.15f);
+            a0.post[0] = makeComponentBand (KlonEqKind::LowPass, 9800.0f - d * 2000.0f, 0.707f, 0.0f);
+            a0.post[1] = makeComponentBand (KlonEqKind::HighShelf, 7200.0f, 0.72f, -0.30f - d * 0.28f);
+            a0.post[2] = makeComponentBand (KlonEqKind::Peak, 320.0f, 0.85f, 0.16f + c * 0.14f);
+            a1.pre[0] = makeComponentBand (KlonEqKind::HighPass, 34.0f, 0.707f, 0.0f);
+            a1.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 165.0f, 0.70f, -0.22f + c * 0.24f);
+            a1.pre[2] = makeComponentBand (KlonEqKind::Peak, 1750.0f, 0.95f, 0.42f + d * 0.35f + c * 0.12f);
+            a1.post[0] = makeComponentBand (KlonEqKind::LowPass, 8200.0f - d * 1500.0f, 0.707f, 0.0f);
+            a1.post[1] = makeComponentBand (KlonEqKind::HighShelf, 6400.0f, 0.72f, -0.46f - d * 0.30f);
+            a1.post[2] = makeComponentBand (KlonEqKind::Peak, 420.0f, 0.85f, 0.12f + c * 0.16f);
+            a2.pre[0] = makeComponentBand (KlonEqKind::HighPass, 26.0f, 0.707f, 0.0f);
+            a2.pre[1] = makeComponentBand (KlonEqKind::LowShelf, 150.0f, 0.70f, 0.08f + c * 0.24f);
+            a2.pre[2] = makeComponentBand (KlonEqKind::Peak, 1300.0f, 0.90f, 0.25f + d * 0.22f + c * 0.16f);
+            a2.post[0] = makeComponentBand (KlonEqKind::LowPass, 6500.0f - d * 1200.0f, 0.707f, 0.0f);
+            a2.post[1] = makeComponentBand (KlonEqKind::HighShelf, 5600.0f, 0.72f, -0.62f - d * 0.30f);
+            a2.post[2] = makeComponentBand (KlonEqKind::Peak, 520.0f, 0.85f, 0.08f + c * 0.18f);
+            break;
+        }
+        default:
+            break;
+    }
+
+    for (int i = 0; i < kComponentVoicingBands; ++i)
+    {
+        set.pre[i] = interpComponentBand3 (a0.pre[i], a1.pre[i], a2.pre[i], type);
+        set.post[i] = interpComponentBand3 (a0.post[i], a1.post[i], a2.post[i], type);
+    }
+
+    return set;
+}
+
+inline float processComponentVoicingBand (float x, KlonBiquadState* states,
+                                          const ComponentVoicingBand& band,
+                                          float sr) noexcept
+{
+    if (!band.enabled)
+        return x;
+
+    KlonEqBandSpec spec { band.kind, band.freqHz, band.q, band.gainDb,
+                          band.stages, KlonEqAmount::Fixed };
+    return processKlonEqBand (x, states, spec, sr, 1.0f, 1.0f, 0.0f);
+}
+
+inline float processComponentPreVoicing (float x, ComponentVoicingState& st,
+                                         const ComponentVoicingSet& spec,
+                                         float sr) noexcept
+{
+    for (int i = 0; i < kComponentVoicingBands; ++i)
+        x = processComponentVoicingBand (x, st.pre[i], spec.pre[i], sr);
     return x;
 }
 
+inline float processComponentPostVoicing (float x, ComponentVoicingState& st,
+                                          const ComponentVoicingSet& spec,
+                                          float sr) noexcept
+{
+    for (int i = 0; i < kComponentVoicingBands; ++i)
+        x = processComponentVoicingBand (x, st.post[i], spec.post[i], sr);
+    return x;
+}
 inline float klonReferenceWeight (float drive) noexcept
 {
     const float d = detail::clampF (drive, 0.0f, 1.0f);
@@ -4085,162 +5245,402 @@ inline float klonReferenceWeight (float drive) noexcept
     return 0.25f * driveOpen * (1.0f - 0.25f * topGuard);
 }
 
-inline float processKlonPreEq (float x, ClipperKlonState& st, float sr,
+inline float processKlonPreEq (float x, OverdriveToneState& st, float sr,
                                float peak, float bias, float drive) noexcept
 {
-    (void) bias;
-
-    const float p = detail::smoothStep01 (detail::clampF (peak, 0.0f, 1.0f));
-    const float lpHz = juce::jmap (p, 2000.0f, 4000.0f);
-    const float lpCoeff = detail::onePoleCoeff (lpHz, sr);
-    st.preEqLP += (x - st.preEqLP) * lpCoeff;
+    (void) peak;
+    const float sym = detail::clampF (bias, -1.0f, 1.0f);
 
     float y = x;
-    y = processKlonFixedPeakEqStages  (y, st.preResidualEq[0], 2, sr,   90.00f, 3.000f, -0.26f);
-    y = processKlonFixedPeakEqStages  (y, st.preResidualEq[1], 2, sr,  265.97f, 0.350f, -1.16f);
-    y = processKlonFixedPeakEqStages  (y, st.preResidualEq[2], 2, sr,  785.99f, 3.000f, -0.16f);
-    y = processKlonFixedPeakEqStages  (y, st.preResidualEq[3], 2, sr, 2322.78f, 2.000f, +0.19f);
-    y = processKlonFixedPeakEqStages  (y, st.preResidualEq[4], 2, sr, 6864.29f, 2.000f, -0.17f);
-    y = processKlonFixedShelfEqStages (y, st.preResidualEq[5], 1, sr, 8000.00f, 0.707f, -1.03f, true);
-    y = processKlonFixedPeakEq (y, st.preCorrectBell500,  sr,  500.0f, 1.0f,  3.0f);
-    y = processKlonFixedPeakEq (y, st.preCorrectBell1200, sr, 1200.0f, 1.0f,  3.0f);
-    y = processKlonFixedPeakEq (y, st.preCorrectBell4000, sr, 4000.0f, 1.0f, -4.0f);
-    y = processKlonFixedPeakEq (y, st.preBell,            sr, 3000.0f, 1.0f,  6.0f);
+    y += sym * (x * x) / (1.0f + std::abs (x)) * (0.012f + drive * 0.030f);
 
-    const float ref = klonReferenceWeight (drive);
-    y = processKlonPeakEqStages  (y, st.preReferenceEq[0], 1, sr,  154.72f, 1.000f,  1.89f * ref);
-    y = processKlonPeakEqStages  (y, st.preReferenceEq[1], 2, sr, 1030.54f, 2.000f, -0.86f * ref);
-    y = processKlonPeakEqStages  (y, st.preReferenceEq[2], 2, sr, 1771.58f, 3.000f,  1.15f * ref);
-    y = processKlonShelfEqStages (y, st.preReferenceEq[3], 2, sr, 2000.00f, 0.500f,  2.50f * ref, true);
-    y = processKlonPeakEqStages  (y, st.preReferenceEq[4], 2, sr, 2322.78f, 1.400f,  0.58f * ref);
-    y = processKlonPeakEqStages  (y, st.preReferenceEq[5], 2, sr, 6864.29f, 3.000f,  0.84f * ref);
+    if constexpr (OverdriveVoicing::kKlonResidualMatchingEnabled)
+    {
+        int band = 0;
+        const float ref = klonReferenceWeight (drive);
+        for (const auto& spec : getKlonPreAForAnalysis())
+            if (band < kKlonPreEqBands)
+                y = processKlonEqBand (y, st.klonPreEq[band++], spec, sr, ref, 1.0f, drive);
+        for (const auto& spec : getKlonPreNdspForAnalysis())
+            if (band < kKlonPreEqBands)
+                y = processKlonEqBand (y, st.klonPreEq[band++], spec, sr, ref, 1.0f, drive);
+        for (const auto& spec : getKlonPreBForAnalysis())
+            if (band < kKlonPreEqBands)
+                y = processKlonEqBand (y, st.klonPreEq[band++], spec, sr, ref, 1.0f, drive);
+    }
+
     return y;
 }
 
-inline float processKlonPostEq (float x, ClipperKlonState& st, float sr,
+inline float processKlonPostEqBank (float x, KlonPostEqBank& bank,
+                                    float sr, float drive) noexcept
+{
+    float y = x;
+
+    if constexpr (OverdriveVoicing::kKlonResidualMatchingEnabled)
+    {
+        int band = 0;
+        const float ref = klonReferenceWeight (drive);
+        for (const auto& spec : getKlonPostAForAnalysis())
+            if (band < kKlonPostEqBands)
+                y = processKlonEqBand (y, bank[band++], spec, sr, ref, 1.0f, drive);
+        for (const auto& spec : getKlonPostNdspForAnalysis())
+            if (band < kKlonPostEqBands)
+                y = processKlonEqBand (y, bank[band++], spec, sr, ref, 1.0f, drive);
+        for (const auto& spec : getKlonPostBForAnalysis())
+            if (band < kKlonPostEqBands)
+                y = processKlonEqBand (y, bank[band++], spec, sr, ref, 1.0f, drive);
+    }
+
+    return y;
+}
+
+inline float processKlonPostEq (float x, OverdriveToneState& st, float sr,
                                 float peak, float bias, float drive) noexcept
 {
-    (void) peak;
-    (void) bias;
-
-    float y = x;
-    y = processKlonFixedPeakEq (y,       st.postBell,            sr, 1500.0f,  1.0f,  -6.0f);
-    y = processKlonFixedPeakEqStages (y, st.postCorrectBell116,  sr,  116.29f, 1.363f, -2.10f);
-    y = processKlonFixedPeakEqStages (y, st.postCorrectBell139,  sr,  138.59f, 0.025f, -4.72f);
-    y = processKlonFixedPeakEqStages (y, st.postCorrectBell1200, sr, 1200.0f,  1.621f,  3.38f);
-    y = processKlonFixedPeakEqStages (y, st.postCorrectBell5631, sr, 5630.7f,  0.884f, -1.53f);
-    y = processKlonFixedShelfEqStages (y, st.postResidualEq[0],  2, sr,    55.00f,  1.400f,  +0.86f, false);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[1],  2, sr,    89.03f,  5.000f,  -0.65f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[2],  2, sr,   113.28f, 12.000f,  +1.06f);
-    y = processKlonFixedShelfEqStages (y, st.postResidualEq[3],  1, sr,   180.00f,  1.400f,  +0.41f, false);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[4],  2, sr,   233.32f,  5.000f,  +3.60f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[5],  2, sr,   296.86f, 12.000f,  +0.71f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[6],  2, sr,   377.70f,  3.000f,  -1.19f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[7],  2, sr,   377.70f, 12.000f,  +1.39f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[8],  2, sr,   777.94f,  3.000f,  -0.44f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[9],  2, sr,   989.79f,  5.000f,  +1.12f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[10], 2, sr,  1259.34f,  0.350f,  -4.85f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[11], 2, sr,  1259.34f, 12.000f,  -0.94f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[12], 2, sr,  2038.64f,  5.000f,  +1.50f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[13], 2, sr,  2593.81f,  5.000f,  -2.52f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[14], 2, sr,  3300.18f, 12.000f,  +3.49f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[15], 2, sr,  4198.90f,  5.000f,  -2.06f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[16], 2, sr,  5342.37f, 12.000f,  +2.04f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[17], 2, sr,  6797.24f,  5.000f,  +1.23f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[18], 2, sr,  8648.31f,  3.000f,  -5.19f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[19], 2, sr,  8648.31f, 12.000f,  +5.86f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[20], 2, sr, 11003.47f,  3.000f,  +7.04f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[21], 2, sr, 11003.47f, 12.000f,  -5.23f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq[22], 2, sr, 14000.00f,  5.000f,  -1.19f);
-    y = processKlonFixedShelfEqStages (y, st.postResidualEq[23], 1, sr, 15000.00f,  0.707f,  +0.83f, true);
-    y = processKlonFixedShelfEqStages (y, st.postResidualEq2[0],  1, sr,    55.00f,  1.000f,  +1.14f, false);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[1],  2, sr,    69.98f,  8.000f,  +0.91f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[2],  2, sr,    89.03f,  5.000f,  -0.26f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[3],  2, sr,   113.28f, 12.000f,  +1.52f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[4],  2, sr,   144.13f, 12.000f,  +0.52f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[5],  2, sr,   233.32f,  0.350f,  -1.89f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[6],  2, sr,   233.32f,  5.000f,  +0.91f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[7],  2, sr,   296.86f,  5.000f,  +0.23f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[8],  2, sr,   480.56f,  5.000f,  -0.76f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[9],  2, sr,   611.43f,  2.000f,  +2.41f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[10], 2, sr,   611.43f, 12.000f,  -1.86f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[11], 2, sr,   777.94f,  3.000f,  -4.04f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[12], 2, sr,   777.94f, 12.000f,  +4.02f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[13], 2, sr,   989.79f,  5.000f,  +4.03f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[14], 2, sr,   989.79f, 12.000f,  -4.70f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[15], 2, sr,  1259.34f,  5.000f,  -0.37f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[16], 2, sr,  2038.64f, 12.000f,  +1.11f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[17], 2, sr,  2593.81f,  3.000f,  -1.48f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[18], 2, sr,  2593.81f, 12.000f,  +2.59f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[19], 2, sr,  3300.18f,  5.000f,  +2.13f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[20], 2, sr,  3300.18f, 12.000f,  -1.78f);
-    y = processKlonFixedPeakEqStages  (y, st.postResidualEq2[21], 2, sr,  5342.37f,  2.000f,  -0.13f);
-    y = processKlonFixedShelfEqStages (y, st.postResidualEq2[22], 2, sr,  7000.00f,  0.707f,  -1.23f, true);
-    y = processKlonFixedShelfEqStages (y, st.postResidualEq2[23], 2, sr, 15000.00f,  1.400f,  -0.39f, true);
-    y = processKlonFixedShelfEqStages (y, st.postManualEq[0], 1, sr,   22.591f, 1.000f, -3.44f, false);
-    y = processKlonFixedPeakEqStages  (y, st.postManualEq[1], 1, sr,   93.495f, 5.946f, +2.60f);
-    y = processKlonFixedPeakEqStages  (y, st.postManualEq[2], 2, sr,  788.04f,  0.423f, +4.58f);
-
-    const float ref = klonReferenceWeight (drive);
-    y = processKlonPeakEqStages  (y, st.postReferenceEq[0],  1, sr,   144.13f,  1.000f,  3.80f * ref);
-    y = processKlonPeakEqStages  (y, st.postReferenceEq[1],  2, sr,   233.32f, 12.000f, -3.26f * ref);
-    y = processKlonPeakEqStages  (y, st.postReferenceEq[2],  2, sr,   296.86f,  5.000f,  1.70f * ref);
-    y = processKlonPeakEqStages  (y, st.postReferenceEq[3],  2, sr,   611.43f,  3.000f, -0.82f * ref);
-    y = processKlonPeakEqStages  (y, st.postReferenceEq[4],  2, sr,  1259.34f,  5.000f, -2.25f * ref);
-    y = processKlonPeakEqStages  (y, st.postReferenceEq[5],  2, sr,  2038.64f,  3.000f,  4.50f * ref);
-    y = processKlonPeakEqStages  (y, st.postReferenceEq[6],  2, sr,  2038.64f,  5.000f,  1.79f * ref);
-    y = processKlonShelfEqStages (y, st.postReferenceEq[7],  2, sr,  3500.00f,  2.000f,  1.81f * ref, true);
-    y = processKlonPeakEqStages  (y, st.postReferenceEq[8],  2, sr,  6797.24f,  0.250f,  3.09f * ref);
-    y = processKlonShelfEqStages (y, st.postReferenceEq[9],  2, sr,  9000.00f,  2.000f, -1.20f * ref, true);
-    y = processKlonShelfEqStages (y, st.postReferenceEq[10], 2, sr, 12000.00f,  2.000f,  2.10f * ref, true);
-    y = processKlonShelfEqStages (y, st.postReferenceEq[11], 2, sr, 15000.00f,  2.000f, -1.33f * ref, true);
-    return y;
+    juce::ignoreUnused (peak, bias);
+    return processKlonPostEqBank (x, st.klonPostEq, sr, drive);
 }
 
-inline float clipperClassicVoice (float mod) noexcept
+inline float overdriveAVoice (float mod) noexcept
 {
     return 1.0f - detail::smoothStep01 (detail::clampF (mod * 2.0f, 0.0f, 1.0f));
 }
 
-inline float processClipperClassicPreEq (float x, ClipperKlonState& st, float sr, float amount) noexcept
+inline float solveTs808FeedbackDiode (float target, float limit, float feedback,
+                                      float hardness, float asymmetry,
+                                      float diodeBiasOffset = 0.0f,
+                                      float asymmetryStrength = 0.0f) noexcept
+{
+    const float safeLimit = juce::jmax (limit, 1.0e-4f);
+    const float safeFeedback = juce::jlimit (0.0f, 8.0f, feedback);
+    const float safeHardness = juce::jlimit (0.10f, 8.0f, hardness);
+    const float safeAsymmetry = detail::clampF (asymmetry, -0.60f, 0.60f);
+    const float safeBiasOffset = detail::clampF (diodeBiasOffset, -1.25f, 1.25f);
+    const float sideShape = detail::smoothStep01 (detail::clampF (asymmetryStrength, 0.0f, 1.0f));
+
+    auto solveUncompensated = [&] (float input) noexcept
+    {
+        const float safeTarget = detail::clampF (input, -48.0f, 48.0f);
+        const float sign = safeTarget < 0.0f ? -1.0f : 1.0f;
+        const float mag = std::abs (safeTarget);
+        const float sideLimit = safeLimit * (sign > 0.0f ? 1.0f + safeAsymmetry
+                                                         : 1.0f - safeAsymmetry);
+        const float norm = mag / juce::jmax (sideLimit, 1.0e-5f);
+
+        // TS feedback diodes are not an ideal on/off switch. Keep the first part
+        // almost linear, then add a soft pre-conduction knee before hard feedback
+        // compression. This preserves low-level signal while restoring presence.
+        const float kneeStart = getTs808CoreTuning().solverKneeStart;
+        if (norm <= kneeStart)
+            return safeTarget;
+
+        const float sidePolarity = sign > 0.0f ? 1.0f : -1.0f;
+        const float sideSkew = safeAsymmetry * sideShape * sidePolarity;
+        const float sideFeedback = safeFeedback * detail::clampF (1.0f + sideSkew * 0.72f, 0.38f, 1.85f);
+        const float sideHardness = safeHardness * detail::clampF (1.0f + sideSkew * 0.58f, 0.42f, 1.70f);
+
+        const float kneeWidth = 1.0f - kneeStart;
+        const float kneeT = detail::smoothStep01 ((norm - kneeStart) / kneeWidth);
+        const float mainOver = juce::jmax (0.0f, norm - 1.0f);
+
+        const float preConduct = kneeT * kneeT * getTs808CoreTuning().solverPreConduct;
+        const float mainConduct = mainOver / (1.0f + mainOver * sideHardness);
+        const float conduct = preConduct + mainConduct;
+        const float loopResistance = 1.0f + sideFeedback * sideHardness * conduct;
+        const float solvedNorm = norm / juce::jmax (1.0f, loopResistance);
+        const float y = sign * sideLimit * solvedNorm;
+
+        return detail::clampF (y, -sideLimit * (1.0f + sideFeedback),
+                               sideLimit * (1.0f + sideFeedback));
+    };
+
+    if (std::abs (safeBiasOffset) <= 1.0e-7f && sideShape <= 1.0e-7f)
+        return solveUncompensated (target);
+
+    // A real biased feedback-diode pair changes where the loop conducts, not
+    // just the final waveform ceiling. Subtract the zero-input operating point
+    // so the control adds asymmetry without leaking DC into the plugin output.
+    return solveUncompensated (target + safeBiasOffset) - solveUncompensated (safeBiasOffset);
+}
+
+inline float processTs808FeedbackDiodeCore (float x, OverdriveToneState& st, float sr,
+                                            float amount, float drive,
+                                            float upperSmoothAmount,
+                                            float kneeAmount,
+                                            float symmetryAmount) noexcept
+{
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const auto& ts = getTs808CoreTuning();
+    const float a = detail::clampF (amount, 0.0f, 1.0f);
+    const float upperSmooth = detail::smoothStep01 (detail::clampF (upperSmoothAmount, 0.0f, 1.0f));
+    const float kneeRange = detail::clampF (kneeAmount, 0.0f, 2.0f);
+    const float kneeSmooth = kneeRange <= 1.0f
+        ? detail::smoothStep01 (kneeRange)
+        : 1.0f + detail::smoothStep01 (kneeRange - 1.0f);
+    const float sym = detail::clampF (symmetryAmount, -1.0f, 1.0f);
+    if (a <= 0.0001f)
+        return x;
+
+    float pre = x;
+    if (OverdriveVoicing::kTs808ResidualMatchingEnabled)
+    {
+        int preBand = 2;
+        for (const auto& spec : getTs808PreAForAnalysis())
+            pre = processKlonEqBand (pre, st.overdriveAPreEq[preBand++], spec, sr, 1.0f, 1.0f, d);
+        for (const auto& spec : getTs808PreNdspForAnalysis())
+            pre = processKlonEqBand (pre, st.overdriveAPreEq[preBand++], spec, sr, 1.0f, 1.0f, d);
+        for (const auto& spec : getTs808PreBForAnalysis())
+            pre = processKlonEqBand (pre, st.overdriveAPreEq[preBand++], spec, sr, 1.0f, 1.0f, d);
+    }
+
+    // TS808 clipping op-amp: 4.7k + 47nF sets the ~720 Hz rising gain corner.
+    const float low = processKlonLowPassEq (pre, st.overdriveAPreEq[0][0], sr, ts.inputHighPassHz, 0.707f);
+    const float high = pre - low;
+
+    const float driveT = detail::smoothStep01 (d);
+    const float feedbackOhms = 51000.0f + 500000.0f * driveT;
+    const float schematicHighGain = 1.0f + feedbackOhms / 4700.0f;
+    const float loopGain = 1.0f + driveT * (std::pow (schematicHighGain, 0.70f) - 1.0f);
+    const float feedbackPole = 1.0f / (kTwoPi * feedbackOhms * 51.0e-12f);
+    const float cappedPole = detail::clampF (feedbackPole, ts.feedbackPoleMinHz,
+                                             std::max (sr * 0.45f, ts.feedbackPoleMinHz));
+
+    const float capped = processKlonLowPassEq (high, st.overdriveAPreEq[1][0], sr, cappedPole, 0.707f);
+    const float air = high - capped;
+    const float lowTrim = 1.0f - driveT * ts.lowTrimAtMaxDrive;
+    const float tsLoopDrive = 1.0f + driveT * driveT * driveT * ts.loopDriveMax;
+    const float loopTarget = (capped * loopGain * (1.0f + driveT * ts.loopCappedGainAtMaxDrive)
+                           + air * (1.0f + driveT * ts.airGainAtMaxDrive)) * tsLoopDrive;
+
+    const float loopCoeff = detail::onePoleCoeff (juce::jmap (driveT, ts.loopCoeffHzLo, ts.loopCoeffHzHi), sr);
+    const bool initialiseFeedback = ! st.tsFeedbackInitialised || ! std::isfinite (st.tsFeedbackLP);
+    if (initialiseFeedback)
+    {
+        st.tsFeedbackLP = loopTarget;
+        st.tsFeedbackInitialised = true;
+    }
+
+    st.tsFeedbackLP += (loopTarget - st.tsFeedbackLP) * loopCoeff;
+    const float loopBody = st.tsFeedbackLP;
+    const float loopUpper = loopTarget - loopBody;
+    const float upperMid = processKlonLowPassEq (loopUpper, st.overdriveAPreEq[1][1],
+                                                 sr, ts.upperMidSplitHz, 0.707f);
+    const float upperAir = loopUpper - upperMid;
+
+    // Dynamic diode conductance memory: in the real feedback network, diode
+    // capacitance and op-amp recovery make hot passages smoother than a purely
+    // static transfer curve. TYPE now damps the upper loop instead of exciting
+    // extra fizz; KNEE changes how early the pre-conduction region wakes up.
+    const float diodeSense = std::abs (loopTarget) / (1.0f + std::abs (loopTarget));
+    const float memoryStart = juce::jlimit (0.08f, 0.42f, 0.30f - kneeSmooth * 0.14f);
+    const float memoryTarget = detail::smoothStep01 ((diodeSense - memoryStart)
+                                                   / juce::jmax (0.08f, 0.70f - memoryStart));
+    const float memoryAttackHz = 180.0f + driveT * 560.0f + upperSmooth * 920.0f;
+    const float memoryReleaseHz = 12.0f + upperSmooth * 34.0f + kneeSmooth * 38.0f;
+    const float memoryCoeff = detail::onePoleCoeff (
+        memoryTarget > st.tsDiodeMemory ? memoryAttackHz : memoryReleaseHz, sr);
+    st.tsDiodeMemory += (memoryTarget - st.tsDiodeMemory) * memoryCoeff;
+    st.tsDiodeMemory = juce::jlimit (0.0f, 1.0f, st.tsDiodeMemory);
+    const float diodeMemory = st.tsDiodeMemory
+                            * (0.040f + driveT * 0.150f + upperSmooth * 0.125f + kneeSmooth * 0.120f);
+    const float upperDynamicFeedback = detail::clampF (ts.upperDynamicFeedback, 0.35f, 2.20f);
+    const float upperMidDynamicFeedback = detail::clampF (ts.upperMidDynamicFeedback, 0.35f, 2.35f);
+    const float upperAirDynamicFeedback = detail::clampF (ts.upperAirDynamicFeedback, 0.35f, 2.35f);
+    const float upperMidDiodeMemory = diodeMemory * upperDynamicFeedback * upperMidDynamicFeedback;
+    const float upperAirDiodeMemory = diodeMemory * upperDynamicFeedback * upperAirDynamicFeedback;
+
+    const float bodyLimit = juce::jmap (driveT, ts.bodyLimitLo, ts.bodyLimitHi)
+                          * juce::jmap (kneeSmooth, 1.0f, 1.24f)
+                          * (1.0f + diodeMemory * 0.18f);
+    const float bodyFeedback = juce::jmap (driveT, ts.bodyFeedbackLo, ts.bodyFeedbackHi)
+                             * juce::jmap (kneeSmooth, 1.0f, 0.64f)
+                             * (1.0f + diodeMemory * 0.30f);
+    const float bodyHardness = juce::jmap (driveT, ts.bodyHardnessLo, ts.bodyHardnessHi)
+                             * juce::jmap (kneeSmooth, 1.0f, 0.50f)
+                             * (1.0f - diodeMemory * 0.22f);
+    const float symAbs = detail::smoothStep01 (std::abs (sym));
+    const float typeSymLift = 1.0f + (1.0f - upperSmooth) * 0.52f;
+    const float asymControl = symAbs * (0.36f + driveT * 0.78f) * typeSymLift;
+    const float chainsawMismatchLift = 1.0f + symAbs * (0.20f + driveT * 0.30f)
+                                             * juce::jmap (upperSmooth, 1.18f, 0.72f);
+    const float bodyBaseAsymmetry = juce::jmap (driveT, ts.bodyAsymmetryLo, ts.bodyAsymmetryHi);
+    const float bodyAsymmetry = detail::clampF (bodyBaseAsymmetry
+                                              + sym * (0.56f + driveT * 0.72f + kneeSmooth * 0.20f)
+                                                    * typeSymLift * chainsawMismatchLift,
+                                              -0.84f, 0.84f);
+    const float bodyDiodeBias = sym * asymControl * bodyLimit
+                              * (0.32f + driveT * 0.66f + kneeSmooth * 0.24f)
+                              * chainsawMismatchLift;
+
+    const float solvedBody = solveTs808FeedbackDiode (loopBody, bodyLimit,
+                                                      bodyFeedback, bodyHardness,
+                                                      bodyAsymmetry,
+                                                      bodyDiodeBias,
+                                                      asymControl);
+    const float upperLimit = juce::jmap (driveT, ts.upperLimitLo, ts.upperLimitHi);
+    const float upperFeedback = (ts.upperFeedbackLo + driveT * ts.upperFeedbackHi)
+                              * juce::jmap (upperSmooth, 1.0f, 0.72f)
+                              * juce::jmap (kneeSmooth, 1.0f, 0.56f)
+                              * (1.0f + upperMidDiodeMemory * 0.42f);
+    const float upperHardness = (ts.upperHardnessLo + driveT * ts.upperHardnessHi)
+                              * juce::jmap (upperSmooth, 1.0f, 0.62f)
+                              * juce::jmap (kneeSmooth, 1.0f, 0.42f)
+                              * (1.0f - upperMidDiodeMemory * 0.28f);
+    const float upperAsymmetry = detail::clampF (bodyAsymmetry * ts.upperAsymmetryScale
+                                               + sym * asymControl * (0.42f + driveT * 0.72f + upperSmooth * 0.22f)
+                                                     * chainsawMismatchLift,
+                                               -0.82f, 0.82f);
+    const float upperDiodeBias = sym * asymControl * upperLimit
+                               * (0.38f + driveT * 0.74f + upperSmooth * 0.22f)
+                               * chainsawMismatchLift;
+    const float upperSoft = solveTs808FeedbackDiode (upperMid, upperLimit,
+                                                     upperFeedback,
+                                                     upperHardness,
+                                                     upperAsymmetry,
+                                                     upperDiodeBias,
+                                                     asymControl);
+    const float upperBlend = detail::clampF (juce::jmap (driveT, ts.upperBlendLo, ts.upperBlendHi)
+                                           * juce::jmap (upperSmooth, 1.0f, 0.78f)
+                                           * juce::jmap (kneeSmooth, 1.0f, 0.82f)
+                                           * (1.0f + upperMidDiodeMemory * 0.38f), 0.0f, 1.0f);
+    const float upperAirTrim = juce::jmap (driveT, ts.upperAirTrimLo, ts.upperAirTrimHi)
+                             * juce::jmap (upperSmooth, 1.0f, 0.46f)
+                             * juce::jmap (kneeSmooth, 1.0f, 0.74f)
+                             * (1.0f - upperAirDiodeMemory * 0.34f);
+    float loopOut = solvedBody
+                  + juce::jmap (upperBlend, upperMid, upperSoft)
+                  + upperAir * upperAirTrim;
+
+    if (symAbs > 0.0001f)
+    {
+        const float asymGrit = sym * symAbs * typeSymLift
+                             * (0.245f + driveT * 0.650f + upperSmooth * 0.135f + kneeSmooth * 0.190f);
+        const float folded = (loopOut * loopOut) / (0.19f + std::abs (loopOut));
+        loopOut += folded * asymGrit;
+
+        // HM-2-inspired TS variant: SYM now changes diode-loop behaviour before
+        // the TS post EQ, instead of adding a final output tilt. Negative SYM is
+        // tighter/upper-mid focused; positive SYM keeps more low-mid grind.
+        const float sawAmt = detail::smoothStep01 ((symAbs - 0.045f) / 0.955f)
+                           * (0.32f + driveT * 0.78f)
+                           * juce::jmap (upperSmooth, 1.16f, 0.72f)
+                           * juce::jmap (kneeSmooth, 0.96f, 0.72f);
+        if (sawAmt > 0.0001f)
+        {
+            const float neg = sym < 0.0f ? 1.0f : 0.0f;
+            const float pos = sym > 0.0f ? 1.0f : 0.0f;
+            const float signedAmt = sym * sawAmt;
+            const float focus = detail::clampF (upperSoft * (0.72f + driveT * 0.18f)
+                                              + upperMid  * (0.28f + upperSmooth * 0.16f)
+                                              - upperAir  * (0.04f + neg * 0.10f),
+                                              -8.0f, 8.0f);
+            const float bodyGrind = detail::clampF (solvedBody - loopBody * (0.16f + neg * 0.18f),
+                                                    -8.0f, 8.0f);
+            const float rectIn = loopOut * (1.0f + sawAmt * (0.26f + driveT * 0.46f))
+                               + focus * signedAmt * (0.12f + driveT * 0.12f)
+                               + bodyGrind * sawAmt * pos * (0.06f + driveT * 0.10f);
+            const float rectBias = signedAmt * (0.045f + driveT * 0.105f);
+            const float rectK = 1.10f + driveT * 1.65f + neg * 0.34f;
+            const float zero = detail::fastTanh (rectBias * rectK) / rectK;
+            const float rect = detail::fastTanh ((rectIn + rectBias) * rectK) / rectK - zero;
+            const float chainsaw = rect - loopOut;
+            const float upperPush = focus * sawAmt * (neg > 0.5f ? 0.18f : 0.10f)
+                                  + bodyGrind * sawAmt * (pos > 0.5f ? 0.16f : -0.05f);
+            loopOut += chainsaw * (0.28f + driveT * 0.30f)
+                     + upperPush
+                     - loopBody * sawAmt * neg * (0.025f + driveT * 0.045f);
+        }
+    }
+
+    const float opSense = std::abs (loopOut) / (1.0f + std::abs (loopOut));
+    const float opTarget = detail::smoothStep01 ((opSense - 0.58f) / 0.38f) * driveT;
+    const float opCoeff = detail::onePoleCoeff (
+        opTarget > st.tsOpAmpRecovery ? 680.0f + upperSmooth * 920.0f : 36.0f + kneeSmooth * 44.0f, sr);
+    st.tsOpAmpRecovery += (opTarget - st.tsOpAmpRecovery) * opCoeff;
+    st.tsOpAmpRecovery = juce::jlimit (0.0f, 1.0f, st.tsOpAmpRecovery);
+    const float recoveryBlend = st.tsOpAmpRecovery * (0.030f + driveT * 0.060f + kneeSmooth * 0.040f);
+    const float recoveryK = 1.0f + driveT * 0.75f;
+    const float recovered = detail::fastTanh (loopOut * recoveryK) / recoveryK;
+    loopOut = juce::jmap (recoveryBlend, loopOut, recovered);
+
+    return juce::jmap (a, x, low * lowTrim + loopOut);
+}
+
+inline float processOverdriveAPostEqBank (float x,
+                                              KlonBiquadState (&overdriveAPostEq)[kClassicPostEqBands][kMaxKlonEqStages],
+                                              float& overdriveAPostHiCutLP,
+                                              float sr,
+                                              float amount,
+                                              float drive) noexcept
 {
     float y = x;
-    y = processKlonPeakEqStages (y, st.classicPreEq[0], 1, sr,    41.116f, 0.123f, -26.50f * amount);
-    y = processKlonPeakEqStages (y, st.classicPreEq[1], 2, sr, 18601.00f, 0.174f,  -7.05f * amount);
+    int band = 0;
+    if constexpr (OverdriveVoicing::kTs808BaseVoicingEnabled)
+        for (const auto& spec : OverdriveVoicing::kTs808PostCore)
+            y = processKlonEqBand (y, overdriveAPostEq[band++], spec, sr, 1.0f, amount, drive);
+
+    if (OverdriveVoicing::kTs808ResidualMatchingEnabled)
+    {
+        for (const auto& spec : getTs808PostAForAnalysis())
+            y = processKlonEqBand (y, overdriveAPostEq[band++], spec, sr, 1.0f, amount, drive);
+        for (const auto& spec : getTs808PostNdspForAnalysis())
+            y = processKlonEqBand (y, overdriveAPostEq[band++], spec, sr, 1.0f, amount, drive);
+        for (const auto& spec : getTs808PostBForAnalysis())
+            y = processKlonEqBand (y, overdriveAPostEq[band++], spec, sr, 1.0f, amount, drive);
+    }
+
+    if constexpr (OverdriveVoicing::kTs808PostHiCutEnabled)
+    {
+        const float biquadCut = processKlonEqBand (y, overdriveAPostEq[kClassicPostEqBands - 1],
+                                                   OverdriveVoicing::kTs808PostHiCut, sr, 1.0f, amount, drive);
+        const float onePoleCoeff = detail::onePoleCoeff (18000.0f, sr);
+        overdriveAPostHiCutLP += (biquadCut - overdriveAPostHiCutLP) * onePoleCoeff;
+        return juce::jmap (amount, y, overdriveAPostHiCutLP);
+    }
+
+    overdriveAPostHiCutLP = y;
     return y;
 }
 
-inline float processClipperClassicPostEq (float x, ClipperKlonState& st, float sr,
+inline float processOverdriveAPostEq (float x, OverdriveToneState& st, float sr,
                                           float amount, float drive) noexcept
 {
-    float y = x;
-    y = processKlonShelfEq (y, st.classicPostLowShelf, sr, 22.591f, 1.000f, -4.81f * amount, false);
-    y = processKlonPeakEqStages (y, st.classicPostBell515, 4, sr,  514.78f, 0.025f, -10.20f * amount);
-    y = processKlonPeakEqStages (y, st.classicPostBell1586, 3, sr, 1585.6f,  0.194f,  +2.79f * amount);
-
-    const float driveAmount = amount * detail::clampF (drive, 0.0f, 1.0f);
-    y = processKlonPeakEq (y, st.classicDrivePostBell21,    sr,    20.833f, 0.097f, -10.11f * driveAmount);
-    y = processKlonPeakEq (y, st.classicDrivePostBell18229, sr, 18229.0f,  0.299f, -10.93f * driveAmount);
-
-    const float biquadCut = processKlonLowPassEq (y, st.classicPostHiCut, sr, 13315.0f, 1.000f);
-    const float onePoleCoeff = detail::onePoleCoeff (13315.0f, sr);
-    st.classicPostHiCutLP += (biquadCut - st.classicPostHiCutLP) * onePoleCoeff;
-    return juce::jmap (amount, y, st.classicPostHiCutLP);
+    return processOverdriveAPostEqBank (x, st.overdriveAPostEq, st.overdriveAPostHiCutLP,
+                                            sr, amount, drive);
 }
 
-// CLIPPER: threshold-driven clipper with continuous soft->hard knee control
-// and a voice morph from broadband classic -> TS-style -> Klon-style.
-inline float processClipper (float x, float drive, float girth, float bias, float mod, float peak,
+// OVERDRIVE A/B share the overdrive core shell but no longer morph between pedals.
+// A is the TS808-style feedback diode core; B is the Klon-style split path.
+inline float processOverdriveCore (float x, float drive, float girth, float bias, float mod, float peak,
+                             Model model,
                              bool rawMode, State& state, int ch, float sr,
                              adaa::ClipperADAA& adaaState) noexcept
 {
-    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const bool klonMode = model == Model::OverdriveB;
+    const float voiceDriveParam = klonMode ? 1.0f : 0.0f;
+    const float baseRawDrive = detail::clipperADrive (drive, voiceDriveParam);
+    const float rawDrive = klonMode
+        ? detail::clampF (juce::jmap (detail::smoothStep01 ((detail::clampF (drive, 0.0f, 1.0f) - 0.58f) / 0.42f),
+                                      baseRawDrive, 0.86f),
+                          0.0f, 1.0f)
+        : baseRawDrive;
     const float k = detail::clampF (girth, 0.0f, 1.0f);
-    const float b = detail::clampF (bias, -1.0f, 1.0f);
+    const float userSym = detail::clampF (bias, -1.0f, 1.0f);
+    const float b = detail::clampF (userSym * (klonMode ? 1.0f : 0.98f), -1.0f, 1.0f);
     const float m = detail::clampF (mod, 0.0f, 1.0f);
-    const float classicVoice = clipperClassicVoice (m);
-    const float klonVoice = m <= 0.5f ? 0.0f : detail::smoothStep01 ((m - 0.5f) * 2.0f);
-    const float legacyDriveVoice = 1.0f - 0.08f * klonVoice;
+    const float typeTone = detail::smoothStep01 (m);
+    const auto& klonCore = getKlonCoreTuning();
+    const float overdriveAVoiceAmount = klonMode ? 0.0f : 1.0f;
+    const float klonVoice = klonMode ? 1.0f : 0.0f;
+    const float tsVoiceAmount = rawMode ? 0.0f : overdriveAVoiceAmount;
+    const float tsDriveScale = juce::jmap (tsVoiceAmount, 1.0f, getTs808CoreTuning().driveScale);
+    const float tsDriveHeadroom = juce::jlimit (1.0f, 2.5f, getTs808CoreTuning().driveHeadroom);
+    const float tsDriveStress = rawDrive * tsDriveScale * juce::jmap (tsVoiceAmount, 1.0f, tsDriveHeadroom);
+    const float d = detail::clampF (tsDriveStress, 0.0f, 1.0f);
+    const float tsInputGain = std::pow (10.0f, getTs808CoreTuning().inputGainDb * tsVoiceAmount / 20.0f);
+    const float tsInput = x * tsInputGain;
+    const float overdriveADriveVoice = 1.0f - 0.08f * klonVoice;
 
     // DRIVE sets the clipping threshold, but we keep a fixed clip ceiling.
     // This makes the control behave like a real threshold while preserving a
@@ -4255,8 +5655,8 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
     else
     {
         constexpr float kCurrentMaxAtNewDrive = 0.5f;
-        const float currentMaxThreshold = juce::jmap (legacyDriveVoice, 0.08f, 0.04f);
-        const float extendedMaxThreshold = juce::jmap (legacyDriveVoice, 0.08f, 0.0025f);
+        const float currentMaxThreshold = juce::jmap (overdriveADriveVoice, 0.08f, 0.04f);
+        const float extendedMaxThreshold = juce::jmap (overdriveADriveVoice, 0.08f, 0.0025f);
 
         if (d <= kCurrentMaxAtNewDrive)
         {
@@ -4272,116 +5672,357 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
         }
     }
 
-    float voiceScale = 1.0f;
-    float legacyCleanBlend = 0.0f;
-    float voiceLift = 1.0f;
-    if (m <= 0.5f)
+    const float voiceScale = klonMode ? 0.92f : 1.0f;
+    const float voiceLift = klonMode ? 1.12f : 1.0f;
+
+    auto& klonState = state.overdriveTone[state.currentSeriesPass][ch];
+    float overdriveAInput = tsInput;
+    float tsCoreOutput = tsInput;
+    bool tsCoreActive = false;
+    if (overdriveAVoiceAmount > 0.0001f && ! rawMode)
     {
-        const float t = detail::smoothStep01 (m * 2.0f);
-        voiceScale = juce::jmap (t, 1.00f, 1.08f); // TS gets slightly tighter
+        tsCoreOutput = processTs808FeedbackDiodeCore (tsInput, klonState, sr, overdriveAVoiceAmount, d, typeTone, k * 2.0f, b);
+        tsCoreActive = true;
     }
-    else
+    else if (klonState.tsFeedbackInitialised)
     {
-        voiceScale = juce::jmap (klonVoice, 1.08f, 0.92f); // Klon opens back up
-        legacyCleanBlend = 0.18f * klonVoice * (1.0f - klonVoice);
-        voiceLift = juce::jmap (klonVoice, 1.0f, 1.12f);
+        klonState.tsFeedbackLP = 0.0f;
+        klonState.tsDiodeMemory = 0.0f;
+        klonState.tsOpAmpRecovery = 0.0f;
+        klonState.tsFeedbackInitialised = false;
     }
 
-    auto& klonState = state.clipperKlon[state.currentSeriesPass][ch];
-    float legacyInput = x;
-    if (classicVoice > 0.0001f && ! rawMode)
-        legacyInput = processClipperClassicPreEq (x, klonState, sr, classicVoice);
-
-    const float thresholdFloor = juce::jmap (legacyDriveVoice, 0.05f, 0.0015625f);
-    const float legacyClipIn = legacyInput * (voiceScale / std::max (threshold, thresholdFloor));
-    const float klonDriveGain = detail::interpDrive5 (d,
-                                                      0.90f, 2.15f, 7.80f, 35.00f, 160.0f);
+    const float thresholdFloor = juce::jmap (overdriveADriveVoice, 0.05f, 0.0015625f);
+    const float overdriveAThresholdGain = voiceScale / std::max (threshold, thresholdFloor);
+    const float overdriveAInputGain = (! rawMode && overdriveAVoiceAmount > 0.0001f)
+                                ? juce::jmap (overdriveAVoiceAmount, overdriveAThresholdGain, 1.0f)
+                                : overdriveAThresholdGain;
+    const float overdriveAClipIn = overdriveAInput * overdriveAInputGain;
+    const float klonEffectiveDrive = detail::clampF (d * (klonMode ? klonCore.driveScale : 1.0f), 0.0f, 1.0f);
+    float klonDriveGain = detail::interpDrive5 (klonEffectiveDrive,
+                                                0.90f, 2.15f, 7.80f, 35.00f,
+                                                160.0f * (klonMode ? klonCore.driveGainMaxScale : 1.0f));
+    const float klonDriveOpen = detail::smoothStep01 (klonEffectiveDrive);
+    klonDriveGain *= 1.0f + klonDriveOpen;
+    klonDriveGain *= klonMode ? klonCore.driveGainScale : 1.0f;
+    klonDriveGain *= juce::jmap (typeTone, 0.94f, 1.34f);
     float klonInput = x;
     if (klonVoice > 0.0001f && ! rawMode)
-        klonInput = juce::jmap (klonVoice, x, processKlonPreEq (x, klonState, sr, peak, b, d));
+    {
+        const float klonInputGain = std::pow (10.0f, klonCore.inputGainDb / 20.0f);
+        klonInput = juce::jmap (klonVoice, x, processKlonPreEq (x * klonInputGain, klonState, sr, peak, b, d));
+    }
 
-    const float clipIn = juce::jmap (klonVoice, legacyClipIn, klonInput * klonDriveGain);
+    const float clipIn = juce::jmap (klonVoice, overdriveAClipIn, klonInput * klonDriveGain);
+    const float rawUnityComp = rawMode
+        ? 1.0f / std::max (1.0e-6f, juce::jmap (klonVoice, overdriveAInputGain, klonDriveGain))
+        : 1.0f;
 
     // BIAS becomes symmetry / mismatch: shifts positive and negative clip
     // thresholds independently, but keep their mean around unity.
-    const float klonDiodeHeadroom = juce::jmap (k, 0.60f, 0.74f);
-    const float klonBiasRange = 0.34f + k * 0.08f;
-    const float legacyThresholdPos = detail::clampF (1.0f + b * 0.45f, 0.45f, 1.55f);
-    const float legacyThresholdNeg = detail::clampF (1.0f - b * 0.45f, 0.45f, 1.55f);
-    const float klonThresholdPos = detail::clampF (klonDiodeHeadroom * (1.0f + b * klonBiasRange), 0.30f, 1.35f);
-    const float klonThresholdNeg = detail::clampF (klonDiodeHeadroom * (1.0f - b * klonBiasRange), 0.30f, 1.35f);
-    const float thresholdPos = juce::jmap (klonVoice, legacyThresholdPos, klonThresholdPos);
-    const float thresholdNeg = juce::jmap (klonVoice, legacyThresholdNeg, klonThresholdNeg);
-    const float legacyKneeRange = juce::jmap (classicVoice, 0.56f, 0.99f);
-    const float legacyKneeSoft = 0.01f + k * legacyKneeRange;
-    const float klonKneeSoft = 0.045f + k * 0.34f;
-    const float kneeSoft = juce::jmap (klonVoice, legacyKneeSoft, klonKneeSoft);
+    const float klonSymAbs = detail::smoothStep01 (std::abs (b));
+    const float klonSymNeg = klonMode && b < 0.0f ? klonSymAbs : 0.0f;
+    const float klonSymPos = klonMode && b > 0.0f ? klonSymAbs : 0.0f;
+    const float klonDiodeHeadroom = juce::jmap (k, 0.60f, 0.74f)
+                                   * juce::jmap (typeTone, 1.03f, 0.86f)
+                                   * (klonMode ? klonCore.diodeHeadroomScale : 1.0f)
+                                   * (klonMode ? detail::clampF (1.0f - klonSymNeg * (0.13f + d * 0.10f)
+                                                                      + klonSymPos * (0.045f + d * 0.035f),
+                                                                 0.74f, 1.12f)
+                                               : 1.0f);
+    const float klonBiasRange = klonMode
+        ? (1.08f + k * 0.34f + typeTone * 0.22f) * (1.0f + klonSymAbs * (0.26f + d * 0.24f))
+        : 1.08f + k * 0.34f + typeTone * 0.22f;
+    const float overdriveAThresholdPos = detail::clampF (1.0f + b * 0.62f, 0.34f, 1.72f);
+    const float overdriveAThresholdNeg = detail::clampF (1.0f - b * 0.62f, 0.34f, 1.72f);
+    const float klonThresholdPos = detail::clampF (klonDiodeHeadroom * (1.0f + b * klonBiasRange), 0.24f, 1.45f);
+    const float klonThresholdNeg = detail::clampF (klonDiodeHeadroom * (1.0f - b * klonBiasRange), 0.24f, 1.45f);
+    const float tsKnee = overdriveAVoiceAmount * k;
+    const float tsHeadroomScale = juce::jmap (tsKnee, 1.0f, 1.36f);
+    const float tsInputComp = juce::jmap (tsKnee, 1.0f, 0.76f);
+    const float thresholdPos = juce::jmap (klonVoice, overdriveAThresholdPos * tsHeadroomScale, klonThresholdPos);
+    const float thresholdNeg = juce::jmap (klonVoice, overdriveAThresholdNeg * tsHeadroomScale, klonThresholdNeg);
+    const float overdriveAKneeRange = juce::jmap (overdriveAVoiceAmount, getTs808CoreTuning().legacyKneeRangeLo, getTs808CoreTuning().legacyKneeRangeHi);
+    const float overdriveAKneeSoft = 0.01f + k * overdriveAKneeRange;
+    const float klonKneeSoft = (0.045f + k * 0.34f)
+                             * (klonMode ? detail::clampF (1.0f - klonSymNeg * 0.28f + klonSymPos * 0.20f,
+                                                           0.68f, 1.24f)
+                                         : 1.0f);
+    const float kneeSoft = juce::jmap (klonVoice, overdriveAKneeSoft, klonKneeSoft);
     const float kneePos = std::max (1.0e-4f, thresholdPos * kneeSoft);
     const float kneeNeg = std::max (1.0e-4f, thresholdNeg * kneeSoft);
 
-    float clipped = adaaState.process (clipIn, thresholdPos, thresholdNeg,
+    const float clipInForKnee = juce::jmap (klonVoice, clipIn * tsInputComp, clipIn);
+    float clipped = adaaState.process (clipInForKnee, thresholdPos, thresholdNeg,
                                        kneePos, kneeNeg);
 
     // Preserve average ceiling when asymmetry moves thresholds apart.
     const float outputScale = 2.0f / (thresholdPos + thresholdNeg);
     clipped *= outputScale;
 
-    if (classicVoice > 0.0001f && ! rawMode)
-        clipped = processClipperClassicPostEq (clipped, klonState, sr, classicVoice, d);
+    if (tsCoreActive)
+        clipped = juce::jmap (overdriveAVoiceAmount, clipped, tsCoreOutput);
+
+    if (overdriveAVoiceAmount > 0.0001f && ! rawMode && ! state.deferOverdriveAPostEq)
+        clipped = processOverdriveAPostEq (clipped, klonState, sr, overdriveAVoiceAmount, d);
+
 
     if (klonVoice > 0.0001f)
     {
         const float kneeT = k <= 0.5f ? k * 2.0f : (k - 0.5f) * 2.0f;
-        const float klonSoftInGain = k <= 0.5f ? juce::jmap (kneeT, 1.08f, 0.91f)
-                                               : juce::jmap (kneeT, 0.91f, 0.78f);
-        const float klonSoftK = k <= 0.5f ? juce::jmap (kneeT, 0.92f, 0.67f)
-                                          : juce::jmap (kneeT, 0.67f, 0.42f);
-        const float klonSoftOut = k <= 0.5f ? juce::jmap (kneeT, 1.10f, 0.96f)
-                                            : juce::jmap (kneeT, 0.96f, 0.84f);
-        const float klonSoftBlend = klonVoice * detail::smoothStep01 (k);
+        const float klonSoftInGain = (k <= 0.5f ? juce::jmap (kneeT, 1.08f, 0.91f)
+                                                : juce::jmap (kneeT, 0.91f, 0.78f))
+                                  * (1.0f + klonSymNeg * 0.10f - klonSymPos * 0.035f);
+        const float klonSoftK = (k <= 0.5f ? juce::jmap (kneeT, 0.92f, 0.67f)
+                                           : juce::jmap (kneeT, 0.67f, 0.42f))
+                              * (1.0f + klonSymNeg * 0.18f - klonSymPos * 0.14f);
+        const float klonSoftOut = (k <= 0.5f ? juce::jmap (kneeT, 1.10f, 0.96f)
+                                             : juce::jmap (kneeT, 0.96f, 0.84f))
+                                * (1.0f - klonSymNeg * 0.045f + klonSymPos * 0.025f);
+        const float klonSoftBlend = klonVoice * detail::clampF ((detail::smoothStep01 (k) + typeTone * 0.22f)
+                                                              * klonCore.softBlendScale
+                                                              * (1.0f + klonSymNeg * 0.20f + klonSymPos * 0.11f),
+                                                              0.0f, 1.0f);
         const float klonSoftIn = klonInput * klonDriveGain * klonSoftInGain;
-        const float klonSoft = klonState.softAdaa.process (klonSoftIn, klonSoftK)
-                             * klonSoftOut;
+        float klonSoft = klonState.softAdaa.process (klonSoftIn, klonSoftK)
+                       * klonSoftOut;
+        if (klonSymAbs > 0.0001f)
+        {
+            const float klonDriveSym = 0.20f + detail::smoothStep01 (d) * 0.80f;
+            const float softAsym = b * klonSymAbs * klonDriveSym
+                                * (0.145f + d * 0.980f + k * 0.260f + typeTone * 0.220f)
+                                * (1.0f + klonSymNeg * 0.46f + klonSymPos * 0.24f);
+            klonSoft += (klonSoft * klonSoft) / (0.48f + std::abs (klonSoft)) * softAsym;
+
+            // Klon-style SYM is dirty-path diode mismatch. Make it visible as
+            // one-sided conduction bend before the clean/dirty summing stage,
+            // rather than as a final output tilt or DC offset.
+            const float bendAmt = klonSymAbs
+                                * (0.115f + d * 0.440f + k * 0.170f + typeTone * 0.180f)
+                                * (1.0f + klonSymNeg * 0.34f + klonSymPos * 0.18f);
+            const float bendPolarity = b >= 0.0f ? 1.0f : -1.0f;
+            const float selectedHalf = klonSoft * bendPolarity;
+            const float bendStart = juce::jmap (d, 0.76f, 0.38f)
+                                  * juce::jmap (k, 1.04f, 0.84f);
+            if (selectedHalf > bendStart)
+            {
+                const float over = selectedHalf - bendStart;
+                const float bentHalf = bendStart
+                                      + over * (1.0f - bendAmt * 0.82f)
+                                      - (over * over) * bendAmt / (0.42f + over);
+                klonSoft = bendPolarity * bentHalf;
+            }
+        }
         clipped = juce::jmap (klonSoftBlend, clipped, klonSoft);
     }
 
-    if (legacyCleanBlend > 0.0001f)
-    {
-        const float clean = detail::clampF (x * (0.90f + 0.10f * voiceScale), -1.25f, 1.25f);
-        clipped = juce::jmap (legacyCleanBlend, clipped, clean);
-    }
 
     if (klonVoice > 0.0001f && ! rawMode)
     {
-        const float cleanHz = 452.0f + d * 78.0f;
+        const float cleanHz = (452.0f + d * 78.0f) * klonCore.cleanFreqScale;
         const float cleanCoeff = detail::onePoleCoeff (cleanHz, sr);
         klonState.cleanLP += (klonInput - klonState.cleanLP) * cleanCoeff;
 
-        const float dirtyLowHz = 205.0f + d * 105.0f;
+        const float dirtyLowHz = (205.0f + d * 105.0f) * klonCore.dirtyLowFreqScale;
         const float dirtyLowCoeff = detail::onePoleCoeff (dirtyLowHz, sr);
         klonState.dirtyLowLP += (clipped - klonState.dirtyLowLP) * dirtyLowCoeff;
 
         const float peakOpen = detail::smoothStep01 (detail::clampF (peak, 0.0f, 1.0f));
-        const float dirtyHz = 760.0f + d * 220.0f + peakOpen * (220.0f + d * 200.0f);
+        const float dirtyHz = (1450.0f + d * 1050.0f + peakOpen * (420.0f + d * 460.0f))
+                            * klonCore.dirtyFreqScale;
         const float dirtyCoeff = detail::onePoleCoeff (dirtyHz, sr);
         klonState.dirtyLP += (clipped - klonState.dirtyLP) * dirtyCoeff;
 
         const float cleanPath = klonState.cleanLP * juce::jmap (d, 1.10f, 0.86f);
-        const float dirtyToneMix = 0.95f + (1.0f - d) * 0.025f;
+        const float dirtyToneMix = detail::clampF (0.86f + (1.0f - d) * 0.04f
+                                                - typeTone * 0.025f
+                                                - klonSymNeg * (0.045f + d * 0.035f)
+                                                + klonSymPos * (0.018f + d * 0.018f)
+                                                + klonCore.dirtyToneOffset, 0.36f, 1.24f);
         const float dirtyFiltered = clipped + (klonState.dirtyLP - clipped) * dirtyToneMix;
-        const float dirtyPath = dirtyFiltered - klonState.dirtyLowLP * (0.30f + d * 0.20f);
+        const float dirtyPath = dirtyFiltered - klonState.dirtyLowLP * (0.30f + d * 0.20f)
+                                                    * klonCore.dirtyLowMixScale;
 
-        const float cleanAmount = 0.46f * std::pow (1.0f - d, 2.65f);
-        const float dirtyAmount = 1.0f - cleanAmount * 0.42f;
-        const float klonSum = processKlonPostEq (dirtyPath * dirtyAmount + cleanPath * cleanAmount,
-                                                 klonState, sr, peak, b, d);
+        const float cleanFloor = juce::jmap (typeTone, 0.030f, 0.014f)
+                               * detail::smoothStep01 (d);
+        const float cleanSymMask = 1.0f - klonSymNeg * (0.46f + d * 0.24f + typeTone * 0.18f)
+                                        - klonSymPos * (0.22f + d * 0.12f + typeTone * 0.08f);
+        const float cleanAmount = detail::clampF (cleanFloor
+                                + 0.46f * std::pow (1.0f - d, 2.65f)
+                                * juce::jmap (typeTone, 1.0f, 0.72f)
+                                * detail::clampF (cleanSymMask, 0.45f, 1.0f)
+                                * klonCore.cleanAmountScale, 0.0f, 0.90f);
+        const float dirtyAmount = (1.0f - cleanAmount * 0.42f)
+                                * juce::jmap (typeTone, 0.96f, 1.16f)
+                                * (1.0f + klonSymNeg * 0.16f + klonSymPos * 0.08f)
+                                * klonCore.dirtyAmountScale;
+        const float klonPrePost = dirtyPath * dirtyAmount + cleanPath * cleanAmount;
+        float klonSum = state.deferFullKlonPostEq
+            ? klonPrePost
+            : processKlonPostEq (klonPrePost, klonState, sr, peak, b, d);
+
         clipped = juce::jmap (klonVoice, clipped, klonSum);
     }
 
     const float klonMakeup = juce::jmap (klonVoice, 1.0f, 1.0f + d * 0.44f);
-    const float finalTrim = voiceLift * juce::jmap (d, 0.98f, 0.92f) * klonMakeup;
+    const float finalTrim = rawMode ? rawUnityComp
+                                    : voiceLift * juce::jmap (d, 0.98f, 0.92f) * klonMakeup;
 
     return clipped * finalTrim;
+}
+
+// CLIPPER: transparent mastering-style sample clipper. No voicing EQ and no
+// RAW variant; DRIVE lowers the threshold, KNEE controls edge/fold hold, SYM
+// offsets positive/negative thresholds, TYPE morphs from sample clip to arc fold,
+// and PEAK keeps the existing transient-shaving semantics from OVERDRIVE A/B.
+inline float processClipper (float x, float drive, float knee, float type, float symmetry,
+                              adaa::ClipperADAA& adaaState) noexcept
+{
+    juce::ignoreUnused (adaaState);
+
+    const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float k = detail::clampF (knee, 0.0f, 1.0f);
+    const float t = detail::smoothStep01 (detail::clampF (type, 0.0f, 1.0f));
+    const float b = detail::clampF (symmetry * 2.00f, -1.0f, 1.0f);
+
+    const float threshold = detail::interpDrive5 (d, 1.0f, 0.76f, 0.48f, 0.22f, 0.035f);
+    const float asym = b * 0.45f;
+    const float thresholdPos = detail::clampF (threshold * (1.0f + asym), 0.01f, 1.60f);
+    const float thresholdNeg = detail::clampF (threshold * (1.0f - asym), 0.01f, 1.60f);
+
+    const float kneeScale = k * k;
+    const float kneePos = juce::jlimit (1.0e-5f, thresholdPos, thresholdPos * (0.002f + 0.55f * kneeScale));
+    const float kneeNeg = juce::jlimit (1.0e-5f, thresholdNeg, thresholdNeg * (0.002f + 0.55f * kneeScale));
+
+    const auto asymmetricBend = [] (float v, float amount) noexcept
+    {
+        if (std::abs (amount) < 1.0e-6f)
+            return v;
+
+        const float mag = detail::clampF (std::abs (v) / kRawCeiling, 0.0f, 1.0f);
+        const float weight = 0.35f + 0.65f * detail::smoothStep01 (mag);
+        const float polarity = v >= 0.0f ? 1.0f : -1.0f;
+        const float gain = juce::jlimit (0.35f, 1.65f, 1.0f + amount * polarity * weight);
+        return v * gain;
+    };
+
+    const float bendAmount = b * (0.18f + 0.10f * t);
+    const float xb = asymmetricBend (x, bendAmount);
+
+    const float hard = adaa::ClipperADAA::clip (xb, thresholdPos, thresholdNeg, kneePos, kneeNeg);
+
+    const auto arcFoldBranch = [] (float v, float threshold, float driveAmt, float kneeAmt) noexcept
+    {
+        const float T = juce::jmax (threshold, 1.0e-4f);
+        // Drive in the arc mode must push the signal into the fold, not just
+        // change the fold shape. Use the same threshold that drives the hard
+        // clip branch so TYPE 2 tracks TYPE 1 drive instead of cancelling it.
+        const float mag = std::abs (v) / T;
+        const float driveCurve = std::pow (detail::clampF (driveAmt, 0.0f, 1.0f), 1.45f);
+        const float phase = 0.5f * kPi + driveCurve * kPi;
+
+        float folded = std::abs (std::sin (mag * phase));
+
+        // High fold drive creates intentional internal zero-crossings. Without
+        // density recovery inside the transfer curve, TYPE 2 can measure and
+        // feel less driven than TYPE 1 even though it is folding more. This is
+        // not output makeup: it is part of the arc/fold transfer itself.
+        const float foldDensityExp = juce::jmap (driveCurve, 1.0f, 0.35f);
+        folded = std::pow (folded, foldDensityExp);
+        const float clipDensity = detail::smoothStep01 (std::min (mag, 1.0f));
+        const float driveFill = 0.65f * driveCurve;
+        folded = juce::jmap (driveFill, folded, clipDensity);
+
+        const float hold = 0.10f * detail::smoothStep01 (detail::clampF (kneeAmt, 0.0f, 1.0f));
+        const float held = 1.0f - std::pow (1.0f - folded, 1.0f + 12.0f * hold);
+        const float shaped = juce::jmap (hold, folded, held);
+        const float kneeComp = 1.0f / (1.0f + 0.65f * hold);
+        return T * shaped * kneeComp;
+    };
+
+    const float soft = xb >= 0.0f ? arcFoldBranch (xb, thresholdPos, d, k)
+                                  : -arcFoldBranch (-xb, thresholdNeg, d, k);
+    float y = juce::jmap (t, hard, soft);
+
+    const float outputScale = 2.0f / juce::jmax (0.02f, thresholdPos + thresholdNeg);
+    y *= outputScale;
+    return detail::clampF (y, -kRawCeiling, kRawCeiling);
+}
+
+inline void processDeferredFullKlonPostEq (State& state,
+                                           float* left, float* right,
+                                           int numSamples,
+                                           float drive, float mod,
+                                           int seriesCount,
+                                           float sampleRate,
+                                           bool rawMode) noexcept
+{
+    if (rawMode || numSamples <= 0 || left == nullptr)
+        return;
+
+    const float m = detail::clampF (mod, 0.0f, 1.0f);
+    const float klonVoice = m <= 0.5f ? 0.0f : detail::smoothStep01 ((m - 0.5f) * 2.0f);
+    if (klonVoice <= 0.0001f)
+        return;
+
+    const float effectiveDrive = detail::clipperADrive (drive, mod);
+    const int passes = juce::jlimit (1, kMaxSeries, seriesCount);
+    auto processChannel = [&] (float* data, int ch)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float dry = data[i];
+            float wet = dry;
+            for (int sp = 0; sp < passes; ++sp)
+            {
+                auto& post = state.overdriveBNativePost[sp][ch];
+                wet = processKlonPostEqBank (wet, post.klonPostEq, sampleRate, effectiveDrive);
+            }
+            data[i] = juce::jmap (klonVoice, dry, wet);
+        }
+    };
+
+    processChannel (left, 0);
+    if (right != nullptr && right != left)
+        processChannel (right, 1);
+}
+
+inline void processDeferredOverdriveAPostEq (State& state,
+                                                 float* left, float* right,
+                                                 int numSamples,
+                                                 float drive, float mod,
+                                                 int seriesCount,
+                                                 float sampleRate,
+                                                 bool rawMode) noexcept
+{
+    if (rawMode || numSamples <= 0 || left == nullptr)
+        return;
+
+    const float overdriveAVoiceAmount = overdriveAVoice (mod);
+    if (overdriveAVoiceAmount <= 0.0001f)
+        return;
+
+    const float effectiveDrive = detail::clipperADrive (drive, mod);
+    const int passes = juce::jlimit (1, kMaxSeries, seriesCount);
+    auto processChannel = [&] (float* data, int ch)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float y = data[i];
+            for (int sp = 0; sp < passes; ++sp)
+            {
+                auto& post = state.overdriveANativePost[sp][ch];
+                y = processOverdriveAPostEqBank (y, post.overdriveAPostEq,
+                                                     post.overdriveAPostHiCutLP,
+                                                     sampleRate, overdriveAVoiceAmount, effectiveDrive);
+            }
+            data[i] = y;
+        }
+    };
+
+    processChannel (left, 0);
+    if (right != nullptr && right != left)
+        processChannel (right, 1);
 }
 
 // TAPE: ADAA tape stage with two fitted families:
@@ -4389,7 +6030,7 @@ inline float processClipper (float x, float drive, float girth, float bias, floa
 //   MOD=1   -> current smoother tape reference
 // Interpolate parameters, not outputs, so the mode remains a single cohesive
 // nonlinear path instead of behaving like a parallel blend.
-inline float processTape (float x, float drive, float bias, float mod,
+inline float processTape (float x, float drive, float girth, float bias, float mod,
                           bool rawMode, State& state, int ch, float sr,
                           adaa::TapeTanhADAA& adaaState,
                           bool advanceOsc = true) noexcept
@@ -4399,15 +6040,18 @@ inline float processTape (float x, float drive, float bias, float mod,
     (void) advanceOsc;
     juce::ignoreUnused (rawMode);
 
-    // Flutter/head-bump remain out for now, but keep tapeFlux alive so Rabbit
-    // can use a mild memory compression stage instead of sounding like a plain
-    // static level boost.
-    state.bumpZ1[sp][ch] = 0.0f;
+    // Keep the old low-frequency head-bump path disabled. bumpZ1 is reused as
+    // a tiny magnetic HF-loss memory, so Tape can darken with drive/over-bias
+    // inside the core without adding another post-EQ layer.
     state.bumpZ2[sp][ch] = 0.0f;
     if (ch == 0)
         state.flutterPhase = 0.0f;
 
+
     const float d = detail::clampF (drive, 0.0f, 1.0f);
+    const float driveOver = std::max (0.0f, drive - 1.0f);
+    const float driveExtraGain = 1.0f + driveOver;
+    const float character = detail::smoothStep01 (detail::clampF (girth, 0.0f, 1.0f));
     const float m = detail::clampF (mod,   0.0f, 1.0f);
     const float rabbitMod = 1.0f - m;
 
@@ -4441,27 +6085,29 @@ inline float processTape (float x, float drive, float bias, float mod,
 
     // Tape B: Rabbit-style family measured from the second reference (MOD=0%).
     const float pregainB = detail::interpDrive5 (d,
-                                                 0.78f, 1.02f, 1.55f, 2.00f, 2.55f);
+                                                 0.90f, 1.32f, 2.35f, 4.70f, 8.20f);
     const float totalGainB = detail::interpDrive5 (d,
                                                    2.35f, 2.28f, 2.20f, 2.14f, 2.10f);
 
-    const float pregain = juce::jmap (rabbitMod, pregainA, pregainB);
+    const float pregain = juce::jmap (rabbitMod, pregainA, pregainB)
+                          * driveExtraGain
+                          * (1.0f + character * (0.34f + d * 0.44f));
     const float totalGain = juce::jmap (rabbitMod, totalGainA, totalGainB);
 
     // Tape bias is better treated as under/over-bias behaviour than as a plain
     // DC offset. Negative values under-bias the record stage (brighter, grittier);
     // positive values over-bias it (smoother, slightly softer, less HF aggression).
-    const float biasClamped = detail::clampF (bias, -1.0f, 1.0f);
+    const float biasClamped = detail::clampF (bias * 1.65f, -1.0f, 1.0f);
     const float underBias = std::max (-biasClamped, 0.0f);
     const float overBias  = std::max ( biasClamped, 0.0f);
-    const float biasShift = biasClamped * (0.0005f + d * 0.0010f);
+    const float biasShift = biasClamped * (0.0035f + d * 0.0062f);
     float satIn = (x + biasShift) * pregain;
-    satIn *= 1.0f + underBias * (0.04f + d * 0.08f)
-                  - overBias  * (0.03f + d * 0.05f);
+    satIn *= 1.0f + underBias * (0.065f + d * 0.120f)
+                  - overBias  * (0.045f + d * 0.080f);
     if (underBias > 0.0001f)
     {
         const float oddBias = satIn * std::abs (satIn);
-        satIn += oddBias * underBias * (0.004f + d * 0.012f);
+        satIn += oddBias * underBias * (0.008f + d * 0.022f);
     }
 
     // Magnetic stress: only hot material or high DRIVE should load the tape.
@@ -4475,7 +6121,8 @@ inline float processTape (float x, float drive, float bias, float mod,
     const float stressTarget = juce::jlimit (
         0.0f, 1.0f,
         (1.0f - adaa::fastExp (-stressOverDb / 10.0f))
-            * (0.25f + driveStress * 0.75f));
+            * (0.25f + driveStress * 0.75f)
+            * (1.0f + character * 0.88f));
     const float stressAttackHz = 5.5f + driveStress * 7.5f;      // ~29 ms -> ~12 ms
     const float stressReleaseHz = 0.80f + driveStress * 0.55f;   // ~199 ms -> ~118 ms
     const float stressCoeff = detail::onePoleCoeff (
@@ -4500,16 +6147,30 @@ inline float processTape (float x, float drive, float bias, float mod,
     // likely source of the pathological spikes seen in the diagnostics.
     float raw = adaaState.process (satIn, 1.0f);
 
+    if (character > 0.0001f)
+    {
+        const float density = character * (0.030f + d * 0.072f);
+        const float fluxBody = raw * (1.0f - std::min (1.0f, std::abs (raw)))
+                           * character * (0.026f + d * 0.066f);
+        raw += raw * std::abs (raw) * density + fluxBody;
+    }
+
+    if (std::abs (biasClamped) > 0.0001f)
+    {
+        const float evenBias = biasClamped * (0.048f + d * 0.110f + character * 0.088f);
+        raw += (raw * raw) / (1.0f + std::abs (raw)) * evenBias;
+    }
+
     if (underBias > 0.0001f)
     {
         const float oddBias = raw * std::abs (raw);
-        raw += oddBias * underBias * (0.006f + d * 0.015f);
+        raw += oddBias * underBias * (0.018f + d * 0.040f);
     }
     if (overBias > 0.0001f)
     {
         const float oddBias = raw * std::abs (raw);
-        raw -= oddBias * overBias * (0.004f + d * 0.010f);
-        raw *= 1.0f - overBias * (0.02f + d * 0.03f);
+        raw -= oddBias * overBias * (0.009f + d * 0.018f);
+        raw *= 1.0f - overBias * (0.025f + d * 0.040f);
     }
 
     if (stressCore > 0.0001f)
@@ -4518,6 +6179,29 @@ inline float processTape (float x, float drive, float bias, float mod,
                                   * (0.65f + rabbitMod * 0.35f);
         raw += raw * std::abs (raw) * stressDensity;
     }
+
+    {
+        const float hfLoss = detail::clampF (
+            overBias * (0.040f + d * 0.090f)
+          + stressCore * (0.025f + d * 0.055f)
+          + rabbitMod * d * (0.010f + character * 0.018f)
+          - underBias * 0.018f,
+            0.0f, 0.32f);
+        if (hfLoss > 0.0001f)
+        {
+            const float hfTrackHz = juce::jmap (rabbitMod, 6800.0f, 4200.0f)
+                                  * (1.0f - overBias * 0.18f);
+            float& hfMemory = state.bumpZ1[sp][ch];
+            hfMemory += (raw - hfMemory) * detail::onePoleCoeff (hfTrackHz, sr);
+            raw = juce::jmap (hfLoss, raw, hfMemory);
+        }
+        else
+        {
+            state.bumpZ1[sp][ch] += (raw - state.bumpZ1[sp][ch])
+                                  * detail::onePoleCoeff (9000.0f, sr);
+        }
+    }
+
 
     if (rabbitMod > 0.0001f)
     {
@@ -4591,7 +6275,8 @@ inline void processBlock (State& state,
                           int   seriesCount = 1,
                           bool  isSafetyLpfOn = false,
                           bool  rawMode = false,
-                          SatDiag::Collector* diagCollector = nullptr) noexcept
+                          SatDiag::Collector* diagCollector = nullptr,
+                          int channelsToProcessParam = 2) noexcept
 {
 
     // CLEAN model: 1:1 pass-through. Flush model state once on entry so
@@ -4611,6 +6296,8 @@ inline void processBlock (State& state,
             state.detailState[ch].reset();
             for (int sp = 0; sp < kMaxSeries; ++sp)
             {
+                state.overdriveBNativePost[sp][ch].reset();
+                state.overdriveANativePost[sp][ch].reset();
                 state.react[sp][ch].reset();
                 state.mbReact[sp][ch].reset();
                 state.sagEnvelope[sp][ch] = 0.0f;
@@ -4619,12 +6306,13 @@ inline void processBlock (State& state,
                 state.transistorPeakCatch[sp][ch].reset();
                 state.triodeReact[sp][ch].reset();
                 state.emphasis[sp][ch].reset();
+                state.componentVoicing[sp][ch].reset();
                 state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
                 state.triodeAdaa[sp][ch].reset();
                 state.transistorCoreAdaa[sp][ch].reset();
                 state.tapeAdaa[sp][ch].reset();
                 state.clipperAdaa[sp][ch].reset();
-                state.clipperKlon[sp][ch].reset();
+                state.overdriveTone[sp][ch].reset();
                 state.girthAdaa[sp][ch].reset();
                 state.triodeBlock[sp][ch] = 0.0f;
                 state.powerSag[sp][ch] = 0.0f;
@@ -4633,6 +6321,8 @@ inline void processBlock (State& state,
                 state.triodeBodyPreLP[sp][ch] = 0.0f;
                 state.triodeBodyPostLP[sp][ch] = 0.0f;
                 state.triodeCouplingDc[sp][ch] = 0.0f;
+                state.tubeBiasPostDcX[sp][ch] = 0.0f;
+                state.tubeBiasPostDcY[sp][ch] = 0.0f;
                 state.interStageLPF[sp][ch] = 0.0f;
                 state.interStageDCx[sp][ch] = 0.0f;
                 state.interStageDCy[sp][ch] = 0.0f;
@@ -4661,13 +6351,16 @@ inline void processBlock (State& state,
 
     // DC blocker coefficient
     const float dcR = 1.0f - (kTwoPi * 5.0f / sampleRate);
+    const int channelsToProcess = juce::jlimit (1, 2, channelsToProcessParam);
     // REACT window size (model-dependent base, scaled by react amount)
     int reactBaseWindow = 1024;
     switch (model)
     {
         case Model::Tube:        reactBaseWindow = 1024; break;
         case Model::Diode:       reactBaseWindow = 2048; break;
-        case Model::Clipper:     reactBaseWindow = 2048; break;
+        case Model::OverdriveA:
+        case Model::OverdriveB:
+        case Model::Clipper:    reactBaseWindow = 2048; break;
         case Model::Tape:        reactBaseWindow = 2048; break;
         default:                 break;
     }
@@ -4690,7 +6383,8 @@ inline void processBlock (State& state,
             emphCoeffs.preShAlt  = detail::onePoleCoeff (2600.0f, sampleRate);
             emphCoeffs.postLPAlt = detail::onePoleCoeff (5600.0f, sampleRate);
             break;
-        case Model::Clipper:
+        case Model::OverdriveA:
+        case Model::OverdriveB:
             emphCoeffs.preHP  = detail::onePoleCoeff (720.0f,  sampleRate);
             emphCoeffs.preSh  = detail::onePoleCoeff (1800.0f, sampleRate);
             emphCoeffs.postLP = detail::onePoleCoeff (2200.0f, sampleRate);
@@ -4714,9 +6408,6 @@ inline void processBlock (State& state,
     const float mbAirCoeff = detail::onePoleCoeff (4000.0f, sampleRate);
     const DetailCoeffs detailCoeffs = makeDetailCoeffs (sampleRate);
 
-    // TRANSISTOR owns its colour inside the black box instead of relying on
-    // generic interstage coupling.
-
     // Precomputed safety LPF coefficients (constant since fc = 0.4xsr)
     SafetyLPFCoeffs safetyCoeffs;
     if (isSafetyLpfOn)
@@ -4736,10 +6427,17 @@ inline void processBlock (State& state,
 
     // -- Per-block hoisted computations (avoid per-sample transcendentals) --
     // Drive curve: std::pow only once per block (driveParam is constant within a block)
-    const float driveCurved = applyDriveCurve (driveParam, model);
+    const float driveCurved = mapDriveParamToEffective (driveParam, model);
     const float detailDriveTarget = detail::clampF (driveParam, 0.0f, 1.0f);
     const float detailTarget = detail::clampF (detailParam, 0.0f, 1.0f);
 
+    const bool useComponentVoicing = isComponentVoicingModel (model) && !rawMode;
+    const ComponentVoicingSet componentVoicingSpec = useComponentVoicing
+        ? makeComponentVoicingSet (model, detailDriveTarget, girthParam, modParam, biasParam)
+        : ComponentVoicingSet {};
+
+    // Component models use declarative pre/post voicing. Overdrive A/B and
+    // Clipper keep their own dedicated analogue/matching paths.
     for (int ch = 0; ch < 2; ++ch)
     {
         for (int sp = 0; sp < kMaxSeries; ++sp)
@@ -4769,6 +6467,7 @@ inline void processBlock (State& state,
                     state.mbReact[sp][ch].reset();
                     state.sagEnvelope[sp][ch] = 0.0f;
                     state.emphasis[sp][ch].reset();
+                    state.componentVoicing[sp][ch].reset();
                     state.dynamicsComp[sp][ch].reset();
                     state.clipperPeak[sp][ch].reset();
                     state.transistorPeakCatch[sp][ch].reset();
@@ -4778,8 +6477,8 @@ inline void processBlock (State& state,
                     state.transistorCoreAdaa[sp][ch].reset();
                     state.tapeAdaa[sp][ch].reset();
                     state.clipperAdaa[sp][ch].reset();
-                    state.clipperKlon[sp][ch].reset();
-                    state.interStageDCx[sp][ch] = 0.0f;
+                    state.overdriveTone[sp][ch].reset();
+                        state.interStageDCx[sp][ch] = 0.0f;
                     state.interStageDCy[sp][ch] = 0.0f;
                     state.interStageLPF[sp][ch] = 0.0f;
                     state.bumpZ1[sp][ch] = 0.0f;
@@ -4828,11 +6527,12 @@ inline void processBlock (State& state,
                     state.clipperPeak[sp][ch].reset();
                     state.transistorPeakCatch[sp][ch].reset();
                     state.emphasis[sp][ch].reset();
+                    state.componentVoicing[sp][ch].reset();
                     state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
                     state.transistorCoreAdaa[sp][ch].reset();
                     state.tapeAdaa[sp][ch].reset();
                     state.clipperAdaa[sp][ch].reset();
-                    state.clipperKlon[sp][ch].reset();
+                    state.overdriveTone[sp][ch].reset();
                     state.powerSag[sp][ch] = 0.0f;
                     state.transistorPreHP[sp][ch] = 0.0f;
                     state.transistorPreEdge[sp][ch] = 0.0f;
@@ -4870,7 +6570,10 @@ inline void processBlock (State& state,
                 state.triodeBodyPreLP[sp][ch] = 0.0f;
                 state.triodeBodyPostLP[sp][ch] = 0.0f;
                 state.triodeCouplingDc[sp][ch] = 0.0f;
+                state.tubeBiasPostDcX[sp][ch] = 0.0f;
+                state.tubeBiasPostDcY[sp][ch] = 0.0f;
                 state.emphasis[sp][ch].reset();
+                state.componentVoicing[sp][ch].reset();
                 state.dcX[sp][ch] = state.dcY[sp][ch] = 0.0f;
                 state.triodeAdaa[sp][ch].reset();
                 state.girthAdaa[sp][ch].reset();
@@ -4891,6 +6594,7 @@ inline void processBlock (State& state,
             for (int ch = 0; ch < 2; ++ch)
             {
                 state.emphasis[sp][ch].reset();
+                state.componentVoicing[sp][ch].reset();
                 state.dcX[sp][ch] = 0.0f;
                 state.dcY[sp][ch] = 0.0f;
             }
@@ -4921,7 +6625,7 @@ inline void processBlock (State& state,
         // -- Instability: analog component tolerance + slow thermal drift --
         // Static tolerance (per-instance hash): each "unit" has unique character.
         // Thermal drift stays continuous and only touches AC-safe controls.
-        float driveMod = 1.0f, shapeMod = 0.0f;
+        float driveMod = 1.0f, inputMod = 1.0f, shapeMod = 0.0f;
         if (instabilityAmount > 0.001f)
         {
             // Init static tolerances once per loader instance.
@@ -4936,9 +6640,11 @@ inline void processBlock (State& state,
             // Very slow thermal drift: 0.03x0.15 Hz (one full cycle per 7x33 seconds)
             const float rate = 0.03f + instabilityAmount * 0.12f;
             state.instability.gainDrift.advance  (rate,         instabilityAmount, sampleRate);
+            state.instability.inputDrift.advance (rate * 0.57f, instabilityAmount, sampleRate);
             state.instability.shapeDrift.advance (rate * 1.43f, instabilityAmount, sampleRate);
 
             const float gainDynamic  = state.instability.gainDrift.dynamic;
+            const float inputDynamic = state.instability.inputDrift.dynamic;
             const float shapeDynamic = state.instability.shapeDrift.dynamic;
             constexpr float kInstabilityDynamicBase = 0.30f;
             constexpr float kInstabilityDynamicLift = 0.12f;
@@ -4947,6 +6653,7 @@ inline void processBlock (State& state,
             const float dynamicWeight = kInstabilityDynamicBase + kInstabilityDynamicLift * dynamicBlend;
             const float staticWeight = 1.0f - dynamicWeight;
             const float gainInstability  = (state.instability.gainDrift.staticTol  * staticWeight + gainDynamic  * dynamicWeight) * instabilityAmount;
+            const float inputInstability = (state.instability.inputDrift.staticTol * staticWeight + inputDynamic * dynamicWeight) * instabilityAmount;
             const float shapeInstability = (state.instability.shapeDrift.staticTol * staticWeight + shapeDynamic * dynamicWeight) * instabilityAmount;
 
             const float ceilingScale = 1.0f + instabilityAmount;
@@ -4956,6 +6663,12 @@ inline void processBlock (State& state,
             // but reaches a clearly unstable unit at 100%.
             driveMod = 1.0f + gainInstability  * (0.08f  * ceilingScale); // +/-8..16% gain (tube gm + resistor dividers)
             shapeMod =        shapeInstability * (0.02f  * ceilingScale); // +/-2..4% shape (plate Rp instability)
+
+            // Separate input tolerance/thermal wobble. This is intentionally small
+            // and dB-based: at INST 100% it moves the level by up to about +/-1 dB
+            // before the component, without changing the user drive mapping.
+            const float inputDb = detail::clampF (inputInstability * 1.0f, -1.0f, 1.0f);
+            inputMod = std::pow (10.0f, inputDb / 20.0f);
         }
 
         const float detailChainInput[2] = { left[i], right[i] };
@@ -4972,10 +6685,10 @@ inline void processBlock (State& state,
             const bool isFirst = (sp == 0);
             const bool isLast  = (sp == seriesCount - 1);
 
-            for (int ch = 0; ch < 2; ++ch)
+            for (int ch = 0; ch < channelsToProcess; ++ch)
             {
                 float& sample = (ch == 0) ? left[i] : right[i];
-                float x = sample;
+                float x = sample * (isFirst ? inputMod : 1.0f);
                 auto& stageReact = state.react[sp][ch];
                 auto& stageMbReact = state.mbReact[sp][ch];
                 auto& stageSagEnvelope = state.sagEnvelope[sp][ch];
@@ -4987,19 +6700,24 @@ inline void processBlock (State& state,
                 auto& stageDcY = state.dcY[sp][ch];
 
                 // -- Safety LPF (first pass only, x1 mode) --
-                if (isSafetyLpfOn && isFirst && !rawMode)
+                if (isSafetyLpfOn && isFirst && !rawMode && model != Model::Clipper)
                     x = processSafetyLPF (state.safetyLpf[ch], x, safetyCoeffs);
 
 
                 // Tube bias is DC-sensitive, so instability stays out of its core
                 // operating point and is applied post-coupling instead.
                 const bool tubeCoreInstabilitySafe = model == Model::Tube;
+                const float typeEdge = std::abs (mod - 0.5f) * 2.0f;
+                const float edgeShapeMod = shapeMod * (1.0f + 1.5f * typeEdge);
                 float effDrive = tubeCoreInstabilitySafe ? drive : drive * driveMod;
                 float effBias  = bias;
-                float effMod   = tubeCoreInstabilitySafe ? mod : detail::clampF (mod + shapeMod, 0.0f, 1.0f);
+                float effMod   = tubeCoreInstabilitySafe ? mod : detail::modulateUnitAtEdges (mod, edgeShapeMod);
 
                 // -- INTERNAL PRE-EMPHASIS (per series pass, unless rawMode) --
-                if (!rawMode && model != Model::Transistor)
+                if (useComponentVoicing)
+                    x = processComponentPreVoicing (x, state.componentVoicing[sp][ch],
+                                                    componentVoicingSpec, sampleRate);
+                else if (!rawMode && model != Model::Transistor)
                     x = preEmphasize (x, stageEmphasis, model, effDrive, effMod, emphCoeffs);
 
                 // -- REACT: per-stage energy tracking + model processing --
@@ -5030,16 +6748,20 @@ inline void processBlock (State& state,
                     {
                         case Model::Diode:
                         {
-                            const float compDry = x;
-                            const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
-                            const DynamicsCompResult comp = processDiodeComp (
-                                x, stageDynamicsComp, react, effDrive, program, sampleRate);
-                            const float compMix = detail::compressionBlendMix (react);
-                            x = juce::jmap (compMix, compDry, comp.sample);
-                            diodeReactColor = detail::clampF (comp.amount * compMix, 0.0f, 1.0f);
+                            const float reactDepth = detail::smoothStep01 (detail::clampF (react, 0.0f, 1.0f));
+                            const float program = detail::smoothStep01 (detail::clampF (sagEnv, 0.0f, 1.0f));
+                            // DIODE REACT is conductance memory, not a gain compressor.
+                            // Keep level untouched here and let the diode core move threshold/knee/asymmetry.
+                            diodeReactColor = detail::clampF (
+                                reactDepth * (0.32f + program * 0.68f) * (0.82f + effDrive * 0.18f),
+                                0.0f, 1.0f);
                             sagPre = 1.0f;
                             sagPost = 1.0f;
-                            stageSagEnvelope = comp.amount;
+                            stageDynamicsComp.gain += (1.0f - stageDynamicsComp.gain) * 0.20f;
+                            stageDynamicsComp.env *= 0.5f;
+                            stageDynamicsComp.hfEnv *= 0.5f;
+                            stageDynamicsComp.bodyEnv *= 0.5f;
+                            stageSagEnvelope = diodeReactColor;
                             break;
                         }
                         case Model::Tape:
@@ -5056,6 +6778,8 @@ inline void processBlock (State& state,
                             stageSagEnvelope = comp.amount;
                             break;
                         }
+                        case Model::OverdriveA:
+                        case Model::OverdriveB:
                         case Model::Clipper:
                         {
                             const float program = detail::clampF (sagEnv, 0.0f, 1.0f);
@@ -5086,7 +6810,7 @@ inline void processBlock (State& state,
                     stageDynamicsComp.bodyEnv *= 0.5f;
                     stageSagEnvelope = 0.0f;
                 }
-                else if (model == Model::Clipper)
+                else if (model == Model::OverdriveA || model == Model::OverdriveB || model == Model::Clipper)
                 {
                     stageClipperPeak.peakEnv *= 0.5f;
                     stageClipperPeak.bodyEnv *= 0.5f;
@@ -5173,16 +6897,23 @@ inline void processBlock (State& state,
                     }
                     case Model::Tape:
                     {
-                        x = processTape (x, effDrive, effBias, effMod, rawMode,
+                        x = processTape (x, effDrive, girth, effBias, effMod, rawMode,
                                          state, ch, sampleRate,
                                          state.tapeAdaa[sp][ch], isFirst);
                         break;
                     }
+                    case Model::OverdriveA:
+                    case Model::OverdriveB:
+                    {
+                        x = processOverdriveCore (x, effDrive, girth, effBias, effMod, react,
+                                            model, rawMode, state, ch, sampleRate,
+                                            state.clipperAdaa[sp][ch]);
+                        break;
+                    }
                     case Model::Clipper:
                     {
-                        x = processClipper (x, effDrive, girth, effBias, effMod, react,
-                                            rawMode, state, ch, sampleRate,
-                                            state.clipperAdaa[sp][ch]);
+                        x = processClipper (x, effDrive, girth, effMod, effBias,
+                                             state.clipperAdaa[sp][ch]);
                         break;
                     }
                     default: break;
@@ -5227,7 +6958,9 @@ inline void processBlock (State& state,
                 {
                     x = applyTapeGirth (x, girth);
                 }
-                else if (model == Model::Transistor || model == Model::Clipper
+                else if (model == Model::Transistor || model == Model::OverdriveA
+                      || model == Model::OverdriveB
+                      || model == Model::Clipper
                       || model == Model::Diode)
                 {
                     // CHAR/COLOR is already encoded inside these cores.
@@ -5240,17 +6973,32 @@ inline void processBlock (State& state,
                     x = applyGirth (x, girth, state.girthAdaa[sp][ch]);
 
                 // -- INTERNAL DE-EMPHASIS (per series pass, unless rawMode) --
-                if (!rawMode && model != Model::Transistor)
+                if (useComponentVoicing)
+                    x = processComponentPostVoicing (x, state.componentVoicing[sp][ch],
+                                                     componentVoicingSpec, sampleRate);
+                else if (!rawMode && model != Model::Transistor)
                     x = deEmphasize (x, stageEmphasis, model, effDrive, effMod, emphCoeffs);
 
+
                 // -- DC BLOCKER (1st-order HPF at 5Hz, per series pass) --
-                if (!rawMode)
+                if (!rawMode && model != Model::Clipper)
                 {
                     const float dcOut = x - stageDcX + dcR * stageDcY;
                     stageDcX = x;
                     stageDcY = dcOut;
                     x = dcOut;
                 }
+
+                if (model == Model::Tube)
+                {
+                    // Tube BIAS is handled inside processTriode as an operating
+                    // point shift. Do not add another post-DC half-cycle tilt here:
+                    // it turns bias into output imbalance and breaks +BIAS/-BIAS
+                    // mirror behaviour. Keep the old dedicated states flushed.
+                    state.tubeBiasPostDcX[sp][ch] = 0.0f;
+                    state.tubeBiasPostDcY[sp][ch] = 0.0f;
+                }
+
 
                 if (model == Model::Tube && isLast)
                     x *= driveMod;
@@ -5259,10 +7007,9 @@ inline void processBlock (State& state,
                     diagCollector->feedDc (x);
 
                 // -- Model level trim --
-                // Transistor is calibrated per black-box stage so SERIES feeds
-                // each repeated stage at a stable nominal level. Tape/Tube keep
-                // their existing final-chain trim because their stages are
-                // internally level-calibrated.
+                // Static trims are applied per black-box stage so SERIES feeds
+                // each repeated stage at a stable nominal level. The measured
+                // series/hot-input corrections remain final-chain trims.
                 if (model == Model::Transistor)
                 {
                     x *= getTransistorLevelTrim (drive, mod, girth, react);
@@ -5270,22 +7017,46 @@ inline void processBlock (State& state,
                         x *= getTransistorLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount)
                            * getHotInputReferenceCorrection (model, detailDrive, girth, mod, state.currentSeriesCount);
                 }
-                else if (isLast)
+                else if (model == Model::Tape)
                 {
-                    if (model == Model::Tape)
-                        x *= getTapeLevelTrim (drive, mod, girth, react)
+                    const float stageTrim = getTapeLevelTrim (drive, mod, girth, react);
+                    x *= stageTrim;
+                    if (isLast)
+                        x *= getStageTrimMigrationCorrection (model, state.currentSeriesCount)
                            * getTapeLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount)
                            * getHotInputReferenceCorrection (model, detailDrive, girth, mod, state.currentSeriesCount);
-                    else if (model == Model::Tube)
-                        x *= getTriodeLevelTrim (drive, mod, state.currentSeriesCount)
+                }
+                else if (model == Model::Tube)
+                {
+                    const float stageTrim = getTriodeLevelTrim (drive, mod, state.currentSeriesCount);
+                    x *= stageTrim;
+                    if (isLast)
+                        x *= getStageTrimMigrationCorrection (model, state.currentSeriesCount)
                            * getTriodeLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount)
                            * getHotInputReferenceCorrection (model, detailDrive, girth, mod, state.currentSeriesCount);
-                    else if (model == Model::Diode)
+                }
+                else if (model == Model::OverdriveA || model == Model::OverdriveB)
+                {
+                    if (!rawMode)
+                    {
+                        const float overdriveVoice = model == Model::OverdriveB ? 1.0f : 0.0f;
+                        x *= getClipperLevelTrim (drive, girth, overdriveVoice);
+                        if (isLast)
+                            x *= getClipperLevelCorrection (detailDrive, girth, overdriveVoice, state.currentSeriesCount);
+                    }
+                }
+                else if (isLast)
+                {
+                    if (model == Model::Diode)
                         x *= getDiodeLevelTrim (detailDrive, girth, mod, state.currentSeriesCount)
                            * getHotInputReferenceCorrection (model, detailDrive, girth, mod, state.currentSeriesCount);
-                    else if (model == Model::Clipper)
-                        x *= getClipperLevelCorrection (detailDrive, girth, mod, state.currentSeriesCount);
                 }
+
+                if (rawMode && isLast && model != Model::OverdriveA && model != Model::OverdriveB)
+                    x *= getRawModeLevelCorrection (model, detailDrive, girth, mod, state.currentSeriesCount);
+
+                if (rawMode && isLast)
+                    x = detail::clampF (x, -kRawCeiling, kRawCeiling);
 
                 // -- Final safety soft-limiter --
                 // Transparent below +/-1.5, smooth compression above, max +/-2.5
@@ -5307,12 +7078,15 @@ inline void processBlock (State& state,
             }
         }
 
-        for (int ch = 0; ch < 2; ++ch)
+        for (int ch = 0; ch < channelsToProcess; ++ch)
         {
             float& sample = (ch == 0) ? left[i] : right[i];
             const float detailDelta = makeDetailHardClipDelta (detailChainInput[ch], detailDrive);
             sample = applyDetailPreservation (sample, detailDelta, detailAmount,
-                                              state.detailState[ch], detailCoeffs);
+                                               state.detailState[ch], detailCoeffs);
+
+            if (rawMode)
+                sample = detail::clampF (sample, -kRawCeiling, kRawCeiling);
         }
     }
 }

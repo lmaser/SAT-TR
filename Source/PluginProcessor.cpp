@@ -8,6 +8,35 @@
 // ----------------------------------------------------------------
 namespace
 {
+	constexpr const char* kNamPathA = "namPathA";
+	constexpr const char* kNamPathB = "namPathB";
+	constexpr const char* kNamPathC = "namPathC";
+	constexpr const char* kNamStateNode = "NAM_STATE";
+	constexpr int kRtWorkBufferMaxSamples = 65536;
+
+	inline const char* getNamPathPropertyKey (int loaderIndex) noexcept
+	{
+		constexpr const char* keys[] = { kNamPathA, kNamPathB, kNamPathC };
+		return (loaderIndex >= 0 && loaderIndex < 3) ? keys[loaderIndex] : "";
+	}
+
+	juce::String readNamPathFromState (const juce::ValueTree& state, int loaderIndex)
+	{
+		const auto* key = getNamPathPropertyKey (loaderIndex);
+		if (key == nullptr || key[0] == '\0')
+			return {};
+
+		auto path = state.getProperty (key, "").toString();
+		if (path.isNotEmpty())
+			return path;
+
+		const auto namState = state.getChildWithName (kNamStateNode);
+		if (namState.isValid())
+			path = namState.getProperty (key, "").toString();
+
+		return path;
+	}
+
 	// Fast dB-to-linear conversion using exp2 instead of pow(10, dB/20).
 	// Mathematically equivalent: 10^(dB/20) = 2^(dB * log2(10)/20) = 2^(dB * 0.16609640474)
 	inline float fastDecibelsToGain (float dB) noexcept
@@ -41,6 +70,38 @@ namespace
 	inline int loadRelaxedInt (std::atomic<float>* p, int def = 0) noexcept
 	{
 		return static_cast<int> (std::lround (loadRelaxed (p, static_cast<float> (def))));
+	}
+
+#if JUCE_MSVC
+#pragma warning (push)
+#pragma warning (disable: 4996) // MSVC warns on C++17 shared_ptr atomic free functions; use is intentionally localized.
+#endif
+	inline std::shared_ptr<SatNamModel> loadNamModelAtomic (const std::shared_ptr<SatNamModel>* slot) noexcept
+	{
+		return std::atomic_load_explicit (slot, std::memory_order_acquire);
+	}
+
+	inline void storeNamModelAtomic (std::shared_ptr<SatNamModel>* slot, std::shared_ptr<SatNamModel> model) noexcept
+	{
+		std::atomic_store_explicit (slot, std::move (model), std::memory_order_release);
+	}
+#if JUCE_MSVC
+#pragma warning (pop)
+#endif
+
+	inline float measureBufferPeak (const juce::AudioBuffer<float>& buffer, int numSamples) noexcept
+	{
+		float peak = 0.0f;
+		const int channels = buffer.getNumChannels();
+		for (int ch = 0; ch < channels; ++ch)
+			peak = juce::jmax (peak, buffer.getMagnitude (ch, 0, numSamples));
+		return peak;
+	}
+
+	inline void updateMeterPeak (std::atomic<float>& meter, float blockPeak) noexcept
+	{
+		const float previous = meter.load (std::memory_order_relaxed);
+		meter.store (juce::jmax (blockPeak, previous * 0.88f), std::memory_order_relaxed);
 	}
 
 	struct BiquadCoefficients
@@ -326,18 +387,36 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamInvA, "Invert A", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamDelayA, "Delay A",
-		juce::NormalisableRange<float> (kDelayMin, kDelayMax, 0.001f, 0.5f), kDelayDefault));
+		kParamOffsetA, "Offset A",
+		juce::NormalisableRange<float> (kOffsetMin, kOffsetMax, 0.001f, 0.25f), kOffsetDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSidechainA, "Sidechain A", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainGainA, "Sidechain Gain A", makeGainFaderRange(), kSidechainGainDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSidechainSmoothA, "Sidechain Smooth A",
-		juce::NormalisableRange<float> (kSidechainSmoothMin, kSidechainSmoothMax, 0.01f, 1.0f),
+		juce::NormalisableRange<float> (kSidechainSmoothMin, kSidechainSmoothMax, 0.001f, 1.0f),
 		kSidechainSmoothDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSidechainToneA, "Sidechain Tone A",
-		juce::NormalisableRange<float> (kSidechainToneMin, kSidechainToneMax, 0.01f, 0.35f),
-		kSidechainToneDefault));
+		kParamSidechainHpA, "Sidechain HP A",
+		juce::NormalisableRange<float> (kSidechainFilterFreqMin, kSidechainFilterFreqMax, 0.01f, 0.35f),
+		kSidechainHpDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainLpA, "Sidechain LP A",
+		juce::NormalisableRange<float> (kSidechainFilterFreqMin, kSidechainFilterFreqMax, 0.01f, 0.35f),
+		kSidechainLpDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamSidechainHpOnA, "Sidechain HP On A", kSidechainHpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamSidechainLpOnA, "Sidechain LP On A", kSidechainLpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainHpSlopeA, "Sidechain HP Slope A",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kSidechainHpSlopeDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainLpSlopeA, "Sidechain LP Slope A",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kSidechainLpSlopeDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamChaosA, "Chaos D A", false));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -355,9 +434,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamChaosSpdFilterA, "Chaos Filter Speed A",
 		juce::NormalisableRange<float> (kChaosSpdMin, kChaosSpdMax, 0.01f, 0.3f), kChaosSpdDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
-		kParamModeInA, "Mode In A", juce::StringArray { "L+R", "MID", "SIDE" }, kModeDefault));
+		kParamModeInA, "Mode In A", juce::StringArray { "L+R", "M/S", "MID", "SIDE" }, kModeDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
-		kParamModeOutA, "Mode Out A", juce::StringArray { "L+R", "MID", "SIDE" }, kModeDefault));
+		kParamModeOutA, "Mode Out A", juce::StringArray { "L+R", "M/S", "MID", "SIDE" }, kModeDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSumBusA, "Sum Bus A", juce::StringArray { "ST", u8"\u2192M", u8"\u2192S" }, kSumBusDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
@@ -371,10 +450,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamMixA, "Mix A", kGlobalMixMin, kGlobalMixMax, kGlobalMixDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSatTypeA, "Sat Type A",
-            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TRANSISTOR", "DIODE", "CLIPPER" }, kSatTypeDefault));
+            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TRANSISTOR", "DIODE", "OVERDRIVE A", "CLIPPER", "NAM", "OVERDRIVE B" }, kSatTypeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatDriveA, "Sat Drive A",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamNamSlimA, "NAM Size A",
+		juce::NormalisableRange<float> (kNamSlimMin, kNamSlimMax, 0.01f), kNamSlimDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatCharA, "Sat Char A",
 		juce::NormalisableRange<float> (kSatCharMin, kSatCharMax, 0.001f), kSatCharDefault));
@@ -488,18 +570,36 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamInvB, "Invert B", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamDelayB, "Delay B",
-		juce::NormalisableRange<float> (kDelayMin, kDelayMax, 0.001f, 0.5f), kDelayDefault));
+		kParamOffsetB, "Offset B",
+		juce::NormalisableRange<float> (kOffsetMin, kOffsetMax, 0.001f, 0.25f), kOffsetDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSidechainB, "Sidechain B", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainGainB, "Sidechain Gain B", makeGainFaderRange(), kSidechainGainDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSidechainSmoothB, "Sidechain Smooth B",
-		juce::NormalisableRange<float> (kSidechainSmoothMin, kSidechainSmoothMax, 0.01f, 1.0f),
+		juce::NormalisableRange<float> (kSidechainSmoothMin, kSidechainSmoothMax, 0.001f, 1.0f),
 		kSidechainSmoothDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSidechainToneB, "Sidechain Tone B",
-		juce::NormalisableRange<float> (kSidechainToneMin, kSidechainToneMax, 0.01f, 0.35f),
-		kSidechainToneDefault));
+		kParamSidechainHpB, "Sidechain HP B",
+		juce::NormalisableRange<float> (kSidechainFilterFreqMin, kSidechainFilterFreqMax, 0.01f, 0.35f),
+		kSidechainHpDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainLpB, "Sidechain LP B",
+		juce::NormalisableRange<float> (kSidechainFilterFreqMin, kSidechainFilterFreqMax, 0.01f, 0.35f),
+		kSidechainLpDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamSidechainHpOnB, "Sidechain HP On B", kSidechainHpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamSidechainLpOnB, "Sidechain LP On B", kSidechainLpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainHpSlopeB, "Sidechain HP Slope B",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kSidechainHpSlopeDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainLpSlopeB, "Sidechain LP Slope B",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kSidechainLpSlopeDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamChaosB, "Chaos D B", false));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -517,9 +617,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamChaosSpdFilterB, "Chaos Filter Speed B",
 		juce::NormalisableRange<float> (kChaosSpdMin, kChaosSpdMax, 0.01f, 0.3f), kChaosSpdDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
-		kParamModeInB, "Mode In B", juce::StringArray { "L+R", "MID", "SIDE" }, kModeDefault));
+		kParamModeInB, "Mode In B", juce::StringArray { "L+R", "M/S", "MID", "SIDE" }, kModeDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
-		kParamModeOutB, "Mode Out B", juce::StringArray { "L+R", "MID", "SIDE" }, kModeDefault));
+		kParamModeOutB, "Mode Out B", juce::StringArray { "L+R", "M/S", "MID", "SIDE" }, kModeDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSumBusB, "Sum Bus B", juce::StringArray { "ST", u8"\u2192M", u8"\u2192S" }, kSumBusDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
@@ -533,10 +633,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamMixB, "Mix B", kGlobalMixMin, kGlobalMixMax, kGlobalMixDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSatTypeB, "Sat Type B",
-            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TRANSISTOR", "DIODE", "CLIPPER" }, kSatTypeDefault));
+            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TRANSISTOR", "DIODE", "OVERDRIVE A", "CLIPPER", "NAM", "OVERDRIVE B" }, kSatTypeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatDriveB, "Sat Drive B",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamNamSlimB, "NAM Size B",
+		juce::NormalisableRange<float> (kNamSlimMin, kNamSlimMax, 0.01f), kNamSlimDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatCharB, "Sat Char B",
 		juce::NormalisableRange<float> (kSatCharMin, kSatCharMax, 0.001f), kSatCharDefault));
@@ -650,18 +753,36 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamInvC, "Invert C", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamDelayC, "Delay C",
-		juce::NormalisableRange<float> (kDelayMin, kDelayMax, 0.001f, 0.5f), kDelayDefault));
+		kParamOffsetC, "Offset C",
+		juce::NormalisableRange<float> (kOffsetMin, kOffsetMax, 0.001f, 0.25f), kOffsetDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamSidechainC, "Sidechain C", false));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainGainC, "Sidechain Gain C", makeGainFaderRange(), kSidechainGainDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSidechainSmoothC, "Sidechain Smooth C",
-		juce::NormalisableRange<float> (kSidechainSmoothMin, kSidechainSmoothMax, 0.01f, 1.0f),
+		juce::NormalisableRange<float> (kSidechainSmoothMin, kSidechainSmoothMax, 0.001f, 1.0f),
 		kSidechainSmoothDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
-		kParamSidechainToneC, "Sidechain Tone C",
-		juce::NormalisableRange<float> (kSidechainToneMin, kSidechainToneMax, 0.01f, 0.35f),
-		kSidechainToneDefault));
+		kParamSidechainHpC, "Sidechain HP C",
+		juce::NormalisableRange<float> (kSidechainFilterFreqMin, kSidechainFilterFreqMax, 0.01f, 0.35f),
+		kSidechainHpDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainLpC, "Sidechain LP C",
+		juce::NormalisableRange<float> (kSidechainFilterFreqMin, kSidechainFilterFreqMax, 0.01f, 0.35f),
+		kSidechainLpDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamSidechainHpOnC, "Sidechain HP On C", kSidechainHpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		kParamSidechainLpOnC, "Sidechain LP On C", kSidechainLpOnDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainHpSlopeC, "Sidechain HP Slope C",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kSidechainHpSlopeDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamSidechainLpSlopeC, "Sidechain LP Slope C",
+		juce::NormalisableRange<float> ((float) kFilterSlopeMin, (float) kFilterSlopeMax, 1.0f),
+		(float) kSidechainLpSlopeDefault));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
 		kParamChaosC, "Chaos D C", false));
 	layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -679,9 +800,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamChaosSpdFilterC, "Chaos Filter Speed C",
 		juce::NormalisableRange<float> (kChaosSpdMin, kChaosSpdMax, 0.01f, 0.3f), kChaosSpdDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
-		kParamModeInC, "Mode In C", juce::StringArray { "L+R", "MID", "SIDE" }, kModeDefault));
+		kParamModeInC, "Mode In C", juce::StringArray { "L+R", "M/S", "MID", "SIDE" }, kModeDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
-		kParamModeOutC, "Mode Out C", juce::StringArray { "L+R", "MID", "SIDE" }, kModeDefault));
+		kParamModeOutC, "Mode Out C", juce::StringArray { "L+R", "M/S", "MID", "SIDE" }, kModeDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSumBusC, "Sum Bus C", juce::StringArray { "ST", u8"\u2192M", u8"\u2192S" }, kSumBusDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
@@ -695,10 +816,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		kParamMixC, "Mix C", kGlobalMixMin, kGlobalMixMax, kGlobalMixDefault));
 	layout.add (std::make_unique<juce::AudioParameterChoice> (
 		kParamSatTypeC, "Sat Type C",
-            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TRANSISTOR", "DIODE", "CLIPPER" }, kSatTypeDefault));
+            juce::StringArray { "CLEAN", "TAPE", "TUBE", "TRANSISTOR", "DIODE", "OVERDRIVE A", "CLIPPER", "NAM", "OVERDRIVE B" }, kSatTypeDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatDriveC, "Sat Drive C",
 		juce::NormalisableRange<float> (kSatDriveMin, kSatDriveMax, 0.001f), kSatDriveDefault));
+	layout.add (std::make_unique<juce::AudioParameterFloat> (
+		kParamNamSlimC, "NAM Size C",
+		juce::NormalisableRange<float> (kNamSlimMin, kNamSlimMax, 0.01f), kNamSlimDefault));
 	layout.add (std::make_unique<juce::AudioParameterFloat> (
 		kParamSatCharC, "Sat Char C",
 		juce::NormalisableRange<float> (kSatCharMin, kSatCharMax, 0.001f), kSatCharDefault));
@@ -824,12 +948,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout SATTRAudioProcessor::createP
 		juce::ParameterID { kParamUiFxTail, 1 }, "UI FX Tail", false,
 		juce::AudioParameterBoolAttributes().withAutomatable (false)));
 
+	layout.add (std::make_unique<juce::AudioParameterBool> (
+		juce::ParameterID { kParamUiIoFx, 1 }, "UI I/O FX", true,
+		juce::AudioParameterBoolAttributes().withAutomatable (false)));
+
 	layout.add (std::make_unique<juce::AudioParameterInt> (
 		juce::ParameterID { kParamUiColor0, 1 }, "UI Color 0", 0, 0xFFFFFF, 0x00FF00,
 		juce::AudioParameterIntAttributes().withAutomatable (false)));
 
 	layout.add (std::make_unique<juce::AudioParameterInt> (
 		juce::ParameterID { kParamUiColor1, 1 }, "UI Color 1", 0, 0xFFFFFF, 0x000000,
+		juce::AudioParameterIntAttributes().withAutomatable (false)));
+
+	layout.add (std::make_unique<juce::AudioParameterInt> (
+		juce::ParameterID { kParamUiColor2, 1 }, "UI Color 2", 0, 0xFFFFFF, 0x0000FF,
+		juce::AudioParameterIntAttributes().withAutomatable (false)));
+
+	layout.add (std::make_unique<juce::AudioParameterInt> (
+		juce::ParameterID { kParamUiColor3, 1 }, "UI Color 3", 0, 0xFFFFFF, 0xFF0000,
 		juce::AudioParameterIntAttributes().withAutomatable (false)));
 
 	return layout;
@@ -840,6 +976,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
 	currentSampleRate = sampleRate;
 	currentBlockSize = samplesPerBlock;
+	hasPreparedToPlay = true;
 	
 	LOG_DSP_EVENT ("prepareToPlay: sr=" + juce::String (sampleRate) + 
 	              " blockSize=" + juce::String (samplesPerBlock));
@@ -865,7 +1002,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	stateB.posFilter.prepare (spec);
 	stateC.posFilter.prepare (spec);
 
-	// Prepare delay lines for auto-align
+	// Prepare offset lines for auto-align
 	stateA.delayLine.prepare (spec);
 	stateB.delayLine.prepare (spec);
 	stateC.delayLine.prepare (spec);
@@ -894,11 +1031,28 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	stateB.smoothedDryDelay.setCurrentAndTargetValue (0.0f);
 	stateC.smoothedDryDelay.setCurrentAndTargetValue (0.0f);
 	smoothedGlobalDryDelay.setCurrentAndTargetValue (0.0f);
+
+	for (auto* st : { &stateA, &stateB, &stateC })
+	{
+		auto nam = loadNamModelAtomic (&st->namModel);
+		if (nam != nullptr)
+			nam->reset (sampleRate, samplesPerBlock);
+	}
+
+	LoaderState* loaderStates[] = { &stateA, &stateB, &stateC };
+	for (int loader = 0; loader < 3; ++loader)
+	{
+		if (loaderStates[loader]->pendingNamPath.isNotEmpty())
+		{
+			juce::String error;
+			loadNamModelForLoader (loader, loaderStates[loader]->pendingNamPath, error);
+		}
+	}
 	
 	// Prepare temp buffers (pre-allocated for audio thread)
 	// Use generous size to handle hosts that send variable/larger blocks
 	// (e.g. FL Studio). Runtime guard in processBlock handles anything larger.
-	const int bufAlloc = juce::jmax (samplesPerBlock, 32768);
+	const int bufAlloc = juce::jmax (samplesPerBlock, kRtWorkBufferMaxSamples);
 	oversamplingBlockCapacity_ = bufAlloc;
 	tempBufferA.setSize (2, bufAlloc);
 	tempBufferB.setSize (2, bufAlloc);
@@ -996,6 +1150,9 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pTrim      = parameters.getRawParameterValue (kParamTrim);
 	pLimThreshold = parameters.getRawParameterValue (kParamLimThreshold);
 	pLimMode     = parameters.getRawParameterValue (kParamLimMode);
+	pInvA        = parameters.getRawParameterValue (kParamInvA);
+	pInvB        = parameters.getRawParameterValue (kParamInvB);
+	pInvC        = parameters.getRawParameterValue (kParamInvC);
 	pInvPol      = parameters.getRawParameterValue (kParamInvPol);
 	pInvStr      = parameters.getRawParameterValue (kParamInvStr);
 	pMixMode     = parameters.getRawParameterValue (kParamMixMode);
@@ -1005,6 +1162,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	// Saturation parameter pointers
 	pSatTypeA  = parameters.getRawParameterValue (kParamSatTypeA);
 	pSatDriveA = parameters.getRawParameterValue (kParamSatDriveA);
+	pNamSlimA  = parameters.getRawParameterValue (kParamNamSlimA);
 	pSatCharA = parameters.getRawParameterValue (kParamSatCharA);
 	pSatTypeCtrlA   = parameters.getRawParameterValue (kParamSatTypeCtrlA);
 	pSatBiasA  = parameters.getRawParameterValue (kParamSatBiasA);
@@ -1012,6 +1170,7 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pSatRawA   = parameters.getRawParameterValue (kParamSatRawA);
 	pSatTypeB  = parameters.getRawParameterValue (kParamSatTypeB);
 	pSatDriveB = parameters.getRawParameterValue (kParamSatDriveB);
+	pNamSlimB  = parameters.getRawParameterValue (kParamNamSlimB);
 	pSatCharB = parameters.getRawParameterValue (kParamSatCharB);
 	pSatTypeCtrlB   = parameters.getRawParameterValue (kParamSatTypeCtrlB);
 	pSatBiasB  = parameters.getRawParameterValue (kParamSatBiasB);
@@ -1019,24 +1178,43 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	pSatRawB   = parameters.getRawParameterValue (kParamSatRawB);
 	pSatTypeC  = parameters.getRawParameterValue (kParamSatTypeC);
 	pSatDriveC = parameters.getRawParameterValue (kParamSatDriveC);
+	pNamSlimC  = parameters.getRawParameterValue (kParamNamSlimC);
 	pSatCharC = parameters.getRawParameterValue (kParamSatCharC);
 	pSatTypeCtrlC   = parameters.getRawParameterValue (kParamSatTypeCtrlC);
 	pSatBiasC  = parameters.getRawParameterValue (kParamSatBiasC);
 	pSatSagC   = parameters.getRawParameterValue (kParamSatSagC);
 	pSatRawC   = parameters.getRawParameterValue (kParamSatRawC);
 	pOversample = parameters.getRawParameterValue (kParamOversample);
-	pDelayA  = parameters.getRawParameterValue (kParamDelayA);
-	pDelayB  = parameters.getRawParameterValue (kParamDelayB);
-	pDelayC  = parameters.getRawParameterValue (kParamDelayC);
+	pOffsetA  = parameters.getRawParameterValue (kParamOffsetA);
+	pOffsetB  = parameters.getRawParameterValue (kParamOffsetB);
+	pOffsetC  = parameters.getRawParameterValue (kParamOffsetC);
 	pSidechainA = parameters.getRawParameterValue (kParamSidechainA);
 	pSidechainB = parameters.getRawParameterValue (kParamSidechainB);
 	pSidechainC = parameters.getRawParameterValue (kParamSidechainC);
+	pSidechainGainA = parameters.getRawParameterValue (kParamSidechainGainA);
+	pSidechainGainB = parameters.getRawParameterValue (kParamSidechainGainB);
+	pSidechainGainC = parameters.getRawParameterValue (kParamSidechainGainC);
 	pSidechainSmoothA = parameters.getRawParameterValue (kParamSidechainSmoothA);
 	pSidechainSmoothB = parameters.getRawParameterValue (kParamSidechainSmoothB);
 	pSidechainSmoothC = parameters.getRawParameterValue (kParamSidechainSmoothC);
-	pSidechainToneA = parameters.getRawParameterValue (kParamSidechainToneA);
-	pSidechainToneB = parameters.getRawParameterValue (kParamSidechainToneB);
-	pSidechainToneC = parameters.getRawParameterValue (kParamSidechainToneC);
+	pSidechainHpA = parameters.getRawParameterValue (kParamSidechainHpA);
+	pSidechainHpB = parameters.getRawParameterValue (kParamSidechainHpB);
+	pSidechainHpC = parameters.getRawParameterValue (kParamSidechainHpC);
+	pSidechainLpA = parameters.getRawParameterValue (kParamSidechainLpA);
+	pSidechainLpB = parameters.getRawParameterValue (kParamSidechainLpB);
+	pSidechainLpC = parameters.getRawParameterValue (kParamSidechainLpC);
+	pSidechainHpOnA = parameters.getRawParameterValue (kParamSidechainHpOnA);
+	pSidechainHpOnB = parameters.getRawParameterValue (kParamSidechainHpOnB);
+	pSidechainHpOnC = parameters.getRawParameterValue (kParamSidechainHpOnC);
+	pSidechainLpOnA = parameters.getRawParameterValue (kParamSidechainLpOnA);
+	pSidechainLpOnB = parameters.getRawParameterValue (kParamSidechainLpOnB);
+	pSidechainLpOnC = parameters.getRawParameterValue (kParamSidechainLpOnC);
+	pSidechainHpSlopeA = parameters.getRawParameterValue (kParamSidechainHpSlopeA);
+	pSidechainHpSlopeB = parameters.getRawParameterValue (kParamSidechainHpSlopeB);
+	pSidechainHpSlopeC = parameters.getRawParameterValue (kParamSidechainHpSlopeC);
+	pSidechainLpSlopeA = parameters.getRawParameterValue (kParamSidechainLpSlopeA);
+	pSidechainLpSlopeB = parameters.getRawParameterValue (kParamSidechainLpSlopeB);
+	pSidechainLpSlopeC = parameters.getRawParameterValue (kParamSidechainLpSlopeC);
 	pExpA       = parameters.getRawParameterValue (kParamExpA);
 	pExpOrderA  = parameters.getRawParameterValue (kParamExpOrderA);
 	pExpRatioA  = parameters.getRawParameterValue (kParamExpRatioA);
@@ -1098,11 +1276,15 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	{
 		sidechainEnv_[loader] = 0.0f;
 		sidechainDriveAmount_[loader] = 0.0f;
+		sidechainLastGain_[loader] = gainFaderDecibelsToGain (loadRelaxed ((loader == 0) ? pSidechainGainA : (loader == 1 ? pSidechainGainB : pSidechainGainC), kSidechainGainDefault));
+		sidechainHpFilters_[loader].reset();
+		sidechainHpFilters2_[loader].reset();
+		sidechainLpFilters_[loader].reset();
+		sidechainLpFilters2_[loader].reset();
 		for (int ch = 0; ch < 2; ++ch)
 		{
 			sidechainDcPrevIn_[loader][ch] = 0.0f;
 			sidechainDcPrevOut_[loader][ch] = 0.0f;
-			sidechainToneFilters_[loader][ch].reset();
 		}
 	}
 
@@ -1133,6 +1315,8 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 		cachedNormFastCoeff_   = 1.0f - std::exp (-1.0f / (sr * 0.01f)); // 10ms ramp-down
 		cachedNormSlowCoeff_   = 1.0f - std::exp (-1.0f / (sr * 0.02f)); // 20ms ramp-up
 	}
+	dcBlockX_[0] = dcBlockX_[1] = 0.0f;
+	dcBlockY_[0] = dcBlockY_[1] = 0.0f;
 
 	// Fade-in to suppress startup filter/modulation transients (~5ms)
 	fadeInTotalSamples_     = juce::jmax (64, (int) (sampleRate * 0.005));
@@ -1214,9 +1398,15 @@ void SATTRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 				2, (size_t) order,
 				juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
 			oversamplers_[ldr][order - 1]->initProcessing ((size_t) bufAlloc);
+
+			oversamplersMono_[ldr][order - 1] = std::make_unique<juce::dsp::Oversampling<float>> (
+				1, (size_t) order,
+				juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
+			oversamplersMono_[ldr][order - 1]->initProcessing ((size_t) bufAlloc);
 		}
 	}
 	currentOsOrder_ = 0;
+	currentReportedLatencySamples_ = -1;
 }
 
 void SATTRAudioProcessor::releaseResources()
@@ -1228,6 +1418,9 @@ void SATTRAudioProcessor::releaseResources()
 	stateB.dryDelayLine.reset();
 	stateC.dryDelayLine.reset();
 	globalDryDelayLine.reset();
+	dcBlockX_[0] = dcBlockX_[1] = 0.0f;
+	dcBlockY_[0] = dcBlockY_[1] = 0.0f;
+	currentReportedLatencySamples_ = -1;
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -1266,8 +1459,9 @@ bool SATTRAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) co
 // DSP NOTES:
 //
 // 1. MODE PROCESSING: Mid/Side conversion
-//    - MID = (L+R) / sqrt(2)  - preserves RMS energy
-//    - SIDE = (L-R) / sqrt(2)
+//    - M/S encodes stereo as M=(L+R)*0.5 and S=(L-R)*0.5
+//    - MID = (L+R) * 0.5  - keeps mono/mid sources at the same level
+//    - SIDE = (L-R) * 0.5 - keeps side sources at the same level
 //    - L+R = standard stereo pass-through
 //
 // 2. ROUTING:
@@ -1291,7 +1485,7 @@ static inline void injectMSBus (float l, float r, int bus,
 
 void SATTRAudioProcessor::applyMidSideInputMode (juce::AudioBuffer<float>& buf, int modeVal, int nSamples)
 {
-	if ((modeVal == 1 || modeVal == 2) && buf.getNumChannels() >= 2)
+	if (modeVal >= 1 && modeVal <= 3 && buf.getNumChannels() >= 2)
 	{
 		auto* L = buf.getWritePointer (0);
 		auto* R = buf.getWritePointer (1);
@@ -1299,17 +1493,37 @@ void SATTRAudioProcessor::applyMidSideInputMode (juce::AudioBuffer<float>& buf, 
 		{
 			const float l = L[i];
 			const float r = R[i];
-			if (modeVal == 1) // MID = (L+R) / sqrt(2)
+			if (modeVal == 1) // M/S encode, gain-transparent with M/S output
 			{
-				const float mid = (l + r) * kSqrt2Over2;
+				L[i] = (l + r) * 0.5f;
+				R[i] = (l - r) * 0.5f;
+			}
+			else if (modeVal == 2) // MID = (L+R) * 0.5
+			{
+				const float mid = (l + r) * 0.5f;
 				L[i] = R[i] = mid;
 			}
-			else // SIDE = (L-R) / sqrt(2)
+			else // SIDE = (L-R) * 0.5
 			{
-				const float side = (l - r) * kSqrt2Over2;
+				const float side = (l - r) * 0.5f;
 				L[i] = R[i] = side;
 			}
 		}
+	}
+}
+
+void SATTRAudioProcessor::updateReportedLatency()
+{
+	const int osOrder = loadRelaxedInt (pOversample);
+	int reportedLatencySamples = 0;
+	if (osOrder > 0 && osOrder <= 4 && oversamplers_[0][osOrder - 1] != nullptr)
+		reportedLatencySamples += static_cast<int> (std::round (oversamplers_[0][osOrder - 1]->getLatencyInSamples()));
+
+	if (reportedLatencySamples != currentReportedLatencySamples_)
+	{
+		currentReportedLatencySamples_ = reportedLatencySamples;
+		currentOsOrder_ = osOrder;
+		setLatencySamples (reportedLatencySamples);
 	}
 }
 
@@ -1336,33 +1550,27 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 
 	auto buffer = getBusBuffer (ioBuffer, false, 0);
 
-	// Resize work buffers to match actual block size each call.
-	// avoidReallocating=true keeps existing allocation if big enough (zero-alloc path).
-	// This is CRITICAL: the temp buffers must report the correct numSamples so that
-	// processLoader (which reads buffer.getNumSamples()) only processes valid data.
-	// Without this, stale data beyond numSamples creates a feedback loop.
+	// Keep work buffers logically matched to the current block without reallocating
+	// in normal use. The rare fallback preserves behaviour for oversized host blocks.
+	auto ensureWorkBuffer = [numSamples] (juce::AudioBuffer<float>& work, int channels)
+	{
+		jassert (work.getNumChannels() >= channels);
+		jassert (work.getNumSamples() >= numSamples);
+		work.setSize (channels, numSamples, false, false, true);
+	};
 	{
 		const int nc = buffer.getNumChannels();
-		tempBufferA.setSize  (nc, numSamples, false, false, true);
-		tempBufferB.setSize  (nc, numSamples, false, false, true);
-		tempBufferC.setSize  (nc, numSamples, false, false, true);
-		globalDryBuffer.setSize (nc, numSamples, false, false, true);
-		loaderDryBuffer.setSize (nc, numSamples, false, false, true);
+		ensureWorkBuffer (tempBufferA, nc);
+		ensureWorkBuffer (tempBufferB, nc);
+		ensureWorkBuffer (tempBufferC, nc);
+		ensureWorkBuffer (globalDryBuffer, nc);
+		ensureWorkBuffer (loaderDryBuffer, nc);
 	}
 
 	// Get global parameters (cached pointers - relaxed atomic, no hash lookup)
 	const bool enableA = loadRelaxedBool (pEnableA);
 	const bool enableB = loadRelaxedBool (pEnableB);
 	const bool enableC = loadRelaxedBool (pEnableC);
-
-	// A loader is active when enabled.
-	const bool activeA = enableA;
-	const bool activeB = enableB;
-	const bool activeC = enableC;
-#if SAT_DSP_DIAG
-	const int diagLoaderIndex = activeC ? 2 : (activeB ? 1 : 0);
-	float diagSatDeltaPeak = 0.0f;
-#endif
 
 	const int route = loadRelaxedInt (pRoute);
 	const float globalMix = loadRelaxed (pMix);
@@ -1372,9 +1580,9 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 	const float globalWetEnd = (mixMode == 0) ? globalMix : wetLevel;
 	const float globalDryEnd = (mixMode == 0) ? (1.0f - globalMix) : dryLevel;
 	constexpr float kMixBypassEps = 1.0e-4f;
-	const float delayA = loadRelaxed (pDelayA);
-	const float delayB = loadRelaxed (pDelayB);
-	const float delayC = loadRelaxed (pDelayC);
+	const float offsetA = loadRelaxed (pOffsetA);
+	const float offsetB = loadRelaxed (pOffsetB);
+	const float offsetC = loadRelaxed (pOffsetC);
 	const bool needsGlobalDry = std::abs (globalDryEnd) > kMixBypassEps
 	                         || std::abs (lastGlobalDryMix_) > kMixBypassEps;
 	const bool needsGlobalWetGain = std::abs (globalWetEnd - 1.0f) > kMixBypassEps
@@ -1404,27 +1612,40 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 	const float mixA = loadRelaxed (pMixA);
 	const float mixB = loadRelaxed (pMixB);
 	const float mixC = loadRelaxed (pMixC);
+	const bool invA = loadRelaxedBool (pInvA);
+	const bool invB = loadRelaxedBool (pInvB);
+	const bool invC = loadRelaxedBool (pInvC);
 	const auto satTypeA = static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeA));
 	const auto satTypeB = static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeB));
 	const auto satTypeC = static_cast<SatEngine::Model> (loadRelaxedInt (pSatTypeC));
+	const bool namReadyA = satTypeA != SatEngine::Model::NAM || isNamModelLoadedForLoader (0);
+	const bool namReadyB = satTypeB != SatEngine::Model::NAM || isNamModelLoadedForLoader (1);
+	const bool namReadyC = satTypeC != SatEngine::Model::NAM || isNamModelLoadedForLoader (2);
+	const bool activeA = enableA && namReadyA;
+	const bool activeB = enableB && namReadyB;
+	const bool activeC = enableC && namReadyC;
+#if SAT_DSP_DIAG
+	const int diagLoaderIndex = activeC ? 2 : (activeB ? 1 : 0);
+	float diagSatDeltaPeak = 0.0f;
+#endif
 	const bool sidechainA = activeA && loadRelaxedBool (pSidechainA);
 	const bool sidechainB = activeB && loadRelaxedBool (pSidechainB);
 	const bool sidechainC = activeC && loadRelaxedBool (pSidechainC);
 	const bool anySidechainEnabled = sidechainA || sidechainB || sidechainC;
 
 	const bool dryAlignMode = dryAlignRuntimeActive_.load (std::memory_order_acquire);
-	auto loaderDryAlignSamples = [&] (const LoaderState& state, bool active, float loaderMix, float delayMs) noexcept
+	auto loaderDryAlignSamples = [&] (const LoaderState& state, bool active, float loaderMix, float offsetMs) noexcept
 	{
 		if (! dryAlignMode || ! active || loaderMix <= kMixBypassEps)
 			return 0.0f;
 
-		const float delaySamples = delayMs * 0.001f * static_cast<float> (currentSampleRate);
+		const float delaySamples = offsetMs * 0.001f * static_cast<float> (currentSampleRate);
 		return juce::jmax (0.0f, state.dryAnchorSamples.load() + delaySamples);
 	};
 
-	const float dryAlignSamplesA = loaderDryAlignSamples (stateA, activeA, mixA, delayA);
-	const float dryAlignSamplesB = loaderDryAlignSamples (stateB, activeB, mixB, delayB);
-	const float dryAlignSamplesC = loaderDryAlignSamples (stateC, activeC, mixC, delayC);
+	const float dryAlignSamplesA = loaderDryAlignSamples (stateA, activeA, mixA, offsetA);
+	const float dryAlignSamplesB = loaderDryAlignSamples (stateB, activeB, mixB, offsetB);
+	const float dryAlignSamplesC = loaderDryAlignSamples (stateC, activeC, mixC, offsetC);
 
 	auto averageDryAlignBranches = [] (float a, bool hasA, float b, bool hasB, float c, bool hasC) noexcept
 	{
@@ -1476,56 +1697,18 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 	}
 
 	const bool sidechainActive[3] = { sidechainA, sidechainB, sidechainC };
+	std::atomic<float>* sidechainGainParams[3] = { pSidechainGainA, pSidechainGainB, pSidechainGainC };
 	std::atomic<float>* sidechainSmoothParams[3] = { pSidechainSmoothA, pSidechainSmoothB, pSidechainSmoothC };
-	std::atomic<float>* sidechainToneParams[3] = { pSidechainToneA, pSidechainToneB, pSidechainToneC };
+	std::atomic<float>* sidechainHpParams[3] = { pSidechainHpA, pSidechainHpB, pSidechainHpC };
+	std::atomic<float>* sidechainLpParams[3] = { pSidechainLpA, pSidechainLpB, pSidechainLpC };
+	std::atomic<float>* sidechainHpOnParams[3] = { pSidechainHpOnA, pSidechainHpOnB, pSidechainHpOnC };
+	std::atomic<float>* sidechainLpOnParams[3] = { pSidechainLpOnA, pSidechainLpOnB, pSidechainLpOnC };
+	std::atomic<float>* sidechainHpSlopeParams[3] = { pSidechainHpSlopeA, pSidechainHpSlopeB, pSidechainHpSlopeC };
+	std::atomic<float>* sidechainLpSlopeParams[3] = { pSidechainLpSlopeA, pSidechainLpSlopeB, pSidechainLpSlopeC };
 	auto scBuffer = (anySidechainEnabled && getBusCount (true) > 1)
 		? getBusBuffer (ioBuffer, true, 1)
 		: juce::AudioBuffer<float> {};
 	const bool sidechainBusAvailable = scBuffer.getNumChannels() > 0;
-
-	auto calcSidechainToneCoefficients = [] (float toneHz, float sampleRate,
-	                                         float& oneB0, float& oneB1, float& oneA1,
-	                                         float& bqB0, float& bqB1, float& bqB2,
-	                                         float& bqA1, float& bqA2) noexcept
-	{
-		const float toneEndFactor = std::pow (std::pow (10.0f, 18.0f / 10.0f) - 1.0f, 1.0f / 6.0f);
-		const float toneEndHz = juce::jmin (toneHz, sampleRate * 0.45f);
-		const float toneCutoffHz = juce::jlimit (20.0f, sampleRate * 0.45f,
-			(sampleRate / juce::MathConstants<float>::pi)
-				* std::atan (std::tan (juce::MathConstants<float>::pi * toneEndHz / sampleRate) / toneEndFactor));
-		const float k = std::tan (juce::MathConstants<float>::pi * toneCutoffHz / sampleRate);
-		const float oneNorm = 1.0f / (1.0f + k);
-		oneB0 = k * oneNorm;
-		oneB1 = oneB0;
-		oneA1 = (k - 1.0f) * oneNorm;
-
-		const float q = 1.0f;
-		const float k2 = k * k;
-		const float bqNorm = 1.0f / (1.0f + k / q + k2);
-		bqB0 = k2 * bqNorm;
-		bqB1 = 2.0f * bqB0;
-		bqB2 = bqB0;
-		bqA1 = 2.0f * (k2 - 1.0f) * bqNorm;
-		bqA2 = (1.0f - k / q + k2) * bqNorm;
-	};
-
-	auto processSidechainTone = [] (float x, SidechainToneFilterState& state,
-	                                float oneB0, float oneB1, float oneA1,
-	                                float bqB0, float bqB1, float bqB2,
-	                                float bqA1, float bqA2) noexcept
-	{
-		const float oneY = oneB0 * x + oneB1 * state.oneX1 - oneA1 * state.oneY1;
-		state.oneX1 = x;
-		state.oneY1 = oneY;
-
-		const float y = bqB0 * oneY + bqB1 * state.biquadX1 + bqB2 * state.biquadX2
-			- bqA1 * state.biquadY1 - bqA2 * state.biquadY2;
-		state.biquadX2 = state.biquadX1;
-		state.biquadX1 = oneY;
-		state.biquadY2 = state.biquadY1;
-		state.biquadY1 = y;
-		return y;
-	};
 
 	const float sr = juce::jmax (1.0f, (float) currentSampleRate);
 	for (int loader = 0; loader < 3; ++loader)
@@ -1534,54 +1717,109 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 		{
 			sidechainEnv_[loader] = 0.0f;
 			sidechainDriveAmount_[loader] = 0.0f;
+			sidechainLastGain_[loader] = 1.0f;
+			sidechainHpFilters_[loader].reset();
+			sidechainHpFilters2_[loader].reset();
+			sidechainLpFilters_[loader].reset();
+			sidechainLpFilters2_[loader].reset();
 			for (int ch = 0; ch < 2; ++ch)
 			{
 				sidechainDcPrevIn_[loader][ch] = 0.0f;
 				sidechainDcPrevOut_[loader][ch] = 0.0f;
-				sidechainToneFilters_[loader][ch].reset();
 			}
 			continue;
 		}
 
 		const float smooth = juce::jlimit (kSidechainSmoothMin, kSidechainSmoothMax,
 		                                   loadRelaxed (sidechainSmoothParams[loader], kSidechainSmoothDefault));
-		const float tone = juce::jlimit (kSidechainToneMin, kSidechainToneMax,
-		                                 loadRelaxed (sidechainToneParams[loader], kSidechainToneDefault));
+		const float scGainDb = juce::jlimit (kSidechainGainMin, kSidechainGainMax,
+		                                     loadRelaxed (sidechainGainParams[loader], kSidechainGainDefault));
+		const float maxDetectorFreq = juce::jmin (kSidechainFilterFreqMax, sr * 0.45f);
+		float hpHz = juce::jlimit (kSidechainFilterFreqMin, maxDetectorFreq,
+		                           loadRelaxed (sidechainHpParams[loader], kSidechainHpDefault));
+		const float lpHz = juce::jlimit (kSidechainFilterFreqMin, maxDetectorFreq,
+		                                loadRelaxed (sidechainLpParams[loader], kSidechainLpDefault));
+		if (hpHz >= lpHz)
+			hpHz = juce::jmax (kSidechainFilterFreqMin, lpHz * 0.95f);
+		const bool hpOn = loadRelaxedBool (sidechainHpOnParams[loader], kSidechainHpOnDefault);
+		const bool lpOn = loadRelaxedBool (sidechainLpOnParams[loader], kSidechainLpOnDefault);
+		const int hpSlope = juce::jlimit (kFilterSlopeMin, kFilterSlopeMax,
+		                                  loadRelaxedInt (sidechainHpSlopeParams[loader], kSidechainHpSlopeDefault));
+		const int lpSlope = juce::jlimit (kFilterSlopeMin, kFilterSlopeMax,
+		                                  loadRelaxedInt (sidechainLpSlopeParams[loader], kSidechainLpSlopeDefault));
+
 		if (! sidechainBusAvailable)
 		{
+			sidechainHpFilters_[loader].reset();
+			sidechainHpFilters2_[loader].reset();
+			sidechainLpFilters_[loader].reset();
+			sidechainLpFilters2_[loader].reset();
 			for (int ch = 0; ch < 2; ++ch)
 			{
 				sidechainDcPrevIn_[loader][ch] = 0.0f;
 				sidechainDcPrevOut_[loader][ch] = 0.0f;
-				sidechainToneFilters_[loader][ch].reset();
 			}
 		}
-		float oneB0 = 0.0f, oneB1 = 0.0f, oneA1 = 0.0f;
-		float bqB0 = 0.0f, bqB1 = 0.0f, bqB2 = 0.0f, bqA1 = 0.0f, bqA2 = 0.0f;
-		calcSidechainToneCoefficients (tone, sr, oneB0, oneB1, oneA1, bqB0, bqB1, bqB2, bqA1, bqA2);
+
+		const BiquadCoefficients hp = hpOn ? makeDetectorHighPassForSlope (hpHz, sr, hpSlope, false) : BiquadCoefficients {};
+		const BiquadCoefficients hp2 = (hpOn && hpSlope >= 2) ? makeDetectorHighPassForSlope (hpHz, sr, hpSlope, true) : BiquadCoefficients {};
+		const BiquadCoefficients lp = lpOn ? makeDetectorLowPassForSlope (lpHz, sr, lpSlope, false) : BiquadCoefficients {};
+		const BiquadCoefficients lp2 = (lpOn && lpSlope >= 2) ? makeDetectorLowPassForSlope (lpHz, sr, lpSlope, true) : BiquadCoefficients {};
+		if (! hpOn)
+		{
+			sidechainHpFilters_[loader].reset();
+			sidechainHpFilters2_[loader].reset();
+		}
+		else if (hpSlope < 2)
+		{
+			sidechainHpFilters2_[loader].reset();
+		}
+		if (! lpOn)
+		{
+			sidechainLpFilters_[loader].reset();
+			sidechainLpFilters2_[loader].reset();
+		}
+		else if (lpSlope < 2)
+		{
+			sidechainLpFilters2_[loader].reset();
+		}
 
 		double sumSquares = 0.0;
 		float peak = 0.0f;
 		if (sidechainBusAvailable)
 		{
 			const int scChannels = juce::jmin (2, scBuffer.getNumChannels());
+			float scGain = sidechainLastGain_[loader];
+			const float scGainTarget = gainFaderDecibelsToGain (scGainDb);
+			const float scGainStep = (scGainTarget - scGain) / (float) juce::jmax (1, numSamples);
 			for (int i = 0; i < numSamples; ++i)
 			{
 				for (int ch = 0; ch < scChannels; ++ch)
 				{
 					const float raw = scBuffer.getReadPointer (ch)[i];
-					const float dc = raw - sidechainDcPrevIn_[loader][ch]
+					float detectorSample = raw - sidechainDcPrevIn_[loader][ch]
 						+ cachedDcBlockR_ * sidechainDcPrevOut_[loader][ch];
 					sidechainDcPrevIn_[loader][ch] = raw;
-					sidechainDcPrevOut_[loader][ch] = dc;
-
-					const float filtered = processSidechainTone (dc, sidechainToneFilters_[loader][ch],
-					                                             oneB0, oneB1, oneA1,
-					                                             bqB0, bqB1, bqB2, bqA1, bqA2);
-					sumSquares += (double) filtered * (double) filtered;
-					peak = juce::jmax (peak, std::abs (filtered));
+					sidechainDcPrevOut_[loader][ch] = detectorSample;
+					detectorSample *= scGain;
+					if (hpOn)
+					{
+						detectorSample = processDetectorBiquad (detectorSample, sidechainHpFilters_[loader], hp, ch);
+						if (hpSlope >= 2)
+							detectorSample = processDetectorBiquad (detectorSample, sidechainHpFilters2_[loader], hp2, ch);
+					}
+					if (lpOn)
+					{
+						detectorSample = processDetectorBiquad (detectorSample, sidechainLpFilters_[loader], lp, ch);
+						if (lpSlope >= 2)
+							detectorSample = processDetectorBiquad (detectorSample, sidechainLpFilters2_[loader], lp2, ch);
+					}
+					sumSquares += (double) detectorSample * (double) detectorSample;
+					peak = juce::jmax (peak, std::abs (detectorSample));
 				}
+				scGain += scGainStep;
 			}
+			sidechainLastGain_[loader] = scGainTarget;
 		}
 
 		const float rms = sidechainBusAvailable
@@ -1589,40 +1827,38 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 			: 0.0f;
 		const float target = juce::jlimit (0.0f, 1.0f, juce::jmax (rms * 4.0f, peak * 0.75f));
 
-		if (smooth <= 0.0001f)
+		float smoothEffective = smooth;
+		if (smooth <= 0.25f)
+		{
+			const float t = smooth / 0.25f;
+			smoothEffective = 0.25f * (2.0f * t * t - t * t * t);
+		}
+		const bool directAtZeroSmooth = smoothEffective <= 0.000001f;
+
+		if (directAtZeroSmooth)
 		{
 			sidechainEnv_[loader] = target;
 		}
 		else
 		{
-			const float legacySmooth = juce::jmin (1.0f, smooth * 2.0f);
-			const float extendedBlend = juce::jlimit (0.0f, 1.0f, (smooth - 0.5f) * 2.0f);
-			const float smoothShape = (smooth <= 0.5f) ? legacySmooth : (1.0f + 0.5f * extendedBlend);
-			const float tau = 0.001f + smoothShape * smoothShape * 0.040f;
+			const float legacySmooth = juce::jmin (1.0f, smoothEffective * 2.0f);
+			const float extendedBlend = juce::jlimit (0.0f, 1.0f, (smoothEffective - 0.5f) * 2.0f);
+			const float smoothShape = (smoothEffective <= 0.5f) ? legacySmooth : (1.0f + 0.5f * extendedBlend);
+			const float tau = 0.001f * smoothShape + smoothShape * smoothShape * 0.040f;
 			const float coeff = 1.0f - std::exp (-(float) numSamples / (sr * tau));
 			sidechainEnv_[loader] += (target - sidechainEnv_[loader]) * juce::jlimit (0.0f, 1.0f, coeff);
 		}
 		sidechainDriveAmount_[loader] = juce::jlimit (0.0f, 1.0f, sidechainEnv_[loader]);
 	}
 
-	// Report oversampling latency to host (only when order changes)
-	{
-		const int osOrder = loadRelaxedInt (pOversample);
-		if (osOrder != currentOsOrder_)
-		{
-			currentOsOrder_ = osOrder;
-			if (osOrder > 0 && osOrder <= 4)
-				setLatencySamples ((int) oversamplers_[0][osOrder - 1]->getLatencyInSamples());
-			else
-				setLatencySamples (0);
-		}
-	}
+	updateReportedLatency();
 
 	// Apply input gain
 	const float inputGain = gainFaderDecibelsToGain (loadRelaxed (pInput));
 	for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 		buffer.applyGainRamp (ch, 0, numSamples, lastInputGain_, inputGain);
 	lastInputGain_ = inputGain;
+	updateMeterPeak (globalInputMeterPeak_, measureBufferPeak (buffer, numSamples));
 
 	// -- DIAGNOSTIC LOG (throttled ~1s) --
 #if SATTR_DSP_DEBUG_LOG
@@ -1708,6 +1944,16 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 #endif
 		const bool needsLoaderDry = needsLoaderMix || needsLoaderDryForDiag;
 
+		if (! needsLoaderDryForDiag
+			&& std::abs (wetStart) <= kMixBypassEps
+			&& std::abs (wetEnd) <= kMixBypassEps)
+		{
+			// A fully dry, stable loader contributes the input unchanged. Avoid
+			// spending oversampling/series CPU on a wet path that will be muted.
+			state.lastMix = wetEnd;
+			return;
+		}
+
 		if (needsLoaderDry)
 		{
 			saveDry (buf);
@@ -1716,8 +1962,16 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 		}
 
 		applyMidSideInputMode (buf, modeIn, numSamples);
-		processLoader (state, buf, loaderIndex);
+		const bool monoCoreOptimized = (modeIn == 2 || modeIn == 3) && buf.getNumChannels() >= 2;
+		processLoader (state, buf, loaderIndex, monoCoreOptimized);
 		applyMidSideOutputMode (buf, modeOut, numSamples);
+
+		const bool invertWet = loaderIndex == 0 ? invA : (loaderIndex == 1 ? invB : invC);
+		if (invertWet)
+		{
+			for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+				juce::FloatVectorOperations::multiply (buf.getWritePointer (ch), -1.0f, numSamples);
+		}
 #if SAT_DSP_DIAG
 		if (loaderIndex == diagLoaderIndex)
 		{
@@ -2190,42 +2444,8 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 		}
 	}
 
-	// Wet-only DC blocker.
-	// Dry/default CLEAN paths must remain bit-transparent unless the user
-	// explicitly engages processing that should shape tone. Keep this out of the
-	// common post-mix path so `global mix = 0` and plain CLEAN stay unfiltered.
-	{
-		const bool wetAudible = (mixMode == 0) ? (globalMix > 0.001f) : (wetLevel > 0.001f);
-		const bool wetHasSaturation =
-			(activeA && mixA > 0.001f && satTypeA != SatEngine::Model::Clean) ||
-			(activeB && mixB > 0.001f && satTypeB != SatEngine::Model::Clean) ||
-			(activeC && mixC > 0.001f && satTypeC != SatEngine::Model::Clean);
-		if (wetAudible && wetHasSaturation)
-		{
-			const float R = cachedOutputDcBlockR_;
-			for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-			{
-				auto* data = buffer.getWritePointer (ch);
-				float xPrev = dcBlockX_[ch];
-				float yPrev = dcBlockY_[ch];
-				for (int i = 0; i < numSamples; ++i)
-				{
-					const float x = data[i];
-					const float y = x - xPrev + R * yPrev;
-					xPrev = x;
-					yPrev = y;
-					data[i] = y;
-				}
-				dcBlockX_[ch] = xPrev;
-				dcBlockY_[ch] = yPrev;
-			}
-		}
-		else
-		{
-			dcBlockX_[0] = dcBlockX_[1] = 0.0f;
-			dcBlockY_[0] = dcBlockY_[1] = 0.0f;
-		}
-	}
+	// Loader outputs are AC-coupled before their RAW/Clipper ceiling. The final
+	// output bus has its own DC blocker and optional Safe Clip after global OUT.
 
 	// -- User limiter (WET: after wet-only post processing, before global dry/wet mix) --
 	if (limMode == 1)
@@ -2237,6 +2457,7 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 			applyLimiterMono (buffer.getWritePointer (0), numSamples,
 			                  limThreshLinStart, limThreshLin);
 	}
+
 
 	// Global MIX: blend unprocessed dry with fully processed wet
 	// dry = input after gain, wet = after all loader processing (mode + effects)
@@ -2316,6 +2537,45 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 				std::swap (sL[n], sR[n]);
 		}
 	}
+
+	// Final output AC coupling. Per-loader blockers run before RAW/Safe Clip to
+	// avoid post-ceiling overshoot, but global mix/OUT/limiter/routing can still
+	// leave residual DC. Keep this last in the audible chain so PluginDoctor and
+	// downstream processors see an AC-coupled output.
+	{
+		const float R = cachedOutputDcBlockR_;
+		const int channelsToFilter = juce::jmin (2, buffer.getNumChannels());
+		for (int ch = 0; ch < channelsToFilter; ++ch)
+		{
+			auto* data = buffer.getWritePointer (ch);
+			float xPrev = dcBlockX_[ch];
+			float yPrev = dcBlockY_[ch];
+			for (int n = 0; n < numSamples; ++n)
+			{
+				const float in = data[n];
+				const float out = in - xPrev + R * yPrev;
+				xPrev = in;
+				yPrev = out;
+				data[n] = out;
+			}
+			dcBlockX_[ch] = xPrev;
+			dcBlockY_[ch] = yPrev;
+		}
+	}
+
+	// Optional final sample-safe ceiling. This must live after the final AC
+	// coupling stage; otherwise the DC blocker or later global stages can create
+	// samples above the requested ceiling.
+	if (isSafeClipModeEnabled())
+	{
+		for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+		{
+			auto* data = buffer.getWritePointer (ch);
+			for (int n = 0; n < numSamples; ++n)
+				data[n] = juce::jlimit (-kSafeClipCeiling, kSafeClipCeiling, data[n]);
+		}
+	}
+	updateMeterPeak (globalOutputMeterPeak_, measureBufferPeak (buffer, numSamples));
 
 	// Safety hard-limiter: prevent catastrophic output only (NaN/Inf runaway).
 	// Set very high (+48 dBFS) so it never engages during normal operation.
@@ -2478,7 +2738,8 @@ void SATTRAudioProcessor::processBlock (juce::AudioBuffer<float>& ioBuffer, juce
 // ----------------------------------------------------------------
 void SATTRAudioProcessor::processLoader (LoaderState& state,
                                          juce::AudioBuffer<float>& buffer,
-                                         int loaderIndex)
+                                         int loaderIndex,
+                                         bool monoCoreOptimized)
 {
 #if SAT_DSP_DIAG
 	SatDiag::Collector* diagCollectorPtr = &_diagCollector;
@@ -2535,7 +2796,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	const float satDetail = loadRelaxed   (pick (pDetailA,   pDetailB,   pDetailC));
 	const bool  satRaw   = loadRelaxedBool (pick (pSatRawA,   pSatRawB,   pSatRawC));
 	const int   osOrder  = loadRelaxedInt (pOversample);
-	const float delayMs = loadRelaxed (pick (pDelayA, pDelayB, pDelayC));
+	const float offsetMs = loadRelaxed (pick (pOffsetA, pOffsetB, pOffsetC));
 
 	// Expander parameters
 	const bool  expEnabled = loadRelaxedBool (pick (pExpA,       pExpB,       pExpC));
@@ -2556,6 +2817,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	const float expScGainDb = loadRelaxed    (pick (pExpScGainA, pExpScGainB, pExpScGainC), kExpScGainDefault);
 	const auto model = static_cast<SatEngine::Model> (
 		juce::jlimit (0, (int) SatEngine::Model::NumModels - 1, satType));
+	const bool effectiveSatRaw = satRaw && model != SatEngine::Model::Clipper;
 	const bool filterPre = (fltPos == 1 || fltPos == 2);
 	const bool tiltPre   = (fltPos == 1 || fltPos == 3);
 	const bool chaosDriveEnabled = chaosEnabled;
@@ -2570,6 +2832,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 		for (int ch = 0; ch < numChannels; ++ch)
 			buffer.applyGainRamp (ch, 0, numSamples, state.lastInGain, inGain);
 		state.lastInGain = inGain;
+		updateMeterPeak (loaderInputMeterPeak_[loaderIndex], measureBufferPeak (buffer, numSamples));
 	}
 
 	// 2. OUTPUT GAIN (OUT)
@@ -2994,12 +3257,12 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 				state.chaosGOut[1] = state.chaosGOut[0];
 			}
 			
-			// Write current sample into delay buffer
+			// Write current sample into offset buffer
 			const int wp = state.chaosDelayWritePos;
 			for (int ch = 0; ch < chCount; ++ch)
 				state.chaosDelayBuffer[ch][wp] = channelData[ch][i];
 			
-			// Read with per-channel delay using Lagrange interpolation
+			// Read with per-channel offset using Lagrange interpolation
 			for (int ch = 0; ch < chCount; ++ch)
 			{
 				const float targetDelaySamp = juce::jlimit (0.0f, (float) (delayBufLen - 2),
@@ -3052,7 +3315,23 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	}
 
 	// 3. SATURATION (with optional oversampling + series chaining)
-	if (model != SatEngine::Model::Clean)
+	if (model == SatEngine::Model::NAM)
+	{
+		state.lastSidechainPreGain = 1.0f;
+		state.satState.deferOverdriveAPostEq = false;
+		state.satState.deferFullKlonPostEq = false;
+		state.satState.lastModel = SatEngine::Model::Clean;
+
+		auto nam = loadNamModelAtomic (&state.namModel);
+		if (nam != nullptr && nam->isLoaded())
+		{
+			if (monoCoreOptimized)
+				nam->processMonoToStereo (buffer, numSamples);
+			else
+				nam->process (buffer, numSamples);
+		}
+	}
+	else if (model != SatEngine::Model::Clean)
 	{
 		constexpr float kSidechainPreDriveMaxDb = 24.0f;
 		constexpr float kSidechainDriveBoostMax = 0.0f; //0.33f;
@@ -3064,6 +3343,20 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 			: 1.0f;
 		const float effectiveSatDrive = juce::jlimit (kSatDriveMin, kSatDriveMax,
 			satDrive + sidechainDriveAmount * kSidechainDriveBoostMax);
+		const bool deferFullKlonPostEq = model == SatEngine::Model::OverdriveB
+			&& ! effectiveSatRaw;
+		const bool deferOverdriveAPostEq = model == SatEngine::Model::OverdriveA
+			&& ! effectiveSatRaw;
+		state.satState.deferOverdriveAPostEq = deferOverdriveAPostEq;
+		state.satState.deferFullKlonPostEq = deferFullKlonPostEq;
+		if (! deferOverdriveAPostEq)
+			for (int ch = 0; ch < 2; ++ch)
+				for (int sp = 0; sp < SatEngine::kMaxSeries; ++sp)
+					state.satState.overdriveANativePost[sp][ch].reset();
+		if (! deferFullKlonPostEq)
+			for (int ch = 0; ch < 2; ++ch)
+				for (int sp = 0; sp < SatEngine::kMaxSeries; ++sp)
+					state.satState.overdriveBNativePost[sp][ch].reset();
 		if (std::abs (sidechainPreGain - state.lastSidechainPreGain) > 1.0e-5f
 		 || std::abs (sidechainPreGain - 1.0f) > 1.0e-5f)
 		{
@@ -3083,32 +3376,78 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 
 		if (osOrder > 0 && osOrder <= 4)
 		{
-			auto& os = *oversamplers_[loaderIndex][osOrder - 1];
-			auto block = juce::dsp::AudioBlock<float> (buffer);
 			jassert (oversamplingBlockCapacity_ > 0);
 			jassert (numSamples <= oversamplingBlockCapacity_);
-			auto osBlock = os.processSamplesUp (block);
+			const int channelsToProcess = (monoCoreOptimized || numChannels < 2) ? 1 : 2;
 
-			float* osL = osBlock.getChannelPointer (0);
-			float* osR = osBlock.getChannelPointer (1);
-			const int osNumSamples = (int) osBlock.getNumSamples();
-			const float osSr = (float) currentSampleRate * (float) os.getOversamplingFactor();
+			if (channelsToProcess == 1)
+			{
+				auto& os = *oversamplersMono_[loaderIndex][osOrder - 1];
+				auto block = juce::dsp::AudioBlock<float> (buffer).getSingleChannelBlock (0);
+				auto osBlock = os.processSamplesUp (block);
 
-			SatEngine::processBlock (state.satState, osL, osR, osNumSamples,
-			                         model, effectiveSatDrive, satChar, satTypeCtrl, satBias, satSag, satDetail,
-			                         instabilityAmt, osSr, seriesCount, false, satRaw, diagCollectorPtr);
+				float* osL = osBlock.getChannelPointer (0);
+				const int osNumSamples = (int) osBlock.getNumSamples();
+				const float osSr = (float) currentSampleRate * (float) os.getOversamplingFactor();
 
-			os.processSamplesDown (block);
+				SatEngine::processBlock (state.satState, osL, osL, osNumSamples,
+				                         model, effectiveSatDrive, satChar, satTypeCtrl, satBias, satSag, satDetail,
+				                         instabilityAmt, osSr, seriesCount, false, effectiveSatRaw, diagCollectorPtr, 1);
+
+				os.processSamplesDown (block);
+				if (numChannels > 1)
+					buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
+			}
+			else
+			{
+				auto& os = *oversamplers_[loaderIndex][osOrder - 1];
+				auto block = juce::dsp::AudioBlock<float> (buffer);
+				auto osBlock = os.processSamplesUp (block);
+
+				float* osL = osBlock.getChannelPointer (0);
+				float* osR = osBlock.getChannelPointer (1);
+				const int osNumSamples = (int) osBlock.getNumSamples();
+				const float osSr = (float) currentSampleRate * (float) os.getOversamplingFactor();
+
+				SatEngine::processBlock (state.satState, osL, osR, osNumSamples,
+				                         model, effectiveSatDrive, satChar, satTypeCtrl, satBias, satSag, satDetail,
+				                         instabilityAmt, osSr, seriesCount, false, effectiveSatRaw, diagCollectorPtr, 2);
+
+				os.processSamplesDown (block);
+			}
 		}
 		else
 		{
 			float* dataL = buffer.getWritePointer (0);
 			float* dataR = numChannels > 1 ? buffer.getWritePointer (1) : dataL;
+			const int channelsToProcess = (monoCoreOptimized || numChannels < 2) ? 1 : 2;
 
 			SatEngine::processBlock (state.satState, dataL, dataR, numSamples,
 			                         model, effectiveSatDrive, satChar, satTypeCtrl, satBias, satSag, satDetail, instabilityAmt,
-			                         (float) currentSampleRate, seriesCount, true, satRaw, diagCollectorPtr);
+			                         (float) currentSampleRate, seriesCount, true, effectiveSatRaw, diagCollectorPtr, channelsToProcess);
+			if (monoCoreOptimized && numChannels > 1)
+				buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
 		}
+
+		if (deferOverdriveAPostEq)
+		{
+			float* dataL = buffer.getWritePointer (0);
+			float* dataR = (monoCoreOptimized || numChannels < 2) ? dataL : buffer.getWritePointer (1);
+			SatEngine::processDeferredOverdriveAPostEq (state.satState, dataL, dataR, numSamples,
+			                                                effectiveSatDrive, 0.0f, seriesCount,
+			                                                (float) currentSampleRate, effectiveSatRaw);
+		}
+
+		if (deferFullKlonPostEq)
+		{
+			float* dataL = buffer.getWritePointer (0);
+			float* dataR = (monoCoreOptimized || numChannels < 2) ? dataL : buffer.getWritePointer (1);
+			SatEngine::processDeferredFullKlonPostEq (state.satState, dataL, dataR, numSamples,
+			                                          effectiveSatDrive, 1.0f, seriesCount,
+			                                          (float) currentSampleRate, effectiveSatRaw);
+		}
+		if (monoCoreOptimized && numChannels > 1 && (deferOverdriveAPostEq || deferFullKlonPostEq))
+			buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
 
 #if SAT_DSP_DIAG
 		// Capture post-saturation peak + click detection (L channel)
@@ -3122,11 +3461,59 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	else
 	{
 		state.lastSidechainPreGain = 1.0f;
+		state.satState.deferOverdriveAPostEq = false;
+		state.satState.deferFullKlonPostEq = false;
 
 		// Clean bypass skips SatEngine::processBlock, so mark the engine as
 		// clean here. Re-entering a nonlinear model will then reset model
 		// memory instead of resuming stale Tube/Instability state.
 		state.satState.lastModel = SatEngine::Model::Clean;
+	}
+
+	auto flushTinyTiltStates = [&]() noexcept
+	{
+		constexpr float kDnr = 1e-20f;
+		if (std::abs (state.tiltState[0]) < kDnr) state.tiltState[0] = 0.0f;
+		if (std::abs (state.tiltState[1]) < kDnr) state.tiltState[1] = 0.0f;
+	};
+
+	auto namPostPathIsNeutral = [&]() noexcept
+	{
+		if (model != SatEngine::Model::NAM)
+			return false;
+
+		const auto near = [] (float a, float b, float eps) noexcept
+		{
+			return std::abs (a - b) <= eps;
+		};
+
+		const bool tiltNeutral = tiltPre
+			|| (std::abs (tiltDb) <= 0.05f && std::abs (state.lastTiltDb) <= 0.05f);
+
+		const bool filtersSettled = filterPre
+			|| (! hpOn && ! lpOn && ! chaosFilterActive
+				&& near (state.smoothedHpFreq, hpFreq, 0.01f)
+				&& near (state.smoothedLpFreq, lpFreq, 0.01f));
+
+		const bool expanderNeutral = ! (expanderEnabled && expPost && std::abs (expRatio - 1.0f) > 0.01f);
+		const bool posNeutral = pos <= 0.01f && state.lastPosFreq <= 0.0f && near (state.lastPosGain, 1.0f, 1.0e-4f);
+		const bool panNeutral = numChannels < 2
+			|| (std::abs (pan - 0.5f) <= 0.001f
+				&& near (state.lastPanLeft, 1.0f, 1.0e-4f)
+				&& near (state.lastPanRight, 1.0f, 1.0e-4f));
+		const bool fredNeutral = fred <= 0.001f;
+		const bool outNeutral = std::abs (outDb) <= 0.001f && near (state.lastOutGain, 1.0f, 1.0e-4f);
+
+		return tiltNeutral && filtersSettled && expanderNeutral && posNeutral && panNeutral && fredNeutral && outNeutral;
+	};
+
+	if (namPostPathIsNeutral())
+	{
+		// Keep the align offset line fed even when it is effectively dry; this
+		// avoids stale-buffer re-entry if DELAY is enabled after the fast path.
+		applyOffset (buffer, offsetMs, loaderIndex);
+		flushTinyTiltStates();
+		return;
 	}
 
 	// -- POST-saturation: apply tilt/filter if not already applied --
@@ -3195,13 +3582,13 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 	}
 	
 	// 5b. DELAY (auto-align compensation)
-	// Always run the delay stage so the read head can glide cleanly to/from zero
+	// Always run the offset stage so the read head can glide cleanly to/from zero
 	// without a hard bypass click or stale-buffer re-entry.
-	applyDelay (buffer, delayMs, loaderIndex);
+	applyOffset (buffer, offsetMs, loaderIndex);
 	
 	// 6. ANGLE (off-axis mic simulation)
 	// Simulates a second mic at an angle on a guitar cab.
-	// Fixed delay of ~159us (-5cm path difference), sample-rate independent.
+	// Fixed offset of ~159us (-5cm path difference), sample-rate independent.
 	// First comb null at ~6.3kHz regardless of sample rate.
 	// angle=0: pure on-axis (no effect), angle=1: full off-axis blend
 	if (fred > 0.001f)
@@ -3211,7 +3598,7 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 		for (int ch = 0; ch < chCount; ++ch)
 			channelData[ch] = buffer.getWritePointer (ch);
 		
-		// Fractional delay in samples: 159us - sampleRate
+		// Fractional offset in samples: 159us - sampleRate
 		const float delaySamples = LoaderState::kFredDelayMicros * 1e-6f * (float) currentSampleRate;
 		const int delayInt = (int) delaySamples;
 		const float delayFrac = delaySamples - (float) delayInt;
@@ -3238,19 +3625,66 @@ void SATTRAudioProcessor::processLoader (LoaderState& state,
 		}
 	}
 
+	// Loader wet DC protection. This is deliberately before the RAW/Safe Clip
+	// ceiling, so AC coupling cannot create post-ceiling overshoots.
+	{
+		const bool needsLoaderDcBlock = model != SatEngine::Model::Clean
+		                              && model != SatEngine::Model::Clipper
+		                              && model != SatEngine::Model::NAM;
+		if (needsLoaderDcBlock)
+		{
+			const float R = cachedOutputDcBlockR_;
+			for (int ch = 0; ch < numChannels; ++ch)
+			{
+				auto* data = buffer.getWritePointer (ch);
+				float xPrev = state.wetDcBlockX[ch];
+				float yPrev = state.wetDcBlockY[ch];
+				for (int i = 0; i < numSamples; ++i)
+				{
+					const float in = data[i];
+					const float out = in - xPrev + R * yPrev;
+					xPrev = in;
+					yPrev = out;
+					data[i] = out;
+				}
+				state.wetDcBlockX[ch] = xPrev;
+				state.wetDcBlockY[ch] = yPrev;
+			}
+		}
+		else
+		{
+			state.wetDcBlockX[0] = state.wetDcBlockX[1] = 0.0f;
+			state.wetDcBlockY[0] = state.wetDcBlockY[1] = 0.0f;
+		}
+	}
+
+	// RAW / CLIPPER ceiling after oversampling reconstruction and loader post stages.
+	// SAFE CLIP is intentionally not applied here: it is a final output ceiling
+	// after global OUT, limiter/routing and the final AC coupling stage.
+	if ((effectiveSatRaw || model == SatEngine::Model::Clipper)
+		&& model != SatEngine::Model::Clean && model != SatEngine::Model::NAM)
+	{
+		const float ceiling = SatEngine::kRawCeiling;
+		for (int ch = 0; ch < numChannels; ++ch)
+		{
+			auto* data = buffer.getWritePointer (ch);
+			for (int i = 0; i < numSamples; ++i)
+				data[i] = juce::jlimit (-ceiling, ceiling, data[i]);
+		}
+	}
+
 	// 7. OUTPUT GAIN (OUT) - final per-loader output trim
 	{
 		const float outGain = gainFaderDecibelsToGain (outDb);
 		for (int ch = 0; ch < numChannels; ++ch)
 			buffer.applyGainRamp (ch, 0, numSamples, state.lastOutGain, outGain);
 		state.lastOutGain = outGain;
+		updateMeterPeak (loaderOutputMeterPeak_[loaderIndex], measureBufferPeak (buffer, numSamples));
 	}
 	
 	// -- Flush denormals in filter/tilt states (per-block, near-zero cost) --
 	{
-		constexpr float kDnr = 1e-20f;
-		if (std::abs (state.tiltState[0])       < kDnr) state.tiltState[0]       = 0.0f;
-		if (std::abs (state.tiltState[1])       < kDnr) state.tiltState[1]       = 0.0f;
+		flushTinyTiltStates();
 	}
 }
 
@@ -3265,22 +3699,19 @@ void SATTRAudioProcessor::applyDelaySamples (
 	const int numChannels = buffer.getNumChannels();
 	auto* const* writeChannels = buffer.getArrayOfWritePointers();
 
-	smoother.setTargetValue (juce::jlimit (0.0f, 95998.0f, targetDelaySamples));
+	smoother.setTargetValue (juce::jlimit (0.0f, 191998.0f, targetDelaySamples));
 
-	// Keep the buffer continuously fed and fade the first 0..2 samples into dry.
-	// This preserves the intentional "rewind" glide while avoiding a hard switch
-	// at very small delays, where interpolation quality and stale-buffer jumps are
-	// most likely to click.
-	constexpr float kMinInterpDelaySamples = 2.0f;
+	// Keep the offset line continuously fed even at zero. The output itself must
+	// remain a true wet-only offset; blending dry here creates combing at small
+	// offset values even when the loader mix is 100% wet.
+	constexpr float kDelayDryEpsSamples = 1.0e-4f;
 
 	if (! smoother.isSmoothing())
 	{
 		const float currentDelay = smoother.getCurrentValue();
-		const float interpDelay = juce::jmax (currentDelay, kMinInterpDelaySamples);
-		const float wet = juce::jlimit (0.0f, 1.0f, currentDelay / kMinInterpDelaySamples);
-		delayLine.setDelay (interpDelay);
+		delayLine.setDelay (currentDelay);
 
-		if (wet <= 0.0f)
+		if (currentDelay <= kDelayDryEpsSamples)
 		{
 			for (int i = 0; i < numSamples; ++i)
 			{
@@ -3303,7 +3734,7 @@ void SATTRAudioProcessor::applyDelaySamples (
 				const float input = channelData[i];
 				delayLine.pushSample (ch, input);
 				const float delayed = delayLine.popSample (ch);
-				channelData[i] = input + (delayed - input) * wet;
+				channelData[i] = delayed;
 			}
 		}
 
@@ -3313,9 +3744,7 @@ void SATTRAudioProcessor::applyDelaySamples (
 	for (int i = 0; i < numSamples; ++i)
 	{
 		const float currentDelay = smoother.getNextValue();
-		const float interpDelay = juce::jmax (currentDelay, kMinInterpDelaySamples);
-		const float wet = juce::jlimit (0.0f, 1.0f, currentDelay / kMinInterpDelaySamples);
-		delayLine.setDelay (interpDelay);
+		delayLine.setDelay (currentDelay);
 		
 		for (int ch = 0; ch < numChannels; ++ch)
 		{
@@ -3323,14 +3752,15 @@ void SATTRAudioProcessor::applyDelaySamples (
 			const float input = channelData[i];
 			delayLine.pushSample (ch, input);
 			const float delayed = delayLine.popSample (ch);
-			channelData[i] = input + (delayed - input) * wet;
+			if (currentDelay > kDelayDryEpsSamples)
+				channelData[i] = delayed;
 		}
 	}
 }
 
-void SATTRAudioProcessor::applyDelay (juce::AudioBuffer<float>& buffer, float delayMs, int loaderIndex)
+void SATTRAudioProcessor::applyOffset (juce::AudioBuffer<float>& buffer, float offsetMs, int loaderIndex)
 {
-	const float targetDelaySamples = juce::jmax (0.0f, delayMs * 0.001f * static_cast<float> (currentSampleRate));
+	const float targetDelaySamples = juce::jmax (0.0f, offsetMs * 0.001f * static_cast<float> (currentSampleRate));
 	auto& delayLine = loaderIndex == 0 ? stateA.delayLine : (loaderIndex == 1 ? stateB.delayLine : stateC.delayLine);
 	auto& smoother  = loaderIndex == 0 ? stateA.smoothedDelay : (loaderIndex == 1 ? stateB.smoothedDelay : stateC.smoothedDelay);
 	applyDelaySamples (buffer, targetDelaySamples, delayLine, smoother);
@@ -3350,20 +3780,28 @@ void SATTRAudioProcessor::applyGlobalDryAlignDelay (juce::AudioBuffer<float>& bu
 
 void SATTRAudioProcessor::applyMidSideOutputMode (juce::AudioBuffer<float>& buf, int modeVal, int nSamples)
 {
-	if ((modeVal == 1 || modeVal == 2) && buf.getNumChannels() >= 2)
+	if (modeVal >= 1 && modeVal <= 3 && buf.getNumChannels() >= 2)
 	{
 		auto* L = buf.getWritePointer (0);
 		auto* R = buf.getWritePointer (1);
 		for (int i = 0; i < nSamples; ++i)
 		{
-			const float mono = (L[i] + R[i]) * 0.5f;
-			if (modeVal == 1) // MID output: dual mono mid
+			if (modeVal == 1) // M/S decode
 			{
+				const float mid = L[i];
+				const float side = R[i];
+				L[i] = mid + side;
+				R[i] = mid - side;
+			}
+			else if (modeVal == 2) // MID output: dual mono mid
+			{
+				const float mono = (L[i] + R[i]) * 0.5f;
 				L[i] = mono;
 				R[i] = mono;
 			}
 			else // SIDE output: stereo-encoded side
 			{
+				const float mono = (L[i] + R[i]) * 0.5f;
 				L[i] = mono;
 				R[i] = -mono;
 			}
@@ -3377,9 +3815,21 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	const bool enabledA = parameters.getRawParameterValue (kParamEnableA)->load() > 0.5f;
 	const bool enabledB = parameters.getRawParameterValue (kParamEnableB)->load() > 0.5f;
 	const bool enabledC = parameters.getRawParameterValue (kParamEnableC)->load() > 0.5f;
+	const auto alignTypeA = static_cast<SatEngine::Model> (
+		juce::jlimit (0, (int) SatEngine::Model::NumModels - 1,
+		              static_cast<int> (std::lround (pSatTypeA->load()))));
+	const auto alignTypeB = static_cast<SatEngine::Model> (
+		juce::jlimit (0, (int) SatEngine::Model::NumModels - 1,
+		              static_cast<int> (std::lround (pSatTypeB->load()))));
+	const auto alignTypeC = static_cast<SatEngine::Model> (
+		juce::jlimit (0, (int) SatEngine::Model::NumModels - 1,
+		              static_cast<int> (std::lround (pSatTypeC->load()))));
+	const bool activeA = enabledA && (alignTypeA != SatEngine::Model::NAM || isNamModelLoadedForLoader (0));
+	const bool activeB = enabledB && (alignTypeB != SatEngine::Model::NAM || isNamModelLoadedForLoader (1));
+	const bool activeC = enabledC && (alignTypeC != SatEngine::Model::NAM || isNamModelLoadedForLoader (2));
 
 	const bool dryAlignRequested = isDryAlignModeEnabled();
-	const bool anyEnabled = enabledA || enabledB || enabledC;
+	const bool anyEnabled = activeA || activeB || activeC;
 	if (! anyEnabled)
 	{
 		dryAlignRuntimeActive_.store (false, std::memory_order_release);
@@ -3387,87 +3837,180 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	}
 
 	// -- Generate synthetic alignment probes --
-	// Process a unit impulse through each active engine's emphasis chain.
-	const int irLen = 512;
+	// Use a deterministic broadband probe and run it through the actual model
+	// path. This is more reliable than an impulse for NAM/nonlinear pairings.
+	const int irLen = 2048;
 	const float sr = static_cast<float> (currentSampleRate);
+	juce::AudioBuffer<float> alignSource (1, irLen);
+	{
+		auto* src = alignSource.getWritePointer (0);
+		juce::uint32 rng = 0x4d595df4u;
+		for (int n = 0; n < irLen; ++n)
+		{
+			rng = rng * 1664525u + 1013904223u;
+			const float white = ((float) ((rng >> 8) & 0x00ffffffu) / 8388608.0f) - 1.0f;
+			const float fade = juce::jmin (1.0f, juce::jmin ((float) n / 64.0f,
+			                                                 (float) (irLen - 1 - n) / 64.0f));
+			src[n] = white * fade * 0.16f;
+		}
+	}
 
-	auto makeAlignmentProbe = [&] (int satType, float satTypeCtrl, bool satRaw) -> juce::AudioBuffer<float>
+	auto makeAlignmentProbe = [&] (int satType, float satDrive, float satChar, float satTypeCtrl,
+	                               float satBias, float satSag, float satDetail, float instabilityAmt,
+	                               int seriesCount, bool satRaw, int loaderIndex,
+	                               const juce::AudioBuffer<float>& inputProbe) -> juce::AudioBuffer<float>
 	{
 		juce::AudioBuffer<float> probe (1, irLen);
-		probe.clear();
-		probe.setSample (0, 0, 1.0f); // Unit impulse probe
-
-		SatEngine::EmphasisState empSt;
-		empSt.reset();
+		probe.copyFrom (0, 0, inputProbe, 0, 0, irLen);
 
 		const auto model = static_cast<SatEngine::Model> (
 			juce::jlimit (0, (int) SatEngine::Model::NumModels - 1, satType));
 
-		SatEngine::EmphCoeffs ec;
-		switch (model)
+		if (model == SatEngine::Model::NAM)
 		{
-			case SatEngine::Model::Tube:
-				ec.preHP  = SatEngine::detail::onePoleCoeff (20.0f,   sr);
-				ec.preSh  = SatEngine::detail::onePoleCoeff (3800.0f, sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (9500.0f, sr);
-				ec.postHP = SatEngine::detail::onePoleCoeff (30.0f,   sr);
-				break;
-			case SatEngine::Model::Diode:
-				ec.preHP  = SatEngine::detail::onePoleCoeff (720.0f,  sr);
-				ec.preSh  = SatEngine::detail::onePoleCoeff (1800.0f, sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (3200.0f, sr);
-				ec.preHPAlt  = SatEngine::detail::onePoleCoeff (420.0f,  sr);
-				ec.preShAlt  = SatEngine::detail::onePoleCoeff (2600.0f, sr);
-				ec.postLPAlt = SatEngine::detail::onePoleCoeff (5600.0f, sr);
-				break;
-			case SatEngine::Model::Clipper:
-				ec.preHP  = SatEngine::detail::onePoleCoeff (720.0f,  sr);
-				ec.preSh  = SatEngine::detail::onePoleCoeff (1800.0f, sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (2200.0f, sr);
-				break;
-			case SatEngine::Model::Tape:
-				ec.preHP  = SatEngine::detail::onePoleCoeff (24.0f,   sr);
-				ec.preSh  = SatEngine::detail::onePoleCoeff (2400.0f, sr);
-				ec.postLP = SatEngine::detail::onePoleCoeff (14500.0f, sr);
-				break;
-			default:
-				break;
+			const auto path = getNamModelPathForLoader (loaderIndex);
+			if (path.isNotEmpty())
+			{
+				juce::String error;
+				auto probeModel = std::make_unique<SatNamModel>();
+				if (probeModel->loadFromFile (juce::File (path), currentSampleRate,
+				                              juce::jmax (currentBlockSize, irLen), error))
+					probeModel->process (probe, irLen);
+			}
+			return probe;
 		}
 
-		float* data = probe.getWritePointer (0);
-		const float irDrive = 1.0f;
-		const bool usesEmphasis = ! satRaw
-			&& model != SatEngine::Model::Clean
-			&& model != SatEngine::Model::Transistor;
-		for (int n = 0; n < irLen; ++n)
+		if (model == SatEngine::Model::Clean)
+			return probe;
+
+		auto probeState = std::make_unique<SatEngine::State>();
+		probeState->reset();
+		probeState->lastModel = model;
+		probeState->sDrive = SatEngine::applyDriveCurve (satDrive, model);
+		probeState->sDetailDrive = juce::jlimit (0.0f, 1.0f, satDrive);
+		probeState->sGirth = satChar;
+		probeState->sMod = satTypeCtrl;
+		probeState->sBias = satBias;
+		probeState->sReact = satSag;
+		probeState->sDetail = juce::jlimit (0.0f, 1.0f, satDetail);
+		probeState->sInstability = instabilityAmt;
+
+		const int osOrder = loadRelaxedInt (pOversample);
+		const bool effectiveSatRaw = satRaw && model != SatEngine::Model::Clipper;
+		const bool deferFullKlonPostEq = model == SatEngine::Model::OverdriveB
+			&& ! effectiveSatRaw;
+		const bool deferOverdriveAPostEq = model == SatEngine::Model::OverdriveA
+			&& ! effectiveSatRaw;
+		probeState->deferFullKlonPostEq = deferFullKlonPostEq;
+		probeState->deferOverdriveAPostEq = deferOverdriveAPostEq;
+
+		auto* data = probe.getWritePointer (0);
+		if (osOrder > 0 && osOrder <= 4)
 		{
-			float x = data[n];
-			if (usesEmphasis)
-			{
-				x = SatEngine::preEmphasize (x, empSt, model, irDrive, satTypeCtrl, ec);
-				x = SatEngine::deEmphasize  (x, empSt, model, irDrive, satTypeCtrl, ec);
-			}
-			data[n] = x;
+			// Align must measure the same oversampled core path as audio, but never
+			// touch live oversampler states. A local mono oversampler makes the probe
+			// include both nonlinear SR effects and OS filter phase/latency.
+			juce::dsp::Oversampling<float> probeOs (
+				1, (size_t) osOrder,
+				juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
+			probeOs.initProcessing ((size_t) irLen);
+			probeOs.reset();
+
+			auto probeBlock = juce::dsp::AudioBlock<float> (probe);
+			auto osBlock = probeOs.processSamplesUp (probeBlock);
+			float* osData = osBlock.getChannelPointer (0);
+			const int osNumSamples = (int) osBlock.getNumSamples();
+			const float osSr = sr * (float) probeOs.getOversamplingFactor();
+
+			SatEngine::processBlock (*probeState, osData, osData, osNumSamples,
+			                         model, satDrive, satChar, satTypeCtrl, satBias, satSag, satDetail,
+			                         instabilityAmt, osSr, seriesCount, false, effectiveSatRaw, nullptr, 1);
+			probeOs.processSamplesDown (probeBlock);
+			data = probe.getWritePointer (0);
 		}
+		else
+		{
+			SatEngine::processBlock (*probeState, data, data, irLen,
+			                         model, satDrive, satChar, satTypeCtrl, satBias, satSag, satDetail,
+			                         instabilityAmt, sr, seriesCount, true, effectiveSatRaw, nullptr, 1);
+		}
+
+		if (deferOverdriveAPostEq)
+			SatEngine::processDeferredOverdriveAPostEq (*probeState, data, data, irLen,
+			                                                satDrive, 0.0f, seriesCount, sr, effectiveSatRaw);
+		if (deferFullKlonPostEq)
+			SatEngine::processDeferredFullKlonPostEq (*probeState, data, data, irLen,
+			                                          satDrive, 1.0f, seriesCount, sr, effectiveSatRaw);
+
 		return probe;
 	};
 
-	// Energy centroid of the synthetic probe response - measures effective group delay
-	// Unlike peak-finding cross-correlation, this gives meaningful non-zero
-	// values even for minimum-phase responses where the peak is always at sample 0.
+	// Estimate effective offset by correlating the processed broadband probe
+	// against the shared source. This handles NAM/nonlinear pairings better
+	// than an impulse centroid and still returns a single offset value.
 	auto calcCentroid = [&] (const juce::AudioBuffer<float>& probe) -> float
 	{
+		const float* source = alignSource.getReadPointer (0);
 		const float* data = probe.getReadPointer (0);
 		const int len = probe.getNumSamples();
-		float energySum = 0.0f;
-		float weightedSum = 0.0f;
-		for (int n = 0; n < len; ++n)
+		const int maxLag = juce::jmin (128, len / 4);
+
+		auto scoreAtLag = [&] (int lag, float* signedScoreOut = nullptr) -> float
 		{
-			const float e = data[n] * data[n];
-			energySum += e;
-			weightedSum += static_cast<float> (n) * e;
+			const int srcStart = lag >= 0 ? 0 : -lag;
+			const int dstStart = lag >= 0 ? lag : 0;
+			const int count = len - std::abs (lag);
+			if (count <= 32)
+			{
+				if (signedScoreOut != nullptr)
+					*signedScoreOut = 0.0f;
+				return 0.0f;
+			}
+
+			double xy = 0.0;
+			double xx = 0.0;
+			double yy = 0.0;
+			for (int i = 0; i < count; ++i)
+			{
+				const float x = source[srcStart + i];
+				const float y = data[dstStart + i];
+				xy += (double) x * (double) y;
+				xx += (double) x * (double) x;
+				yy += (double) y * (double) y;
+			}
+
+			const double denom = std::sqrt (xx * yy) + 1.0e-30;
+			const float signedScore = (float) (xy / denom);
+			if (signedScoreOut != nullptr)
+				*signedScoreOut = signedScore;
+			return std::abs (signedScore);
+		};
+
+		int bestLag = 0;
+		float bestScore = -1.0f;
+		for (int lag = -maxLag; lag <= maxLag; ++lag)
+		{
+			const float score = scoreAtLag (lag);
+			if (score > bestScore + 1.0e-7f
+				|| (std::abs (score - bestScore) <= 1.0e-7f && std::abs (lag) < std::abs (bestLag)))
+			{
+				bestScore = score;
+				bestLag = lag;
+			}
 		}
-		return energySum > 1e-20f ? weightedSum / energySum : 0.0f;
+
+		float frac = 0.0f;
+		if (bestLag > -maxLag && bestLag < maxLag)
+		{
+			const float leftScore = scoreAtLag (bestLag - 1);
+			const float midScore = scoreAtLag (bestLag);
+			const float rightScore = scoreAtLag (bestLag + 1);
+			const float denom = leftScore - 2.0f * midScore + rightScore;
+			if (std::abs (denom) > 1.0e-9f)
+				frac = juce::jlimit (-0.5f, 0.5f, 0.5f * (leftScore - rightScore) / denom);
+		}
+
+		return (float) bestLag + frac;
 	};
 
 	// Cross-correlation for polarity detection only (sign of correlation)
@@ -3481,7 +4024,7 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 		return sum;
 	};
 
-	auto applyStaticToneToProbe = [&] (juce::AudioBuffer<float>& probe, int loaderIndex)
+	auto applyStaticToneToProbe = [&] (juce::AudioBuffer<float>& probe, int loaderIndex, bool preStage)
 	{
 		if (probe.getNumSamples() <= 0 || currentSampleRate <= 0.0)
 			return;
@@ -3565,19 +4108,46 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 			}
 		};
 
-		if (filterPre) applyFilters();
-		if (tiltPre) applyTilt();
-		if (! tiltPre) applyTilt();
-		if (! filterPre) applyFilters();
+		if (preStage)
+		{
+			if (filterPre) applyFilters();
+			if (tiltPre) applyTilt();
+		}
+		else
+		{
+			if (! tiltPre) applyTilt();
+			if (! filterPre) applyFilters();
+		}
 	};
 
-	auto makeLoaderProbe = [&] (const char* typeId, const char* typeCtrlId, const char* rawId, int loaderIndex)
+	auto makeLoaderProbe = [&] (int loaderIndex)
 	{
-		const int type = static_cast<int> (parameters.getRawParameterValue (typeId)->load());
-		const float typeCtrl = parameters.getRawParameterValue (typeCtrlId)->load();
-		const bool raw = parameters.getRawParameterValue (rawId)->load() > 0.5f;
-		auto probe = makeAlignmentProbe (type, typeCtrl, raw);
-		applyStaticToneToProbe (probe, loaderIndex);
+		auto pick = [&] (std::atomic<float>* a, std::atomic<float>* b, std::atomic<float>* c)
+			-> std::atomic<float>*
+		{
+			return loaderIndex == 0 ? a : (loaderIndex == 1 ? b : c);
+		};
+
+		const int type = static_cast<int> (pick (pSatTypeA, pSatTypeB, pSatTypeC)->load());
+		const float drive = pick (pSatDriveA, pSatDriveB, pSatDriveC)->load();
+		const float character = pick (pSatCharA, pSatCharB, pSatCharC)->load();
+		const float typeCtrl = pick (pSatTypeCtrlA, pSatTypeCtrlB, pSatTypeCtrlC)->load();
+		const float bias = pick (pSatBiasA, pSatBiasB, pSatBiasC)->load();
+		const float sag = pick (pSatSagA, pSatSagB, pSatSagC)->load();
+		const float detail = pick (pDetailA, pDetailB, pDetailC)->load();
+		const float instability = pick (pInstabilityA, pInstabilityB, pInstabilityC)->load();
+		const float inDb = pick (pInA, pInB, pInC)->load();
+		const int series = juce::jlimit (1, 4, static_cast<int> (std::lround (pick (pSeriesA, pSeriesB, pSeriesC)->load())));
+		const bool raw = pick (pSatRawA, pSatRawB, pSatRawC)->load() > 0.5f;
+
+		juce::AudioBuffer<float> probeInput (1, irLen);
+		probeInput.copyFrom (0, 0, alignSource, 0, 0, irLen);
+		probeInput.applyGain (gainFaderDecibelsToGain (inDb));
+		applyStaticToneToProbe (probeInput, loaderIndex, true);
+
+		auto probe = makeAlignmentProbe (type, drive, character, typeCtrl, bias, sag, detail,
+		                                 instability, series, raw, loaderIndex, probeInput);
+		applyStaticToneToProbe (probe, loaderIndex, false);
 		return probe;
 	};
 
@@ -3588,34 +4158,35 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	float centroidB = 0.0f;
 	float centroidC = 0.0f;
 
-	if (enabledA)
+
+	if (activeA)
 	{
-		probeA = makeLoaderProbe (kParamSatTypeA, kParamSatTypeCtrlA, kParamSatRawA, 0);
+		probeA = makeLoaderProbe (0);
 		centroidA = calcCentroid (probeA);
 		stateA.dryAnchorSamples.store (centroidA);
 	}
 	else
 		stateA.dryAnchorSamples.store (0.0f);
 
-	if (enabledB)
+	if (activeB)
 	{
-		probeB = makeLoaderProbe (kParamSatTypeB, kParamSatTypeCtrlB, kParamSatRawB, 1);
+		probeB = makeLoaderProbe (1);
 		centroidB = calcCentroid (probeB);
 		stateB.dryAnchorSamples.store (centroidB);
 	}
 	else
 		stateB.dryAnchorSamples.store (0.0f);
 
-	if (enabledC)
+	if (activeC)
 	{
-		probeC = makeLoaderProbe (kParamSatTypeC, kParamSatTypeCtrlC, kParamSatRawC, 2);
+		probeC = makeLoaderProbe (2);
 		centroidC = calcCentroid (probeC);
 		stateC.dryAnchorSamples.store (centroidC);
 	}
 	else
 		stateC.dryAnchorSamples.store (0.0f);
 
-	if (! enabledA || (! enabledB && ! enabledC))
+	if (! activeA || (! activeB && ! activeC))
 	{
 		dryAlignRuntimeActive_.store (dryAlignRequested && anyEnabled, std::memory_order_release);
 		return;
@@ -3624,61 +4195,66 @@ void SATTRAudioProcessor::calculateAutoAlignment()
 	dryAlignRuntimeActive_.store (dryAlignRequested, std::memory_order_release);
 	const float* dataA = probeA.getReadPointer (0);
 
-	// Reset all delays and inversions first - ALIGN finds optimal from scratch
-	if (auto* p = parameters.getParameter (kParamDelayA))
+	const bool currentInvA = parameters.getRawParameterValue (kParamInvA)->load() > 0.5f;
+
+	// Reset all delays first - ALIGN finds timing from scratch.
+	if (auto* p = parameters.getParameter (kParamOffsetA))
 		p->setValueNotifyingHost (p->convertTo0to1 (0.0f));
-	if (auto* p = parameters.getParameter (kParamDelayB))
+	if (auto* p = parameters.getParameter (kParamOffsetB))
 		p->setValueNotifyingHost (p->convertTo0to1 (0.0f));
-	if (auto* p = parameters.getParameter (kParamDelayC))
+	if (auto* p = parameters.getParameter (kParamOffsetC))
 		p->setValueNotifyingHost (p->convertTo0to1 (0.0f));
 	if (auto* p = parameters.getParameter (kParamInvA))
-		p->setValueNotifyingHost (0.0f);
-	if (auto* p = parameters.getParameter (kParamInvB))
-		p->setValueNotifyingHost (0.0f);
-	if (auto* p = parameters.getParameter (kParamInvC))
 		p->setValueNotifyingHost (0.0f);
 
 	float corrSignB = 1.0f;
 	float corrSignC = 1.0f;
 
-	if (enabledB)
+	if (activeB)
 		corrSignB = xcorrSign (dataA, probeB);
 
-	if (enabledC)
+	if (activeC)
 		corrSignC = xcorrSign (dataA, probeC);
 
-	// Find maximum centroid - loaders with smaller centroids need delay compensation
+	// Find maximum centroid - loaders with smaller centroids need offset compensation
 	const float maxCentroid = juce::jmax (centroidA,
-	                                      enabledB ? centroidB : centroidA,
-	                                      enabledC ? centroidC : centroidA);
+	                                      activeB ? centroidB : centroidA,
+	                                      activeC ? centroidC : centroidA);
 
 	// Apply delays: convert centroid difference from samples to ms
-	auto setCompDelay = [&] (const char* delayId, float centroid)
+	auto setCompDelay = [&] (const char* offsetId, float centroid)
 	{
 		const float delaySamples = maxCentroid - centroid;
-		const float delayMs = delaySamples / sr * 1000.0f;
-		const float clampedMs = juce::jlimit (0.0f, kDelayMax, delayMs);
-		if (auto* p = parameters.getParameter (delayId))
+		const float offsetMs = delaySamples / sr * 1000.0f;
+		const float clampedMs = juce::jlimit (0.0f, kOffsetMax, offsetMs);
+		if (auto* p = parameters.getParameter (offsetId))
 			p->setValueNotifyingHost (p->convertTo0to1 (clampedMs));
 	};
 
-	setCompDelay (kParamDelayA, centroidA);
-	if (enabledB) setCompDelay (kParamDelayB, centroidB);
-	if (enabledC) setCompDelay (kParamDelayC, centroidC);
+	setCompDelay (kParamOffsetA, centroidA);
+	if (activeB) setCompDelay (kParamOffsetB, centroidB);
+	if (activeC) setCompDelay (kParamOffsetC, centroidC);
 
-	// Apply inversion: raw correlation sign directly determines polarity
-	// (all INV states were reset above, so raw correlations reflect the true phase relationship)
-	if (enabledB)
+	auto resolvePolarity = [&] (const char* invId, float corrSign, bool currentInv)
 	{
-		const bool needsInvert = (corrSignB < 0.0f);
-		if (auto* p = parameters.getParameter (kParamInvB))
-			p->setValueNotifyingHost (needsInvert ? 1.0f : 0.0f);
+		float rawCorr = corrSign;
+		if (currentInvA) rawCorr = -rawCorr;
+		if (currentInv)  rawCorr = -rawCorr;
+
+		if (auto* p = parameters.getParameter (invId))
+			p->setValueNotifyingHost (rawCorr < 0.0f ? 1.0f : 0.0f);
+	};
+
+	// Apply inversion using the audible polarity state before ALIGN, matching CAB-TR.
+	if (activeB)
+	{
+		const bool currentInvB = parameters.getRawParameterValue (kParamInvB)->load() > 0.5f;
+		resolvePolarity (kParamInvB, corrSignB, currentInvB);
 	}
-	if (enabledC)
+	if (activeC)
 	{
-		const bool needsInvert = (corrSignC < 0.0f);
-		if (auto* p = parameters.getParameter (kParamInvC))
-			p->setValueNotifyingHost (needsInvert ? 1.0f : 0.0f);
+		const bool currentInvC = parameters.getRawParameterValue (kParamInvC)->load() > 0.5f;
+		resolvePolarity (kParamInvC, corrSignC, currentInvC);
 	}
 }
 
@@ -3693,6 +4269,71 @@ juce::AudioProcessorEditor* SATTRAudioProcessor::createEditor()
     return new SATTRAudioProcessorEditor (*this);
 }
 
+float SATTRAudioProcessor::getNamSlimForLoader (int loaderIndex) const noexcept
+{
+	std::atomic<float>* params[] = { pNamSlimA, pNamSlimB, pNamSlimC };
+	if (loaderIndex < 0 || loaderIndex >= 3)
+		return kNamSlimDefault;
+
+	if (params[loaderIndex] != nullptr)
+		return juce::jlimit (kNamSlimMin, kNamSlimMax,
+		                     params[loaderIndex]->load (std::memory_order_relaxed));
+
+	const char* ids[] = { kParamNamSlimA, kParamNamSlimB, kParamNamSlimC };
+	if (auto* p = parameters.getRawParameterValue (ids[loaderIndex]))
+		return juce::jlimit (kNamSlimMin, kNamSlimMax,
+		                     p->load (std::memory_order_relaxed));
+
+	return kNamSlimDefault;
+}
+
+void SATTRAudioProcessor::applyNamSlimForLoader (int loaderIndex, float amount01)
+{
+	LoaderState* states[] = { &stateA, &stateB, &stateC };
+	if (loaderIndex < 0 || loaderIndex >= 3)
+		return;
+
+	const float slim = juce::jlimit (kNamSlimMin, kNamSlimMax, amount01);
+	if (! hasPreparedToPlay)
+	{
+		lastAppliedNamSlim_[loaderIndex] = slim;
+		return;
+	}
+
+	juce::String currentPath;
+	if (auto nam = loadNamModelAtomic (&states[loaderIndex]->namModel))
+		currentPath = nam->getCurrentFilePath();
+	else
+		currentPath = states[loaderIndex]->pendingNamPath;
+
+	if (currentPath.isEmpty())
+	{
+		lastAppliedNamSlim_[loaderIndex] = slim;
+		return;
+	}
+
+	auto replacement = std::make_shared<SatNamModel>();
+	replacement->setSlimAmount (slim);
+
+	juce::String error;
+	if (! replacement->loadFromFile (juce::File (currentPath), currentSampleRate, currentBlockSize, error))
+		return;
+
+	{
+		const auto activeNam = loadNamModelAtomic (&states[loaderIndex]->namModel);
+		const auto activePath = activeNam != nullptr ? activeNam->getCurrentFilePath()
+		                                      : states[loaderIndex]->pendingNamPath;
+
+		if (activePath != currentPath)
+			return;
+
+		storeNamModelAtomic (&states[loaderIndex]->namModel, replacement);
+		states[loaderIndex]->pendingNamPath = currentPath;
+	}
+
+	lastAppliedNamSlim_[loaderIndex] = slim;
+}
+
 // ----------------------------------------------------------------
 // TIMER CALLBACK: poll lightweight UI actions and maintenance tasks
 // ----------------------------------------------------------------
@@ -3701,6 +4342,24 @@ void SATTRAudioProcessor::timerCallback()
 #if SAT_DSP_DIAG
 	SatDiag::getDiagWriter().drain (SatDiag::getDiagRing());
 #endif
+
+	const juce::int64 nowMs = juce::Time::currentTimeMillis();
+	constexpr juce::int64 namSlimDebounceMs = 140;
+	for (int loader = 0; loader < 3; ++loader)
+	{
+		const float slim = getNamSlimForLoader (loader);
+		if (std::abs (slim - pendingNamSlim_[loader]) > 0.0005f)
+		{
+			pendingNamSlim_[loader] = slim;
+			pendingNamSlimChangeTimeMs_[loader] = nowMs;
+		}
+
+		if (std::abs (pendingNamSlim_[loader] - lastAppliedNamSlim_[loader]) > 0.0005f
+			&& nowMs - pendingNamSlimChangeTimeMs_[loader] >= namSlimDebounceMs)
+		{
+			applyNamSlimForLoader (loader, pendingNamSlim_[loader]);
+		}
+	}
 
 	// ALIGN: momentary action - calculate cross-correlation + set delay/inv, then auto-reset
 	{
@@ -3712,9 +4371,21 @@ void SATTRAudioProcessor::timerCallback()
 			const bool enabledA = parameters.getRawParameterValue (kParamEnableA)->load() > 0.5f;
 			const bool enabledB = parameters.getRawParameterValue (kParamEnableB)->load() > 0.5f;
 			const bool enabledC = parameters.getRawParameterValue (kParamEnableC)->load() > 0.5f;
+			const auto alignTypeA = static_cast<SatEngine::Model> (
+				juce::jlimit (0, (int) SatEngine::Model::NumModels - 1,
+				              static_cast<int> (std::lround (pSatTypeA->load()))));
+			const auto alignTypeB = static_cast<SatEngine::Model> (
+				juce::jlimit (0, (int) SatEngine::Model::NumModels - 1,
+				              static_cast<int> (std::lround (pSatTypeB->load()))));
+			const auto alignTypeC = static_cast<SatEngine::Model> (
+				juce::jlimit (0, (int) SatEngine::Model::NumModels - 1,
+				              static_cast<int> (std::lround (pSatTypeC->load()))));
+			const bool activeA = enabledA && (alignTypeA != SatEngine::Model::NAM || isNamModelLoadedForLoader (0));
+			const bool activeB = enabledB && (alignTypeB != SatEngine::Model::NAM || isNamModelLoadedForLoader (1));
+			const bool activeC = enabledC && (alignTypeC != SatEngine::Model::NAM || isNamModelLoadedForLoader (2));
 			const bool dryAlignRequested = isDryAlignModeEnabled();
 
-			if ((enabledA && (enabledB || enabledC)) || (dryAlignRequested && (enabledA || enabledB || enabledC)))
+			if ((activeA && (activeB || activeC)) || (dryAlignRequested && (activeA || activeB || activeC)))
 			{
 				calculateAutoAlignment();
 				lastAlignTime_ = now;
@@ -3772,6 +4443,107 @@ bool SATTRAudioProcessor::isDryAlignModeEnabled() const noexcept
 	return dryAlignModeEnabled_.load (std::memory_order_acquire);
 }
 
+void SATTRAudioProcessor::setSafeClipModeEnabled (bool enabled)
+{
+	safeClipModeEnabled_.store (enabled, std::memory_order_release);
+	parameters.state.setProperty (UiStateKeys::safeClipMode, enabled, nullptr);
+}
+
+bool SATTRAudioProcessor::isSafeClipModeEnabled() const noexcept
+{
+	return safeClipModeEnabled_.load (std::memory_order_acquire);
+}
+
+void SATTRAudioProcessor::toggleSafeClipMode()
+{
+	setSafeClipModeEnabled (! isSafeClipModeEnabled());
+}
+
+bool SATTRAudioProcessor::loadNamModelForLoader (int loaderIndex, const juce::String& filePath, juce::String& error)
+{
+	LoaderState* states[] = { &stateA, &stateB, &stateC };
+	if (loaderIndex < 0 || loaderIndex >= 3)
+	{
+		error = "Invalid NAM loader index";
+		return false;
+	}
+
+	if (! hasPreparedToPlay)
+	{
+		states[loaderIndex]->pendingNamPath = filePath;
+		parameters.state.setProperty (getNamPathPropertyKey (loaderIndex), filePath, nullptr);
+		return true;
+	}
+
+	auto replacement = std::make_shared<SatNamModel>();
+	replacement->setSlimAmount (getNamSlimForLoader (loaderIndex));
+	if (! replacement->loadFromFile (juce::File (filePath), currentSampleRate, currentBlockSize, error))
+	{
+		if (loadNamModelAtomic (&states[loaderIndex]->namModel) == nullptr
+			&& states[loaderIndex]->pendingNamPath == filePath)
+			states[loaderIndex]->pendingNamPath.clear();
+		return false;
+	}
+
+	storeNamModelAtomic (&states[loaderIndex]->namModel, replacement);
+	states[loaderIndex]->pendingNamPath = filePath;
+	parameters.state.setProperty (getNamPathPropertyKey (loaderIndex), filePath, nullptr);
+	lastAppliedNamSlim_[loaderIndex] = getNamSlimForLoader (loaderIndex);
+	return true;
+}
+
+void SATTRAudioProcessor::clearNamModelForLoader (int loaderIndex)
+{
+	LoaderState* states[] = { &stateA, &stateB, &stateC };
+	if (loaderIndex < 0 || loaderIndex >= 3)
+		return;
+
+	storeNamModelAtomic (&states[loaderIndex]->namModel, {});
+	states[loaderIndex]->pendingNamPath.clear();
+	parameters.state.setProperty (getNamPathPropertyKey (loaderIndex), juce::String(), nullptr);
+}
+
+juce::String SATTRAudioProcessor::getNamModelPathForLoader (int loaderIndex) const
+{
+	const LoaderState* states[] = { &stateA, &stateB, &stateC };
+	if (loaderIndex < 0 || loaderIndex >= 3)
+		return {};
+
+	const auto pendingPath = states[loaderIndex]->pendingNamPath;
+	if (pendingPath.isNotEmpty())
+		return pendingPath;
+
+	if (auto nam = loadNamModelAtomic (&states[loaderIndex]->namModel))
+	{
+		const auto modelPath = nam->getCurrentFilePath();
+		if (modelPath.isNotEmpty())
+			return modelPath;
+	}
+
+	return parameters.state.getProperty (getNamPathPropertyKey (loaderIndex), "").toString();
+}
+
+juce::String SATTRAudioProcessor::getNamDisplayNameForLoader (int loaderIndex) const
+{
+	const LoaderState* states[] = { &stateA, &stateB, &stateC };
+	if (loaderIndex < 0 || loaderIndex >= 3)
+		return {};
+
+	if (auto nam = loadNamModelAtomic (&states[loaderIndex]->namModel))
+		return nam->getDisplayName();
+	return juce::File (states[loaderIndex]->pendingNamPath).getFileNameWithoutExtension();
+}
+
+bool SATTRAudioProcessor::isNamModelLoadedForLoader (int loaderIndex) const
+{
+	const LoaderState* states[] = { &stateA, &stateB, &stateC };
+	if (loaderIndex < 0 || loaderIndex >= 3)
+		return false;
+
+	const auto nam = loadNamModelAtomic (&states[loaderIndex]->namModel);
+	return nam != nullptr && nam->isLoaded();
+}
+
 // ----------------------------------------------------------------
 void SATTRAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
@@ -3779,6 +4551,15 @@ void SATTRAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 	state.setProperty (UiStateKeys::dryAlignAnchorA, stateA.dryAnchorSamples.load(), nullptr);
 	state.setProperty (UiStateKeys::dryAlignAnchorB, stateB.dryAnchorSamples.load(), nullptr);
 	state.setProperty (UiStateKeys::dryAlignAnchorC, stateC.dryAnchorSamples.load(), nullptr);
+	state.setProperty (UiStateKeys::safeClipMode, isSafeClipModeEnabled(), nullptr);
+	const juce::String namPaths[] = { getNamModelPathForLoader (0), getNamModelPathForLoader (1), getNamModelPathForLoader (2) };
+	state.setProperty (kNamPathA, namPaths[0], nullptr);
+	state.setProperty (kNamPathB, namPaths[1], nullptr);
+	state.setProperty (kNamPathC, namPaths[2], nullptr);
+	auto namState = state.getOrCreateChildWithName (kNamStateNode, nullptr);
+	namState.setProperty (kNamPathA, namPaths[0], nullptr);
+	namState.setProperty (kNamPathB, namPaths[1], nullptr);
+	namState.setProperty (kNamPathC, namPaths[2], nullptr);
 	auto xml = state.createXml();
 	if (xml != nullptr)
 		copyXmlToBinary (*xml, destData);
@@ -3797,6 +4578,11 @@ void SATTRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 			const bool restoredDryAlignMode = (bool) parameters.state.getProperty (UiStateKeys::dryAlignMode, false);
 			dryAlignModeEnabled_.store (restoredDryAlignMode, std::memory_order_release);
 			dryAlignRuntimeActive_.store (restoredDryAlignMode, std::memory_order_release);
+			const bool restoredSafeClipMode = (bool) parameters.state.getProperty (
+				UiStateKeys::safeClipMode,
+				parameters.state.getProperty (UiStateKeys::legacyTruePeakMode, false));
+			safeClipModeEnabled_.store (restoredSafeClipMode, std::memory_order_release);
+			currentReportedLatencySamples_ = -1;
 			stateA.dryAnchorSamples.store (static_cast<float> ((double) parameters.state.getProperty (UiStateKeys::dryAlignAnchorA, 0.0)));
 			stateB.dryAnchorSamples.store (static_cast<float> ((double) parameters.state.getProperty (UiStateKeys::dryAlignAnchorB, 0.0)));
 			stateC.dryAnchorSamples.store (static_cast<float> ((double) parameters.state.getProperty (UiStateKeys::dryAlignAnchorC, 0.0)));
@@ -3813,17 +4599,29 @@ void SATTRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 			{
 				sidechainEnv_[loader] = 0.0f;
 				sidechainDriveAmount_[loader] = 0.0f;
+				sidechainLastGain_[loader] = 1.0f;
+				sidechainHpFilters_[loader].reset();
+				sidechainHpFilters2_[loader].reset();
+				sidechainLpFilters_[loader].reset();
+				sidechainLpFilters2_[loader].reset();
 				for (int ch = 0; ch < 2; ++ch)
 				{
 					sidechainDcPrevIn_[loader][ch] = 0.0f;
 					sidechainDcPrevOut_[loader][ch] = 0.0f;
-					sidechainToneFilters_[loader][ch].reset();
 				}
 			}
 
 			stateA.lastSidechainPreGain = 1.0f;
 			stateB.lastSidechainPreGain = 1.0f;
 			stateC.lastSidechainPreGain = 1.0f;
+
+			juce::String error;
+			const juce::String pathA = readNamPathFromState (state, 0);
+			const juce::String pathB = readNamPathFromState (state, 1);
+			const juce::String pathC = readNamPathFromState (state, 2);
+			if (pathA.isNotEmpty()) loadNamModelForLoader (0, pathA, error); else clearNamModelForLoader (0);
+			if (pathB.isNotEmpty()) loadNamModelForLoader (1, pathB, error); else clearNamModelForLoader (1);
+			if (pathC.isNotEmpty()) loadNamModelForLoader (2, pathC, error); else clearNamModelForLoader (2);
 		}
 	}
 }

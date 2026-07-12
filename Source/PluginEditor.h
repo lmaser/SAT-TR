@@ -5,8 +5,11 @@
 #include <functional>
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "../../TR-Shared/LoaderUI/TRLoaderUI.h"
 #include "CrtEffect.h"
-#include "TRSharedUI.h"
+
+// Local aliases for shared types
+using PromptToggleButton = TR::PromptToggleButton;
 
 class SATTRAudioProcessorEditor : public juce::AudioProcessorEditor,
                                    private juce::Slider::Listener,
@@ -16,6 +19,10 @@ class SATTRAudioProcessorEditor : public juce::AudioProcessorEditor,
                                    private juce::Timer
 {
 public:
+	// Shared template access
+	template <typename, typename> friend class TR::LoaderFilterBarComponent;
+	template <typename, typename> friend class TR::LoaderDualMixBarComponent;
+
 	explicit SATTRAudioProcessorEditor (SATTRAudioProcessor&);
 	~SATTRAudioProcessorEditor() override;
 
@@ -29,6 +36,8 @@ private:
 	void mouseDown (const juce::MouseEvent& e) override;
 	void mouseDoubleClick (const juce::MouseEvent& e) override;
 	void mouseDrag (const juce::MouseEvent& e) override;
+	void mouseMove (const juce::MouseEvent& e) override;
+	void mouseExit (const juce::MouseEvent& e) override;
 
 	void timerCallback() override;
 	void sliderValueChanged (juce::Slider* slider) override;
@@ -43,18 +52,25 @@ private:
 	void openExpPrompt (int loaderIndex);
 	void openFilterPrompt (int loaderIndex);
 	void openSidechainPrompt (int loaderIndex);
+	void openNamFileChooser (int loaderIndex);
+	void loadNamFileFromPath (int loaderIndex, const juce::String& path);
+	void updateNamFileDisplays();
 	void openMixSendPrompt();
 	void applyLabelTextColour (juce::Label& label, juce::Colour colour);
 	void layoutLoaderSection (juce::Rectangle<int> area, int loaderIndex);
-	static int getCompactTargetWidthForLoaderCount (int loaderCount) noexcept;
-	static int getMaxVisibleLoaderCountForWidth (int width) noexcept;
+	int getCompactTargetWidthForLoaderCount (int loaderCount) noexcept;
+	int getMaxVisibleLoaderCountForWidth (int width) noexcept;
 	void clearCompactRailAreas() noexcept;
 	void setVisibleLoaderCount (int loaderCount, bool requestResize);
 	void setFirstVisibleLoaderIndex (int loaderIndex);
+	void syncSingleLoaderIoExpandedState (bool expanded);
 	void setFooterExpanded (bool shouldBeExpanded);
 	void hideLoaderSection (int loaderIndex);
 	void hideFooterControls();
 	void layoutFooterControls (juce::Rectangle<int> area);
+	juce::Rectangle<int> getTitleHitArea() const;
+	juce::String getSafeClipTooltip() const;
+	void showSafeClipTooltip();
 	void updateLoaderEnabledState (int loaderIndex);
 	void updateSatControlsEnabledState (int loaderIndex);
 	void syncSatTypeComboSelection (int loaderIndex);
@@ -72,250 +88,34 @@ private:
 	juce::Rectangle<int> getInfoIconArea() const;
 	void updateInfoIconCache();
 	void setupBar (juce::Slider& s);
+	void updateIoFxMeterSliders();
 
 	SATTRAudioProcessor& audioProcessor;
 
 	// ══════════════════════════════════════════════════════════════
-	//  Custom Slider with right-click popup
+	//  Shared components (aliases to TR::LoaderBarSlider etc.)
 	// ══════════════════════════════════════════════════════════════
-	class BarSlider : public juce::Slider
-	{
-	public:
-		enum class Type { Unknown, HpFreq, LpFreq, Input, Output, Tilt,
-	                  Series, Pan, Fred, Pos,
-	                  Mix, GlobalMix, GlobalOutput, LimThreshold,
-	                  SatDrive, SatChar, SatTypeCtrl, SatBias, SatSag, Detail, Instability, Delay };
-		void setOwner (SATTRAudioProcessorEditor* o) { owner = o; }
-		void setType (Type t) { type_ = t; }
-		Type getType() const { return type_; }
-		void setAllowNumericPopup (bool allow) { allowNumericPopup = allow; }
+	using BarSlider        = TR::LoaderBarSlider<SATTRAudioProcessorEditor>;
+	using NamBrowseButton  = TR::LoaderBrowseButton<SATTRAudioProcessorEditor>;
+	using NamFileLabel     = TR::LoaderFileLabel<SATTRAudioProcessorEditor>;
 
-		void mouseDown (const juce::MouseEvent& e) override
-		{
-			if (e.mods.isPopupMenu() && allowNumericPopup)
-			{
-				if (owner != nullptr)
-					owner->openNumericEntryPopupForSlider (*this);
-				return;
-			}
-			juce::Slider::mouseDown (e);
-		}
+	// Allow shared template to access activeScheme for paint()
+	template<typename> friend class TR::LoaderBarSlider;
 
-		juce::String getTextFromValue (double v) override;
-
-	private:
-		SATTRAudioProcessorEditor* owner = nullptr;
-		Type type_ = Type::Unknown;
-		bool allowNumericPopup = true;
-	};
-
-	class PromptToggleButton : public juce::ToggleButton
-	{
-	public:
-		using juce::ToggleButton::ToggleButton;
-
-		void mouseDown (const juce::MouseEvent& e) override
-		{
-			if (! e.mods.isPopupMenu())
-				juce::ToggleButton::mouseDown (e);
-			else if (onRightClick != nullptr && (! rightClickTextOnly || isPointInTextArea (e.position)))
-				onRightClick();
-		}
-
-		void mouseUp (const juce::MouseEvent& e) override
-		{
-			if (! e.mods.isPopupMenu())
-				juce::ToggleButton::mouseUp (e);
-		}
-
-		void setRightClickTextOnly (bool shouldUseTextOnly) noexcept { rightClickTextOnly = shouldUseTextOnly; }
-
-		std::function<void()> onRightClick;
-
-	private:
-		bool rightClickTextOnly = false;
-
-		bool isPointInTextArea (juce::Point<float> p) const noexcept
-		{
-			const auto local = getLocalBounds().toFloat().reduced (1.0f);
-			const float side = juce::jlimit (14.0f,
-			                                 juce::jmax (14.0f, local.getHeight() - 2.0f),
-			                                 std::round (local.getHeight() * 0.65f));
-			const float textX = local.getX() + 2.0f + side + 2.0f;
-			return p.x >= textX;
-		}
-	};
-
-	// ══════════════════════════════════════════════════════════════
+	// ============================================================================
 	//  Filter bar (dual HP/LP marker component, replaces separate sliders)
-	// ══════════════════════════════════════════════════════════════
-	class FilterBarComponent : public juce::Component,
-	                           public juce::SettableTooltipClient
-	{
-	public:
-		void setOwner (SATTRAudioProcessorEditor* o, int loaderIdx) { owner = o; loaderIndex_ = loaderIdx; }
-		void setScheme (const TR::TRScheme& s) { scheme = s; repaint(); }
+	// ============================================================================
+	using FilterBarComponent = TR::LoaderFilterBarComponent<SATTRAudioProcessorEditor, SATTRAudioProcessor>;
 
-		void paint (juce::Graphics& g) override;
-		void mouseDown (const juce::MouseEvent& e) override;
-		void mouseDrag (const juce::MouseEvent& e) override;
-		void mouseUp (const juce::MouseEvent& e) override;
-		void mouseMove (const juce::MouseEvent& e) override;
-		void mouseDoubleClick (const juce::MouseEvent& e) override;
-
-		void updateFromProcessor();
-
-	private:
-		SATTRAudioProcessorEditor* owner = nullptr;
-		int loaderIndex_ = 0;
-		TR::TRScheme scheme {};
-
-		float hpFreq_ = 80.0f;
-		float lpFreq_ = 12000.0f;
-		bool  hpOn_   = true;
-		bool  lpOn_   = true;
-
-		enum DragTarget { None, HP, LP };
-		DragTarget currentDrag_ = None;
-
-		static constexpr float kMinFreq = 20.0f;
-		static constexpr float kMaxFreq = 20000.0f;
-		static constexpr float kPad     = 7.0f;
-		static constexpr int   kMarkerHitPx = 10;
-
-		juce::Rectangle<float> getInnerArea() const;
-		float freqToNormX (float freq) const;
-		float normXToFreq (float normX) const;
-		float getMarkerScreenX (float freq) const;
-		DragTarget hitTestMarker (juce::Point<float> p) const;
-		void  setFreqFromMouseX (float mouseX, DragTarget target);
-		void  updateTooltipForTarget (DragTarget target);
-	};
-
-	// ══════════════════════════════════════════════════════════════
+	// ============================================================================
 	//  Dual dry/wet level bar (SEND mix mode)
-	// ══════════════════════════════════════════════════════════════
-	class DualMixBarComponent : public juce::Component,
-	                            public juce::SettableTooltipClient
-	{
-	public:
-		DualMixBarComponent() = default;
-		void setOwner (SATTRAudioProcessorEditor* o) { owner = o; }
-		void setScheme (const TR::TRScheme& s) { scheme = s; repaint(); }
-
-		void paint (juce::Graphics& g) override;
-		void mouseDown (const juce::MouseEvent& e) override;
-		void mouseDrag (const juce::MouseEvent& e) override;
-		void mouseUp (const juce::MouseEvent& e) override;
-		void mouseMove (const juce::MouseEvent& e) override;
-
-		void updateFromProcessor();
-
-		float getDryLevel() const { return dryLevel_; }
-		float getWetLevel() const { return wetLevel_; }
-
-		enum DragTarget { None, DRY, WET };
-		DragTarget getLastTouched() const { return lastTouched_; }
-
-	private:
-		SATTRAudioProcessorEditor* owner = nullptr;
-		TR::TRScheme scheme {};
-
-		float dryLevel_ = 0.0f;
-		float wetLevel_ = 1.0f;
-
-		DragTarget currentDrag_ = None;
-		DragTarget lastTouched_ = WET;
-
-		static constexpr float kPad = 7.0f;
-		static constexpr int   kMarkerHitPx = 14;
-
-		juce::Rectangle<float> getInnerArea() const;
-		DragTarget hitTestMarker (juce::Point<float> p) const;
-		void  setLevelFromMouseX (float mouseX, DragTarget target);
-		void  updateTooltipForTarget (DragTarget target);
-	};
+	// ============================================================================
+	using DualMixBarComponent = TR::LoaderDualMixBarComponent<SATTRAudioProcessorEditor, SATTRAudioProcessor>;
 
 	// ══════════════════════════════════════════════════════════════
 	//  Look and Feel
 	// ══════════════════════════════════════════════════════════════
-	class MinimalLNF : public juce::LookAndFeel_V4
-	{
-	public:
-		MinimalLNF()
-		{
-			scheme = { juce::Colours::black, juce::Colours::white,
-			           juce::Colours::white, juce::Colours::white };
-			TR::applySchemeToLookAndFeel (*this, scheme);
-		}
-
-		void setScheme (const TR::TRScheme& s)
-		{
-			scheme = s;
-			TR::applySchemeToLookAndFeel (*this, scheme);
-		}
-
-		void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
-		                       float sliderPos, float minSliderPos, float maxSliderPos,
-		                       const juce::Slider::SliderStyle, juce::Slider&) override;
-
-		void drawTickBox (juce::Graphics&, juce::Component&,
-		                  float x, float y, float w, float h,
-		                  bool ticked, bool isEnabled,
-		                  bool highlighted, bool down) override;
-
-		void drawToggleButton (juce::Graphics&, juce::ToggleButton&,
-		                      bool shouldDrawButtonAsHighlighted,
-		                      bool shouldDrawButtonAsDown) override;
-
-		void drawButtonBackground (juce::Graphics&, juce::Button&,
-		                           const juce::Colour& backgroundColour,
-		                           bool shouldDrawButtonAsHighlighted,
-		                           bool shouldDrawButtonAsDown) override;
-
-		void drawComboBox (juce::Graphics&, int width, int height,
-		                   bool isButtonDown, int buttonX, int buttonY,
-		                   int buttonW, int buttonH, juce::ComboBox&) override;
-
-		juce::Font getComboBoxFont (juce::ComboBox& box) override;
-
-		void positionComboBoxText (juce::ComboBox& box, juce::Label& label) override
-		{
-			label.setFont (getComboBoxFont (box));
-			label.setBounds (1, 1, box.getWidth() - 2, box.getHeight() - 2);
-			label.setJustificationType (juce::Justification::centred);
-		}
-
-		void drawPopupMenuBackground (juce::Graphics&, int width, int height) override;
-
-		void drawAlertBox (juce::Graphics&, juce::AlertWindow&,
-		                   const juce::Rectangle<int>& textArea,
-		                   juce::TextLayout& textLayout) override;
-
-		void drawBubble (juce::Graphics&, juce::BubbleComponent&,
-		                 const juce::Point<float>& tip,
-		                 const juce::Rectangle<float>& body) override;
-
-		juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
-		juce::Font getAlertWindowMessageFont() override;
-		juce::Font getLabelFont (juce::Label& label) override;
-		juce::Font getSliderPopupFont (juce::Slider&) override;
-		juce::Rectangle<int> getTooltipBounds (const juce::String& tipText,
-		                                       juce::Point<int> screenPos,
-		                                       juce::Rectangle<int> parentArea) override;
-		void drawTooltip (juce::Graphics&, const juce::String& text, int width, int height) override;
-
-		void drawScrollbar (juce::Graphics&, juce::ScrollBar&,
-		                    int x, int y, int width, int height,
-		                    bool isScrollbarVertical,
-		                    int thumbStartPosition, int thumbSize,
-		                    bool isMouseOver, bool isMouseDown) override;
-
-		int getMinimumScrollbarThumbSize (juce::ScrollBar&) override { return 16; }
-		int getScrollbarButtonSize (juce::ScrollBar&) override      { return 0; }
-
-		TR::TRScheme scheme;
-	};
+	using MinimalLNF = TR::LoaderLookAndFeel;
 
 	MinimalLNF lnf;
 
@@ -332,10 +132,12 @@ private:
 		FilterBarComponent &filterBar;  BarSlider &mix;
 		juce::ComboBox &satType;
 		juce::ToggleButton &raw;
-		BarSlider &satDrive, &satChar, &satTypeCtrl, &satBias, &satSag;
+		NamBrowseButton &namBrowse;
+		NamFileLabel &namDisplay;
+		BarSlider &satDrive, &namSlim, &satChar, &satTypeCtrl, &satBias, &satSag;
 		BarSlider &detail;
 		BarSlider &instability;
-		BarSlider &delay;
+		BarSlider &offset;
 	};
 	struct AttachRefs
 	{
@@ -347,13 +149,14 @@ private:
 		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &mixAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> &satTypeAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>   &rawAtt;
-		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &satDriveAtt, &satCharAtt, &satTypeCtrlAtt, &satBiasAtt, &satSagAtt;
+		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &satDriveAtt, &namSlimAtt, &satCharAtt, &satTypeCtrlAtt, &satBiasAtt, &satSagAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &detailAtt;
 		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &instabilityAtt;
-		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &delayAtt;
+		std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   &offsetAtt;
 	};
 	LoaderRefs  getLoaderRefs (int index);
 	AttachRefs  getAttachRefs (int index);
+	TR::LoaderPanelSpec describeLoaderPanelSpec (int index);
 	void setupLoaderUI (int loaderIndex, LoaderRefs refs, const char* chaosAmtId, const char* chaosSpdId);
 	void createLoaderAttachments (juce::AudioProcessorValueTreeState& params, int loaderIndex,
 	                              LoaderRefs ui, AttachRefs att);
@@ -364,15 +167,17 @@ private:
 		const char* hpFreq;  const char* lpFreq;  const char* in;  const char* out;  const char* tilt;
 		const char* series;  const char* pan;     const char* fred;   const char* pos;   const char* reso;
 		const char* inv;     const char* chaos;  const char* chaosFilter; const char* sidechain;
-		const char* sidechainSmooth; const char* sidechainTone;
+		const char* sidechainGain; const char* sidechainSmooth;
+		const char* sidechainHp; const char* sidechainLp; const char* sidechainHpOn; const char* sidechainLpOn;
+		const char* sidechainHpSlope; const char* sidechainLpSlope;
 		const char* chaosAmt; const char* chaosSpd;
 		const char* chaosAmtFilter; const char* chaosSpdFilter;
 		const char* modeIn;  const char* modeOut; const char* sumBus; const char* filterPos; const char* mix;
-		const char* satType; const char* satRaw; const char* satDrive; const char* satChar;
+		const char* satType; const char* satRaw; const char* satDrive; const char* namSlim; const char* satChar;
 		const char* satTypeCtrl;  const char* satBias;  const char* satSag;
 		const char* detail;
 		const char* instability;
-		const char* delay;
+		const char* offset;
 		const char* exp;
 	};
 	static const LoaderParamIds kLoaderParams[3];
@@ -431,7 +236,11 @@ private:
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> filterPosAttachA;
 
 	juce::ComboBox satTypeComboA;
+	NamBrowseButton namBrowseButtonA;
+	NamFileLabel namFileDisplayA;
+	TR::LoaderClearButton namClearButtonA;
 	BarSlider satDriveSliderA;
+	BarSlider namSlimSliderA;
 	BarSlider satCharSliderA;
 	BarSlider satTypeCtrlSliderA;
 	BarSlider satBiasSliderA;
@@ -440,12 +249,13 @@ private:
 	PromptToggleButton rawButtonA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> rawAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satDriveAttachA;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> namSlimAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satCharAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satTypeCtrlAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satBiasAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satSagAttachA;
-	BarSlider delaySliderA;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> delayAttachA;
+	BarSlider offsetSliderA;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> offsetAttachA;
 
 	// ══════════════════════════════════════════════════════════════
 	//  UI Components — Loader B
@@ -501,7 +311,11 @@ private:
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> filterPosAttachB;
 
 	juce::ComboBox satTypeComboB;
+	NamBrowseButton namBrowseButtonB;
+	NamFileLabel namFileDisplayB;
+	TR::LoaderClearButton namClearButtonB;
 	BarSlider satDriveSliderB;
+	BarSlider namSlimSliderB;
 	BarSlider satCharSliderB;
 	BarSlider satTypeCtrlSliderB;
 	BarSlider satBiasSliderB;
@@ -510,12 +324,13 @@ private:
 	PromptToggleButton rawButtonB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> rawAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satDriveAttachB;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> namSlimAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satCharAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satTypeCtrlAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satBiasAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satSagAttachB;
-	BarSlider delaySliderB;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> delayAttachB;
+	BarSlider offsetSliderB;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> offsetAttachB;
 
 	// ══════════════════════════════════════════════════════════════
 	//  UI Components — Loader C
@@ -571,7 +386,11 @@ private:
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> filterPosAttachC;
 
 	juce::ComboBox satTypeComboC;
+	NamBrowseButton namBrowseButtonC;
+	NamFileLabel namFileDisplayC;
+	TR::LoaderClearButton namClearButtonC;
 	BarSlider satDriveSliderC;
+	BarSlider namSlimSliderC;
 	BarSlider satCharSliderC;
 	BarSlider satTypeCtrlSliderC;
 	BarSlider satBiasSliderC;
@@ -580,12 +399,13 @@ private:
 	PromptToggleButton rawButtonC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> rawAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satDriveAttachC;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> namSlimAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satCharAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satTypeCtrlAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satBiasAttachC;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> satSagAttachC;
-	BarSlider delaySliderC;
-	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> delayAttachC;
+	BarSlider offsetSliderC;
+	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> offsetAttachC;
 
 	// ══════════════════════════════════════════════════════════════
 	//  UI Components — Filter Bars & per-loader MIX
@@ -600,6 +420,14 @@ private:
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachA;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachB;
 	std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachC;
+
+	juce::File currentNamFolderA { juce::File::getSpecialLocation (juce::File::userHomeDirectory) };
+	juce::File currentNamFolderB { juce::File::getSpecialLocation (juce::File::userHomeDirectory) };
+	juce::File currentNamFolderC { juce::File::getSpecialLocation (juce::File::userHomeDirectory) };
+	juce::String cachedNamDisplayPaths_[3];
+	std::unique_ptr<juce::FileChooser> namFileChooser;
+	bool rawVisualOverrideActive_[3] = { false, false, false };
+	bool sidechainVisualOverrideActive_[3] = { false, false, false };
 
 	// ══════════════════════════════════════════════════════════════
 	//  Collapse/Expand state  (per-loader independent)
@@ -616,7 +444,11 @@ private:
 	int visibleLoaderCount_ = 3;
 	int firstVisibleLoaderIndex_ = 0;
 	bool footerExpanded_ = false;
+	bool singleLoaderIoExpanded_ = false;
 	bool applyingCompactResize_ = false;
+
+	TR::LoaderLayoutSpec layoutSpec_;
+	void syncLayoutSpecToMembers();
 	int cachedHeaderTitleX_ = 16;
 	juce::Rectangle<int> cachedLoaderTabAreas_[3];
 	int cachedLoaderTabStartIndices_[3] = {};
@@ -662,63 +494,41 @@ private:
 	CrtEffect crtEffect;
 	float crtTime = 0.0f;
 	bool crtEnabled = false;
+	bool ioFxEnabled = true;
 
 	void applyCrtState (bool enabled);
 
 	// ══════════════════════════════════════════════════════════════
 	//  Palette & Colour Scheme
 	// ══════════════════════════════════════════════════════════════
-	bool useCustomPalette = false;
-	std::array<juce::Colour, 2> defaultPalette { juce::Colours::white, juce::Colours::black };
-	std::array<juce::Colour, 2> customPalette  { juce::Colours::white, juce::Colours::black };
+	TR::LoaderPaletteState paletteState;
 	TR::TRScheme activeScheme;
 
-	void applyActivePalette()
+	void refreshActivePalette()
 	{
-		const auto& palette = useCustomPalette ? customPalette : defaultPalette;
+		TR::applyLoaderPalette (*this, paletteState, lnf, activeScheme,
+			{
+				&modeInComboA, &modeOutComboA, &sumBusComboA, &filterPosComboA, &satTypeComboA,
+				&modeInComboB, &modeOutComboB, &sumBusComboB, &filterPosComboB, &satTypeComboB,
+				&modeInComboC, &modeOutComboC, &sumBusComboC, &filterPosComboC, &satTypeComboC,
+				&routeCombo, &matchCombo, &trimCombo, &mixModeCombo, &limModeCombo, &invPolCombo, &invStrCombo
+			},
+			{ &filterBarA_, &filterBarB_, &filterBarC_ },
+			{ &namClearButtonA, &namClearButtonB, &namClearButtonC },
+			[this] (const TR::TRScheme& scheme)
+			{
+				dualMixBar_.setScheme (scheme);
 
-		TR::TRScheme scheme;
-		scheme.bg      = palette[1];
-		scheme.fg      = palette[0];
-		scheme.outline = palette[0];
-		scheme.text    = palette[0];
+				if (tooltipWindow != nullptr)
+				{
+					tooltipWindow->setColour (juce::TooltipWindow::backgroundColourId, scheme.bg);
+					tooltipWindow->setColour (juce::TooltipWindow::textColourId,       scheme.text);
+					tooltipWindow->setColour (juce::TooltipWindow::outlineColourId,    scheme.outline);
+					tooltipWindow->setLookAndFeel (&lnf);
+				}
 
-		activeScheme = scheme;
-		lnf.setScheme (activeScheme);
-
-		auto applyComboScheme = [this] (juce::ComboBox& c) {
-			c.setColour (juce::ComboBox::textColourId,       activeScheme.text);
-			c.setColour (juce::ComboBox::backgroundColourId, activeScheme.bg);
-			c.setColour (juce::ComboBox::outlineColourId,    activeScheme.outline);
-		};
-
-		for (int i = 0; i < 3; ++i)
-		{
-			auto r = getLoaderRefs (i);
-			applyComboScheme (r.modeIn);
-			applyComboScheme (r.modeOut);
-			applyComboScheme (r.sumBus);
-			applyComboScheme (r.filterPos);
-			applyComboScheme (r.satType);
-			r.filterBar.setScheme (activeScheme);
-		}
-
-		applyComboScheme (routeCombo);
-		applyComboScheme (matchCombo);
-		applyComboScheme (trimCombo);
-		applyComboScheme (mixModeCombo);
-		applyComboScheme (limModeCombo);
-		applyComboScheme (invPolCombo);
-		applyComboScheme (invStrCombo);
-		dualMixBar_.setScheme (activeScheme);
-
-		if (tooltipWindow != nullptr)
-		{
-			tooltipWindow->setColour (juce::TooltipWindow::backgroundColourId, activeScheme.bg);
-			tooltipWindow->setColour (juce::TooltipWindow::textColourId,       activeScheme.text);
-			tooltipWindow->setColour (juce::TooltipWindow::outlineColourId,    activeScheme.outline);
-			tooltipWindow->setLookAndFeel (&lnf);
-		}
+				updateIoFxMeterSliders();
+			});
 	}
 
 	// ══════════════════════════════════════════════════════════════
@@ -731,8 +541,8 @@ private:
 	//  TR-style legend text cache (for value display)
 	// ══════════════════════════════════════════════════════════════
 	struct CachedParamText { juce::String full, short_, intOnly; };
-	// Param indices: HP=0, LP=1, IN=2, OUT=3, TILT=4, SERIES=5, PAN=6, FRED=7, POS=8, MIX=9, DRIVE=10, CHAR=11, MOD=12, BIAS=13, SAG=14, DETAIL=15, INST=16, DELAY=17
-	static constexpr int kNumCachedParams = 18;
+	// Param indices: HP=0, LP=1, IN=2, OUT=3, TILT=4, SERIES=5, PAN=6, FRED=7, POS=8, MIX=9, DRIVE=10, SIZE=11, CHAR=12, TYPE=13, BIAS=14, DYN=15, DETAIL=16, INST=17, DELAY=18
+	static constexpr int kNumCachedParams = 19;
 	CachedParamText cachedTexts[3][kNumCachedParams];  // [loader][param]
 
 	// Global mix legend cache (for SEND mode dB display)
@@ -744,10 +554,10 @@ private:
 	int columnLeft_[3]  = {};
 	int columnRight_[3] = {};
 
-	// Delay bar areas (set in layoutLoaderSection, painted in paintOverChildren)
+	// Offset bar areas (set in layoutLoaderSection, painted in paintOverChildren)
 
 	// Value display areas (calculated in paint(), used for click detection)
-	std::array<juce::Rectangle<int>, 54> cachedValueAreas_;  // 18 per loader x 3
+	std::array<juce::Rectangle<int>, 3 * kNumCachedParams> cachedValueAreas_;
 
 	// Gear icon for info button
 	juce::Path cachedInfoGearPath;

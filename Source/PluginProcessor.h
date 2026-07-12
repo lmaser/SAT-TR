@@ -5,7 +5,9 @@
 #include "SatDspDiag.h"
 #include <array>
 #include <atomic>
+#include <memory>
 #include <vector>
+#include "SatNamModel.h"
 
 class SATTRAudioProcessor : public juce::AudioProcessor,
                              private juce::Timer
@@ -35,23 +37,30 @@ public:
 	static constexpr const char* kParamPosA         = "pos_a";
 	static constexpr const char* kParamResoA        = "reso_a";
 	static constexpr const char* kParamInvA         = "inv_a";
-	static constexpr const char* kParamDelayA       = "delay_a";
+	static constexpr const char* kParamOffsetA       = "offset_a";
 	static constexpr const char* kParamSidechainA   = "sidechain_a";
+	static constexpr const char* kParamSidechainGainA = "sidechain_gain_a";
 	static constexpr const char* kParamSidechainSmoothA = "sidechain_smooth_a";
-	static constexpr const char* kParamSidechainToneA = "sidechain_tone_a";
+	static constexpr const char* kParamSidechainHpA = "sidechain_hp_a";
+	static constexpr const char* kParamSidechainLpA = "sidechain_lp_a";
+	static constexpr const char* kParamSidechainHpOnA = "sidechain_hp_on_a";
+	static constexpr const char* kParamSidechainLpOnA = "sidechain_lp_on_a";
+	static constexpr const char* kParamSidechainHpSlopeA = "sidechain_hp_slope_a";
+	static constexpr const char* kParamSidechainLpSlopeA = "sidechain_lp_slope_a";
 	static constexpr const char* kParamChaosA       = "chaos_a";
 	static constexpr const char* kParamChaosFilterA    = "chaos_filter_a";
 	static constexpr const char* kParamChaosAmtA       = "chaos_amt_a";
 	static constexpr const char* kParamChaosSpdA       = "chaos_spd_a";
 	static constexpr const char* kParamChaosAmtFilterA = "chaos_amt_filter_a";
 	static constexpr const char* kParamChaosSpdFilterA = "chaos_spd_filter_a";
-	static constexpr const char* kParamModeInA      = "mode_in_a";  // 0=L+R, 1=MID, 2=SIDE
-	static constexpr const char* kParamModeOutA     = "mode_out_a"; // 0=L+R, 1=MID, 2=SIDE
+	static constexpr const char* kParamModeInA      = "mode_in_a";  // 0=L+R, 1=M/S, 2=MID, 3=SIDE
+	static constexpr const char* kParamModeOutA     = "mode_out_a"; // 0=L+R, 1=M/S, 2=MID, 3=SIDE
 	static constexpr const char* kParamSumBusA      = "sum_bus_a"; // 0=ST, 1->M, 2->S
 	static constexpr const char* kParamFilterPosA   = "filter_pos_a"; // 0=F-post T-post, 1=F-pre T-pre, 2=F-pre T-post, 3=F-post T-pre
 	static constexpr const char* kParamMixA         = "mix_a";     // Per-loader dry/wet
 	static constexpr const char* kParamSatTypeA     = "sat_type_a";
 	static constexpr const char* kParamSatDriveA    = "sat_drive_a";
+	static constexpr const char* kParamNamSlimA     = "nam_slim_a";
 	static constexpr const char* kParamSatCharA     = "sat_girth_a";
 	static constexpr const char* kParamSatTypeCtrlA = "sat_mod_a";
 	static constexpr const char* kParamSatBiasA     = "sat_bias_a";
@@ -93,23 +102,30 @@ public:
 	static constexpr const char* kParamPosB         = "pos_b";
 	static constexpr const char* kParamResoB        = "reso_b";
 	static constexpr const char* kParamInvB         = "inv_b";
-	static constexpr const char* kParamDelayB       = "delay_b";
+	static constexpr const char* kParamOffsetB       = "offset_b";
 	static constexpr const char* kParamSidechainB   = "sidechain_b";
+	static constexpr const char* kParamSidechainGainB = "sidechain_gain_b";
 	static constexpr const char* kParamSidechainSmoothB = "sidechain_smooth_b";
-	static constexpr const char* kParamSidechainToneB = "sidechain_tone_b";
+	static constexpr const char* kParamSidechainHpB = "sidechain_hp_b";
+	static constexpr const char* kParamSidechainLpB = "sidechain_lp_b";
+	static constexpr const char* kParamSidechainHpOnB = "sidechain_hp_on_b";
+	static constexpr const char* kParamSidechainLpOnB = "sidechain_lp_on_b";
+	static constexpr const char* kParamSidechainHpSlopeB = "sidechain_hp_slope_b";
+	static constexpr const char* kParamSidechainLpSlopeB = "sidechain_lp_slope_b";
 	static constexpr const char* kParamChaosB       = "chaos_b";
 	static constexpr const char* kParamChaosFilterB    = "chaos_filter_b";
 	static constexpr const char* kParamChaosAmtB       = "chaos_amt_b";
 	static constexpr const char* kParamChaosSpdB       = "chaos_spd_b";
 	static constexpr const char* kParamChaosAmtFilterB = "chaos_amt_filter_b";
 	static constexpr const char* kParamChaosSpdFilterB = "chaos_spd_filter_b";
-	static constexpr const char* kParamModeInB      = "mode_in_b";  // 0=L+R, 1=MID, 2=SIDE
-	static constexpr const char* kParamModeOutB     = "mode_out_b"; // 0=L+R, 1=MID, 2=SIDE
+	static constexpr const char* kParamModeInB      = "mode_in_b";  // 0=L+R, 1=M/S, 2=MID, 3=SIDE
+	static constexpr const char* kParamModeOutB     = "mode_out_b"; // 0=L+R, 1=M/S, 2=MID, 3=SIDE
 	static constexpr const char* kParamSumBusB      = "sum_bus_b"; // 0=ST, 1->M, 2->S
 	static constexpr const char* kParamFilterPosB   = "filter_pos_b";
 	static constexpr const char* kParamMixB         = "mix_b";     // Per-loader dry/wet
 	static constexpr const char* kParamSatTypeB     = "sat_type_b";
 	static constexpr const char* kParamSatDriveB    = "sat_drive_b";
+	static constexpr const char* kParamNamSlimB     = "nam_slim_b";
 	static constexpr const char* kParamSatCharB     = "sat_girth_b";
 	static constexpr const char* kParamSatTypeCtrlB = "sat_mod_b";
 	static constexpr const char* kParamSatBiasB     = "sat_bias_b";
@@ -151,10 +167,16 @@ public:
 	static constexpr const char* kParamPosC         = "pos_c";
 	static constexpr const char* kParamResoC        = "reso_c";
 	static constexpr const char* kParamInvC         = "inv_c";
-	static constexpr const char* kParamDelayC       = "delay_c";
+	static constexpr const char* kParamOffsetC       = "offset_c";
 	static constexpr const char* kParamSidechainC   = "sidechain_c";
+	static constexpr const char* kParamSidechainGainC = "sidechain_gain_c";
 	static constexpr const char* kParamSidechainSmoothC = "sidechain_smooth_c";
-	static constexpr const char* kParamSidechainToneC = "sidechain_tone_c";
+	static constexpr const char* kParamSidechainHpC = "sidechain_hp_c";
+	static constexpr const char* kParamSidechainLpC = "sidechain_lp_c";
+	static constexpr const char* kParamSidechainHpOnC = "sidechain_hp_on_c";
+	static constexpr const char* kParamSidechainLpOnC = "sidechain_lp_on_c";
+	static constexpr const char* kParamSidechainHpSlopeC = "sidechain_hp_slope_c";
+	static constexpr const char* kParamSidechainLpSlopeC = "sidechain_lp_slope_c";
 	static constexpr const char* kParamChaosC       = "chaos_c";
 	static constexpr const char* kParamChaosFilterC    = "chaos_filter_c";
 	static constexpr const char* kParamChaosAmtC       = "chaos_amt_c";
@@ -168,6 +190,7 @@ public:
 	static constexpr const char* kParamMixC         = "mix_c";
 	static constexpr const char* kParamSatTypeC     = "sat_type_c";
 	static constexpr const char* kParamSatDriveC    = "sat_drive_c";
+	static constexpr const char* kParamNamSlimC     = "nam_slim_c";
 	static constexpr const char* kParamSatCharC     = "sat_girth_c";
 	static constexpr const char* kParamSatTypeCtrlC = "sat_mod_c";
 	static constexpr const char* kParamSatBiasC     = "sat_bias_c";
@@ -222,8 +245,11 @@ public:
 	static constexpr const char* kParamUiHeight     = "ui_height";
 	static constexpr const char* kParamUiPalette    = "ui_palette";
 	static constexpr const char* kParamUiFxTail     = "ui_fx_tail";
+	static constexpr const char* kParamUiIoFx       = "ui_io_fx";
 	static constexpr const char* kParamUiColor0     = "ui_color0";
 	static constexpr const char* kParamUiColor1     = "ui_color1";
+	static constexpr const char* kParamUiColor2     = "ui_color2";
+	static constexpr const char* kParamUiColor3     = "ui_color3";
 
 	// ----------------------------------------------------------------
 	//  UI State Keys (non-automatable, stored in APVTS tree)
@@ -238,6 +264,8 @@ public:
 		static constexpr const char* dryAlignAnchorA = "uiDryAlignAnchorA";
 		static constexpr const char* dryAlignAnchorB = "uiDryAlignAnchorB";
 		static constexpr const char* dryAlignAnchorC = "uiDryAlignAnchorC";
+		static constexpr const char* safeClipMode = "uiSafeClipMode";
+		static constexpr const char* legacyTruePeakMode = "uiTruePeakMode";
 	};
 
 	void  setUiIoExpanded (int loaderIndex, bool expanded);
@@ -246,6 +274,14 @@ public:
 	int   getUiFirstVisibleLoaderIndex() const noexcept;
 	void  setDryAlignModeEnabled (bool enabled);
 	bool  isDryAlignModeEnabled() const noexcept;
+	void  setSafeClipModeEnabled (bool enabled);
+	bool  isSafeClipModeEnabled() const noexcept;
+	void  toggleSafeClipMode();
+	bool  loadNamModelForLoader (int loaderIndex, const juce::String& filePath, juce::String& error);
+	void  clearNamModelForLoader (int loaderIndex);
+	juce::String getNamModelPathForLoader (int loaderIndex) const;
+	juce::String getNamDisplayNameForLoader (int loaderIndex) const;
+	bool isNamModelLoadedForLoader (int loaderIndex) const;
 
 	// ----------------------------------------------------------------
 	//  Parameter Ranges & Defaults - Filters
@@ -282,18 +318,26 @@ public:
 	static constexpr int   kInvPolDefault       = 0;   // 0=NONE  1=WET  2=GLOBAL
 	static constexpr int   kInvStrDefault       = 0;   // 0=NONE  1=WET  2=GLOBAL
 
-	// Delay (per-loader, for auto-align)
-	static constexpr float kDelayMin            = 0.0f;
-	static constexpr float kDelayMax            = 5.0f;     // ms (small - saturation phase shifts are tiny)
-	static constexpr float kDelayDefault        = 0.0f;
+	// Offset (per-loader, for auto-align)
+	static constexpr float kOffsetMin            = 0.0f;
+	static constexpr float kOffsetMax            = 1000.0f;  // ms
+	static constexpr float kOffsetDefault        = 0.0f;
 
 	// External sidechain detector (per-loader)
 	static constexpr float kSidechainSmoothMin     = 0.0f;
 	static constexpr float kSidechainSmoothMax     = 1.0f;
 	static constexpr float kSidechainSmoothDefault = 0.25f;
-	static constexpr float kSidechainToneMin     = 250.0f;
-	static constexpr float kSidechainToneMax     = 20000.0f;
-	static constexpr float kSidechainToneDefault = 5000.0f;
+	static constexpr float kSidechainGainMin       = kGainFloorDb;
+	static constexpr float kSidechainGainMax       = kGainMaxDb;
+	static constexpr float kSidechainGainDefault   = kGainDefaultDb;
+	static constexpr float kSidechainFilterFreqMin = kFilterFreqMin;
+	static constexpr float kSidechainFilterFreqMax = kFilterFreqMax;
+	static constexpr float kSidechainHpDefault     = kFilterFreqMin;
+	static constexpr float kSidechainLpDefault     = kFilterFreqMax;
+	static constexpr bool  kSidechainHpOnDefault   = true;
+	static constexpr bool  kSidechainLpOnDefault   = true;
+	static constexpr int   kSidechainHpSlopeDefault = kFilterSlopeDefault;
+	static constexpr int   kSidechainLpSlopeDefault = kFilterSlopeDefault;
 	// ----------------------------------------------------------------
 	//  Parameter Ranges & Defaults - Saturation
 	// ----------------------------------------------------------------
@@ -303,6 +347,9 @@ public:
 	static constexpr float kSatDriveMin         = 0.0f;
 	static constexpr float kSatDriveMax         = 1.0f;
 	static constexpr float kSatDriveDefault     = 0.0f;
+	static constexpr float kNamSlimMin          = 0.0f;
+	static constexpr float kNamSlimMax          = 1.0f;
+	static constexpr float kNamSlimDefault      = 1.0f;
 	static constexpr float kSatCharMin          = 0.0f;
 	static constexpr float kSatCharMax          = 1.0f;
 	static constexpr float kSatCharDefault      = 0.0f;
@@ -371,8 +418,8 @@ public:
 	static constexpr float kExpRatioMin              = 0.1f;   // visible 1:0.1 .. 1:10, centred at 1
 	static constexpr float kExpRatioMax              = 10.0f;
 	static constexpr float kExpRatioDefault          = 1.0f;
-	static constexpr float kExpThreshMin             = -60.0f; // dB
-	static constexpr float kExpThreshMax             = 0.0f;   // dB
+	static constexpr float kExpThreshMin             = kGainFloorDb; // dB, displayed as -INF
+	static constexpr float kExpThreshMax             = 24.0f;   // dB
 	static constexpr float kExpThreshDefault          = 0.0f;  // 0 dB = off
 	static constexpr float kExpKneeMin               = 0.0f;   // dB, 0 = hard knee
 	static constexpr float kExpKneeMax               = 12.0f;  // dB
@@ -427,7 +474,7 @@ public:
 	static constexpr float kOutputDefault           = kGainDefaultDb;
 
 	static constexpr int   kModeMin                 = 0;
-	static constexpr int   kModeMax                 = 2;          // L+R, MID, SIDE
+	static constexpr int   kModeMax                 = 3;          // L+R, M/S, MID, SIDE
 	static constexpr int   kModeDefault             = 0;          // L+R
 	static constexpr int   kSumBusMax               = 2;          // 0=ST, 1->M, 2->S
 	static constexpr int   kSumBusDefault           = 0;          // ST (unchanged)
@@ -520,39 +567,66 @@ public:
 		return false;
 	}
 
+	bool getUiIoFxEnabled() const
+	{
+		if (auto* p = parameters.getRawParameterValue (kParamUiIoFx))
+			return static_cast<bool> (*p);
+		return true;
+	}
+
 	void setUiFxTailEnabled (bool enabled)
 	{
 		if (auto* p = parameters.getParameter (kParamUiFxTail))
 			p->setValueNotifyingHost (enabled ? 1.0f : 0.0f);
 	}
 
+	void setUiIoFxEnabled (bool enabled)
+	{
+		if (auto* p = parameters.getParameter (kParamUiIoFx))
+			p->setValueNotifyingHost (enabled ? 1.0f : 0.0f);
+	}
+
 	juce::Colour getUiCustomPaletteColour (int index) const
 	{
-		if (index < 0 || index > 1)
+		static constexpr juce::uint32 fallback[] = { 0x00FF00u, 0x000000u, 0x0000FFu, 0xFF0000u };
+		const char* ids[] = { kParamUiColor0, kParamUiColor1, kParamUiColor2, kParamUiColor3 };
+		if (index < 0 || index >= 4)
 			return juce::Colours::green;
 
-		const char* paramId = (index == 0) ? kParamUiColor0 : kParamUiColor1;
-		if (auto* p = parameters.getRawParameterValue (paramId))
+		if (auto* p = parameters.getRawParameterValue (ids[index]))
 		{
 			const auto rgb = static_cast<juce::uint32> (*p);
 			return juce::Colour (0xFF000000 | rgb);
 		}
-		return juce::Colours::green;
+		return juce::Colour (0xFF000000 | fallback[index]);
 	}
 
 	void setUiCustomPaletteColour (int index, juce::Colour colour)
 	{
-		if (index < 0 || index > 1)
+		const char* ids[] = { kParamUiColor0, kParamUiColor1, kParamUiColor2, kParamUiColor3 };
+		if (index < 0 || index >= 4)
 			return;
 
-		const char* paramId = (index == 0) ? kParamUiColor0 : kParamUiColor1;
-		if (auto* p = parameters.getParameter (paramId))
+		if (auto* p = parameters.getParameter (ids[index]))
 		{
 			const auto rgb = colour.getARGB() & 0x00FFFFFF;
 			const float normalized = static_cast<float> (rgb) / static_cast<float> (0xFFFFFF);
 			p->setValueNotifyingHost (normalized);
 		}
 	}
+
+	float getLoaderInputMeterPeak (int loaderIndex) const noexcept
+	{
+		return (loaderIndex >= 0 && loaderIndex < 3) ? loaderInputMeterPeak_[loaderIndex].load (std::memory_order_relaxed) : 0.0f;
+	}
+
+	float getLoaderOutputMeterPeak (int loaderIndex) const noexcept
+	{
+		return (loaderIndex >= 0 && loaderIndex < 3) ? loaderOutputMeterPeak_[loaderIndex].load (std::memory_order_relaxed) : 0.0f;
+	}
+
+	float getGlobalInputMeterPeak() const noexcept  { return globalInputMeterPeak_.load (std::memory_order_relaxed); }
+	float getGlobalOutputMeterPeak() const noexcept { return globalOutputMeterPeak_.load (std::memory_order_relaxed); }
 
 	// ----------------------------------------------------------------
 	//  DSP State - Per-loader processing
@@ -590,14 +664,16 @@ public:
 		float lastInGain = 1.0f;
 		float lastOutGain = 1.0f;
 		float lastMix = 1.0f;
+		float wetDcBlockX[2] = {};
+		float wetDcBlockY[2] = {};
 		float lastPosGain = 1.0f;
 		float lastSidechainPreGain = 1.0f;
 		
-		// FRED (Fredman miking) state: fractional delay buffer for off-axis simulation
-		// ~159 us delay ~= 5 cm path difference (realistic Fredman setup)
-		// Buffer sized for max delay at any sample rate up to 192kHz
+		// FRED (Fredman miking) state: fractional offset buffer for off-axis simulation
+		// ~159 us offset ~= 5 cm path difference (realistic Fredman setup)
+		// Buffer sized for max offset at any sample rate up to 192kHz
 		static constexpr int kFredDelayBufSize = 64;          // holds enough for ~159 us @ 192kHz (31 samples) + guard
-		static constexpr float kFredDelayMicros = 159.0f;     // delay in microseconds (sample-rate independent)
+		static constexpr float kFredDelayMicros = 159.0f;     // offset in microseconds (sample-rate independent)
 		float fredDelayBuffer[2][kFredDelayBufSize] = {};
 		int fredDelayIndex = 0;
 
@@ -614,7 +690,7 @@ public:
 		float chaosFilterSpdSmoothed = 0.0f;
 		bool chaosFilterParamSmoothReady = false;
 
-		// CHS D smooth S&H + Drift: delay (per-channel for stereo)
+		// CHS D smooth S&H + Drift: offset (per-channel for stereo)
 		float chaosDPrev[2]         = {};
 		float chaosDCurr[2]         = {};
 		float chaosDNext[2]         = {};
@@ -652,6 +728,8 @@ public:
 
 		// Saturation engine state
 		SatEngine::State satState;
+		std::shared_ptr<SatNamModel> namModel;
+		juce::String pendingNamPath;
 
 		// Expander envelope follower state (stereo-linked)
 		float expLinkedEnv = 0.0f;
@@ -675,9 +753,9 @@ public:
 		float expScLastGain = 1.0f;
 
 		// Delay line for phase alignment (max ~0.5s)
-		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> delayLine { 96000 };
+		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> delayLine { 192000 };
 		juce::SmoothedValue<float> smoothedDelay { 0.0f };
-		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> dryDelayLine { 96000 };
+		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> dryDelayLine { 192000 };
 		juce::SmoothedValue<float> smoothedDryDelay { 0.0f };
 		std::atomic<float> dryAnchorSamples { 0.0f };
 		
@@ -705,6 +783,8 @@ public:
 private:
 	// Timer callback to monitor parameter changes
 	void timerCallback() override;
+	float getNamSlimForLoader (int loaderIndex) const noexcept;
+	void applyNamSlimForLoader (int loaderIndex, float amount01);
 	// ----------------------------------------------------------------
 	//  Parameter State
 	// ----------------------------------------------------------------
@@ -713,6 +793,7 @@ private:
 
 	double currentSampleRate = 44100.0;
 	int currentBlockSize = 512;
+	bool hasPreparedToPlay = false;
 
 	// Cached raw parameter pointers (resolved once in prepareToPlay, avoids hash lookup per block)
 	std::atomic<float>* pEnableA = nullptr;
@@ -804,6 +885,9 @@ private:
 	std::atomic<float>* pTrim  = nullptr;
 	std::atomic<float>* pLimThreshold = nullptr;
 	std::atomic<float>* pLimMode     = nullptr;
+	std::atomic<float>* pInvA        = nullptr;
+	std::atomic<float>* pInvB        = nullptr;
+	std::atomic<float>* pInvC        = nullptr;
 	std::atomic<float>* pInvPol      = nullptr;
 	std::atomic<float>* pInvStr      = nullptr;
 	std::atomic<float>* pMixMode     = nullptr;
@@ -813,6 +897,7 @@ private:
 	// Saturation cached pointers
 	std::atomic<float>* pSatTypeA  = nullptr;
 	std::atomic<float>* pSatDriveA = nullptr;
+	std::atomic<float>* pNamSlimA = nullptr;
 	std::atomic<float>* pSatCharA = nullptr;
 	std::atomic<float>* pSatTypeCtrlA = nullptr;
 	std::atomic<float>* pSatBiasA  = nullptr;
@@ -820,6 +905,7 @@ private:
 	std::atomic<float>* pSatRawA   = nullptr;
 	std::atomic<float>* pSatTypeB  = nullptr;
 	std::atomic<float>* pSatDriveB = nullptr;
+	std::atomic<float>* pNamSlimB = nullptr;
 	std::atomic<float>* pSatCharB = nullptr;
 	std::atomic<float>* pSatTypeCtrlB = nullptr;
 	std::atomic<float>* pSatBiasB  = nullptr;
@@ -827,24 +913,43 @@ private:
 	std::atomic<float>* pSatRawB   = nullptr;
 	std::atomic<float>* pSatTypeC  = nullptr;
 	std::atomic<float>* pSatDriveC = nullptr;
+	std::atomic<float>* pNamSlimC = nullptr;
 	std::atomic<float>* pSatCharC = nullptr;
 	std::atomic<float>* pSatTypeCtrlC = nullptr;
 	std::atomic<float>* pSatBiasC  = nullptr;
 	std::atomic<float>* pSatSagC   = nullptr;
 	std::atomic<float>* pSatRawC   = nullptr;
 	std::atomic<float>* pOversample = nullptr;
-	std::atomic<float>* pDelayA  = nullptr;
-	std::atomic<float>* pDelayB  = nullptr;
-	std::atomic<float>* pDelayC  = nullptr;
+	std::atomic<float>* pOffsetA  = nullptr;
+	std::atomic<float>* pOffsetB  = nullptr;
+	std::atomic<float>* pOffsetC  = nullptr;
 	std::atomic<float>* pSidechainA = nullptr;
 	std::atomic<float>* pSidechainB = nullptr;
 	std::atomic<float>* pSidechainC = nullptr;
+	std::atomic<float>* pSidechainGainA = nullptr;
+	std::atomic<float>* pSidechainGainB = nullptr;
+	std::atomic<float>* pSidechainGainC = nullptr;
 	std::atomic<float>* pSidechainSmoothA = nullptr;
 	std::atomic<float>* pSidechainSmoothB = nullptr;
 	std::atomic<float>* pSidechainSmoothC = nullptr;
-	std::atomic<float>* pSidechainToneA = nullptr;
-	std::atomic<float>* pSidechainToneB = nullptr;
-	std::atomic<float>* pSidechainToneC = nullptr;
+	std::atomic<float>* pSidechainHpA = nullptr;
+	std::atomic<float>* pSidechainHpB = nullptr;
+	std::atomic<float>* pSidechainHpC = nullptr;
+	std::atomic<float>* pSidechainLpA = nullptr;
+	std::atomic<float>* pSidechainLpB = nullptr;
+	std::atomic<float>* pSidechainLpC = nullptr;
+	std::atomic<float>* pSidechainHpOnA = nullptr;
+	std::atomic<float>* pSidechainHpOnB = nullptr;
+	std::atomic<float>* pSidechainHpOnC = nullptr;
+	std::atomic<float>* pSidechainLpOnA = nullptr;
+	std::atomic<float>* pSidechainLpOnB = nullptr;
+	std::atomic<float>* pSidechainLpOnC = nullptr;
+	std::atomic<float>* pSidechainHpSlopeA = nullptr;
+	std::atomic<float>* pSidechainHpSlopeB = nullptr;
+	std::atomic<float>* pSidechainHpSlopeC = nullptr;
+	std::atomic<float>* pSidechainLpSlopeA = nullptr;
+	std::atomic<float>* pSidechainLpSlopeB = nullptr;
+	std::atomic<float>* pSidechainLpSlopeC = nullptr;
 	std::atomic<float>* pExpA       = nullptr;
 	std::atomic<float>* pExpOrderA  = nullptr;
 	std::atomic<float>* pExpRatioA  = nullptr;
@@ -887,12 +992,21 @@ private:
 	std::atomic<float>* pExpScHpSlopeC = nullptr;
 	std::atomic<float>* pExpScLpSlopeC = nullptr;
 	std::atomic<float>* pExpScGainC = nullptr;
+	float lastAppliedNamSlim_[3] = { -1.0f, -1.0f, -1.0f };
+	float pendingNamSlim_[3] = { kNamSlimDefault, kNamSlimDefault, kNamSlimDefault };
+	juce::int64 pendingNamSlimChangeTimeMs_[3] = { 0, 0, 0 };
 
 	// Oversampling (pre-allocated for all factors, per-loader)
 	// [loaderIdx][factorIdx] where factorIdx: 0=x2, 1=x4, 2=x8, 3=x16
 	std::unique_ptr<juce::dsp::Oversampling<float>> oversamplers_[3][4];
+	std::unique_ptr<juce::dsp::Oversampling<float>> oversamplersMono_[3][4];
 	int currentOsOrder_ = 0;  // current oversampling order (0=off)
+	int currentReportedLatencySamples_ = -1;
 	int oversamplingBlockCapacity_ = 0;
+
+	// Optional zero-latency final sample-safe ceiling after final AC coupling.
+	static constexpr float kSafeClipCeiling = 0.97723722f; // -0.2 dBFS
+	std::atomic<bool> safeClipModeEnabled_ { false };
 
 	// Tilt EQ filter state (1st-order shelf, per-channel)
 	float tiltState_[2] = { 0.0f, 0.0f };
@@ -1036,7 +1150,7 @@ private:
 	float lastGlobalDryMix_       = 0.0f;
 	float lastGlobalWetMix_       = 1.0f;
 	float lastLimiterThresholdLin_ = 1.0f;
-	juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> globalDryDelayLine { 96000 };
+	juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> globalDryDelayLine { 192000 };
 	juce::SmoothedValue<float> smoothedGlobalDryDelay { 0.0f };
 	std::atomic<bool> dryAlignModeEnabled_ { false };
 	std::atomic<bool> dryAlignRuntimeActive_ { false };
@@ -1044,27 +1158,19 @@ private:
 	// DC blocking filter state (per-channel)
 	float dcBlockX_[2] = { 0.0f, 0.0f };
 	float dcBlockY_[2] = { 0.0f, 0.0f };
-	struct SidechainToneFilterState
-	{
-		float oneX1 = 0.0f;
-		float oneY1 = 0.0f;
-		float biquadX1 = 0.0f;
-		float biquadX2 = 0.0f;
-		float biquadY1 = 0.0f;
-		float biquadY2 = 0.0f;
-
-		void reset() noexcept
-		{
-			oneX1 = oneY1 = 0.0f;
-			biquadX1 = biquadX2 = 0.0f;
-			biquadY1 = biquadY2 = 0.0f;
-		}
-	};
 	float sidechainDcPrevIn_[3][2] = {};
 	float sidechainDcPrevOut_[3][2] = {};
-	SidechainToneFilterState sidechainToneFilters_[3][2];
+	LoaderState::ExpSidechainBiquadState sidechainHpFilters_[3];
+	LoaderState::ExpSidechainBiquadState sidechainHpFilters2_[3];
+	LoaderState::ExpSidechainBiquadState sidechainLpFilters_[3];
+	LoaderState::ExpSidechainBiquadState sidechainLpFilters2_[3];
+	float sidechainLastGain_[3] = { 1.0f, 1.0f, 1.0f };
 	float sidechainEnv_[3] = {};
 	float sidechainDriveAmount_[3] = {};
+	std::atomic<float> loaderInputMeterPeak_[3] {};
+	std::atomic<float> loaderOutputMeterPeak_[3] {};
+	std::atomic<float> globalInputMeterPeak_ { 0.0f };
+	std::atomic<float> globalOutputMeterPeak_ { 0.0f };
 
 	// Auto-align (momentary trigger state)
 	juce::int64 lastAlignTime_ = 0;
@@ -1074,17 +1180,19 @@ private:
 	// loaderIndex: 0=A, 1=B, 2=C
 	void processLoader (LoaderState& state,
 	                    juce::AudioBuffer<float>& buffer,
-	                    int loaderIndex);
+	                    int loaderIndex,
+	                    bool monoCoreOptimized);
 
 	// Delay for auto-align
 	void applyDelaySamples (juce::AudioBuffer<float>& buffer,
 	                        float targetDelaySamples,
 	                        juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd>& delayLine,
 	                        juce::SmoothedValue<float>& smoother);
-	void applyDelay (juce::AudioBuffer<float>& buffer, float delayMs, int loaderIndex);
+	void applyOffset (juce::AudioBuffer<float>& buffer, float offsetMs, int loaderIndex);
 	void applyDryAlignDelay (juce::AudioBuffer<float>& buffer, float targetDelaySamples, int loaderIndex);
 	void applyGlobalDryAlignDelay (juce::AudioBuffer<float>& buffer, float targetDelaySamples);
 	void calculateAutoAlignment();
+	void updateReportedLatency();
 
 
 	// Shared M/S encoding helper (used by processBlock + offline export)
