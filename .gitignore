@@ -42,3 +42,24 @@ _codex_backups/
 # Analysis files
 *.html
 DETAIL_DSP_PLAN.md
+
+# Local audit and generated test artifacts
+artifacts/
+tmp/
+**/build/
+**/Builds/
+**/manual-bin/
+**/Evidence/
+**/Hardening/
+**/TestEvidence/
+**/VisualQA/
+**/Output/
+**/Phase4FinalTests/
+**/Phase4Pluginval/
+**/Phase4PluginvalFinal/
+**/Phase4RenderArtifacts/
+*.exe
+*.ilk
+*.wav
+/*.png
+/*.geometry.json

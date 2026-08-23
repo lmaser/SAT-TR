@@ -1,0 +1,154 @@
+{
+  "lut": [
+    {
+      "curve": "soft",
+      "size": 257,
+      "max_error": 3.72024545675087e-05,
+      "rms_error": 1.629128563149921e-05,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 2056
+    },
+    {
+      "curve": "soft",
+      "size": 1024,
+      "max_error": 2.329844628001787e-06,
+      "rms_error": 1.020219623491931e-06,
+      "contains_exact_zero": false,
+      "memory_per_curve_bytes": 8192
+    },
+    {
+      "curve": "soft",
+      "size": 1025,
+      "max_error": 2.3252898585512938e-06,
+      "rms_error": 1.0182279829496376e-06,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 8200
+    },
+    {
+      "curve": "soft",
+      "size": 2049,
+      "max_error": 5.813264319920464e-07,
+      "rms_error": 2.545572786324974e-07,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 16392
+    },
+    {
+      "curve": "soft",
+      "size": 4097,
+      "max_error": 1.4533166692309862e-07,
+      "rms_error": 6.363933733879552e-08,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 32776
+    },
+    {
+      "curve": "hard",
+      "size": 257,
+      "max_error": 0.0008419223216521443,
+      "rms_error": 0.00016905286282771625,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 2056
+    },
+    {
+      "curve": "hard",
+      "size": 1024,
+      "max_error": 5.295862814946872e-05,
+      "rms_error": 1.0591908285558958e-05,
+      "contains_exact_zero": false,
+      "memory_per_curve_bytes": 8192
+    },
+    {
+      "curve": "hard",
+      "size": 1025,
+      "max_error": 5.284617939393943e-05,
+      "rms_error": 1.0571231774169138e-05,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 8200
+    },
+    {
+      "curve": "hard",
+      "size": 2049,
+      "max_error": 1.3213998826366868e-05,
+      "rms_error": 2.642875838076905e-06,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 16392
+    },
+    {
+      "curve": "hard",
+      "size": 4097,
+      "max_error": 3.303604889315359e-06,
+      "rms_error": 6.607232031009205e-07,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 32776
+    },
+    {
+      "curve": "fold",
+      "size": 257,
+      "max_error": 3.756414587641199e-05,
+      "rms_error": 2.1254171996675813e-05,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 2056
+    },
+    {
+      "curve": "fold",
+      "size": 1024,
+      "max_error": 2.3524531915786184e-06,
+      "rms_error": 1.3309879790423692e-06,
+      "contains_exact_zero": false,
+      "memory_per_curve_bytes": 8192
+    },
+    {
+      "curve": "fold",
+      "size": 1025,
+      "max_error": 2.347859838769395e-06,
+      "rms_error": 1.3283896629882563e-06,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 8200
+    },
+    {
+      "curve": "fold",
+      "size": 2049,
+      "max_error": 5.869645870459905e-07,
+      "rms_error": 3.3209746466451956e-07,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 16392
+    },
+    {
+      "curve": "fold",
+      "size": 4097,
+      "max_error": 1.4674096804334624e-07,
+      "rms_error": 8.302436922292416e-08,
+      "contains_exact_zero": true,
+      "memory_per_curve_bytes": 32776
+    }
+  ],
+  "antialias": {
+    "direct_x1_alias_db": -33.885647247213996,
+    "adaa_x1_alias_db": -39.41429513970513,
+    "direct_x2_alias_db": -48.71403039730421,
+    "adaa_x2_alias_db": -49.70521588092993,
+    "direct_x4_alias_db": -48.78868582195907,
+    "adaa_x4_alias_db": -49.00057084760415,
+    "direct_x8_alias_db": -48.79020173409914,
+    "adaa_x8_alias_db": -48.84189862908787,
+    "direct_x16_alias_db": -48.79031299536257,
+    "adaa_x16_alias_db": -48.80338672544757
+  },
+  "morph": {
+    "direct_peak": 1.0,
+    "spectral_peak": 1.0000052065393292,
+    "direct_zero_error": 0.0,
+    "spectral_zero_error": 0.000448707634260266,
+    "direct_odd_symmetry_error": 0.13106393355068868,
+    "spectral_odd_symmetry_error": 0.13027530087969397,
+    "direct_roughness_rms": 1.1301925673285739e-05,
+    "spectral_roughness_rms": 1.1302013346072685e-05,
+    "complex_spectral_interpolation_equals_direct_max_error": 1.2212453270876722e-15
+  },
+  "bipolar_mirror": {
+    "source_point_count": 2049,
+    "bipolar_point_count": 4097,
+    "origin_error": 0.0,
+    "mirror_xy_max_error": 0.0,
+    "unipolar_restore_max_error": 0.0
+  }
+}

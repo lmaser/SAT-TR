@@ -9,6 +9,12 @@ namespace nam
 class DSP;
 }
 
+#if defined (NAM_SAMPLE_FLOAT)
+using SatNamSample = float;
+#else
+using SatNamSample = double;
+#endif
+
 class SatNamModel
 {
 public:
@@ -33,12 +39,13 @@ public:
 
 private:
 	std::array<std::unique_ptr<nam::DSP>, 2> channelModels_;
-	juce::AudioBuffer<float> inputScratch_;
-	std::array<float*, 2> inputPtrs_ {};
-	std::array<float*, 2> outputPtrs_ {};
+	juce::AudioBuffer<SatNamSample> inputScratch_;
+	juce::AudioBuffer<SatNamSample> outputScratch_;
+	std::array<SatNamSample*, 2> inputPtrs_ {};
+	std::array<SatNamSample*, 2> outputPtrs_ {};
 	juce::String currentFilePath_;
 	juce::String displayName_;
-	double hostSampleRate_ = 44100.0;
+	double hostSampleRate_ = 0.0;
 	double expectedSampleRate_ = -1.0;
 	int maxBlockSize_ = 512;
 	float slimAmount_ = 0.0f;

@@ -1,16 +1,109 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <JUCERPROJECT id="XlmCV5" name="SAT-TR" projectType="audioplug" useAppConfig="0"
-              addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1">
+              version="1.4.0" companyName="NMSTR" companyWebsite="https://github.com/lmaser/SAT-TR"
+              addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1"
+              cppLanguageStandard="20" pluginWantsMidiInput="1"
+              pluginCharacteristicsValue="pluginWantsMidiIn">
   <MAINGROUP id="snmlH7" name="SAT-TR">
     <GROUP id="{E431B46A-F4D7-0E1B-8F30-7D781E9A2D17}" name="Source">
       <FILE id="YDgqVG" name="PluginProcessor.cpp" compile="1" resource="0"
             file="Source/PluginProcessor.cpp"/>
       <FILE id="Q07m0H" name="PluginProcessor.h" compile="0" resource="0"
             file="Source/PluginProcessor.h"/>
-      <FILE id="ig3FE8" name="PluginEditor.cpp" compile="1" resource="0"
-            file="Source/PluginEditor.cpp"/>
-      <FILE id="kVCZCU" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
+      <FILE id="sNMdlC" name="SatNamModel.cpp" compile="1" resource="0"
+            file="Source/SatNamModel.cpp"/>
+      <FILE id="sNMdlH" name="SatNamModel.h" compile="0" resource="0"
+            file="Source/SatNamModel.h"/>
+      <GROUP id="satModulation" name="Modulation">
+        <FILE id="satModCfgC" name="SatModulationConfig.cpp" compile="1" resource="0" file="Source/Modulation/SatModulationConfig.cpp"/>
+        <FILE id="satModCfgH" name="SatModulationConfig.h" compile="0" resource="0" file="Source/Modulation/SatModulationConfig.h"/>
+      </GROUP>
+      <GROUP id="satWaveShape" name="WaveShape">
+        <FILE id="satWaveCoreC" name="SatWaveShapeCore.cpp" compile="1" resource="0" file="Source/WaveShape/SatWaveShapeCore.cpp"/>
+        <FILE id="satWaveCoreH" name="SatWaveShapeCore.h" compile="0" resource="0" file="Source/WaveShape/SatWaveShapeCore.h"/>
+        <FILE id="satWaveStateC" name="SatWaveShapeState.cpp" compile="1" resource="0" file="Source/WaveShape/SatWaveShapeState.cpp"/>
+        <FILE id="satWaveStateH" name="SatWaveShapeState.h" compile="0" resource="0" file="Source/WaveShape/SatWaveShapeState.h"/>
+      </GROUP>
+      <GROUP id="satUiV2" name="UIV2">
+        <FILE id="satUiDefC" name="SatUiDefinition.cpp" compile="1" resource="0" file="Source/UIV2/SatUiDefinition.cpp"/>
+        <FILE id="satUiDefH" name="SatUiDefinition.h" compile="0" resource="0" file="Source/UIV2/SatUiDefinition.h"/>
+        <FILE id="satUiBackC" name="SatBackendBindings.cpp" compile="1" resource="0" file="Source/UIV2/SatBackendBindings.cpp"/>
+        <FILE id="satUiBackH" name="SatBackendBindings.h" compile="0" resource="0" file="Source/UIV2/SatBackendBindings.h"/>
+        <FILE id="satUiFactC" name="SatV2EditorFactory.cpp" compile="1" resource="0" file="Source/UIV2/SatV2EditorFactory.cpp"/>
+        <FILE id="satUiFactH" name="SatV2EditorFactory.h" compile="0" resource="0" file="Source/UIV2/SatV2EditorFactory.h"/>
+        <FILE id="satWaveUiC" name="SatWaveShapeWorkspace.cpp" compile="1" resource="0" file="Source/UIV2/SatWaveShapeWorkspace.cpp"/>
+        <FILE id="satWaveUiH" name="SatWaveShapeWorkspace.h" compile="0" resource="0" file="Source/UIV2/SatWaveShapeWorkspace.h"/>
+      </GROUP>
+    </GROUP>
+    <GROUP id="namCore" name="ThirdParty">
+      <GROUP id="namSrc" name="NeuralAmpModelerCore">
+        <FILE id="namAct" name="activations.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/activations.cpp"/>
+        <FILE id="namCont" name="container.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/container.cpp"/>
+        <FILE id="namC1d" name="conv1d.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/conv1d.cpp"/>
+        <FILE id="namCnet" name="convnet.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/convnet.cpp"/>
+        <FILE id="namDsp" name="dsp.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/dsp.cpp"/>
+        <FILE id="namGet" name="get_dsp.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/get_dsp.cpp"/>
+        <FILE id="namLstm" name="lstm.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/lstm.cpp"/>
+        <FILE id="namLinearC" name="linear.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/linear.cpp"/>
+        <FILE id="namLinearH" name="linear.h" compile="0" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/linear.h"/>
+        <FILE id="namRing" name="ring_buffer.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/ring_buffer.cpp"/>
+        <FILE id="namUtil" name="util.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/util.cpp"/>
+        <FILE id="namWavA" name="a2_fast.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/wavenet/a2_fast.cpp"/>
+        <FILE id="namWavM" name="model.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/wavenet/model.cpp"/>
+        <FILE id="namWavS" name="slimmable.cpp" compile="1" resource="0"
+              file="ThirdParty/NeuralAmpModelerCore/NAM/wavenet/slimmable.cpp"/>
+      </GROUP>
+    </GROUP>
+    <GROUP id="satSharedLoaderUi" name="TR-Shared LoaderUIV2">
+      <FILE id="satLoaderRootC" name="TRLoaderUIV2.cpp" compile="1" resource="0" file="../TR-Shared/LoaderUIV2/TRLoaderUIV2.cpp"/>
+      <FILE id="satLoaderRootH" name="TRLoaderUIV2.h" compile="0" resource="0" file="../TR-Shared/LoaderUIV2/TRLoaderUIV2.h"/>
+      <FILE id="satLoaderRunC" name="LoaderUiRuntime.cpp" compile="1" resource="0" file="../TR-Shared/LoaderUIV2/Runtime/LoaderUiRuntime.cpp"/>
+      <FILE id="satLoaderRunH" name="LoaderUiRuntime.h" compile="0" resource="0" file="../TR-Shared/LoaderUIV2/Runtime/LoaderUiRuntime.h"/>
+      <FILE id="satLoaderHostC" name="LoaderEditorHost.cpp" compile="1" resource="0" file="../TR-Shared/LoaderUIV2/Runtime/LoaderEditorHost.cpp"/>
+      <FILE id="satLoaderHostH" name="LoaderEditorHost.h" compile="0" resource="0" file="../TR-Shared/LoaderUIV2/Runtime/LoaderEditorHost.h"/>
+      <FILE id="satLoaderNavC" name="LoaderScopeNavigator.cpp" compile="1" resource="0" file="../TR-Shared/LoaderUIV2/Components/LoaderScopeNavigator.cpp"/>
+      <FILE id="satLoaderNavH" name="LoaderScopeNavigator.h" compile="0" resource="0" file="../TR-Shared/LoaderUIV2/Components/LoaderScopeNavigator.h"/>
+    </GROUP>
+    <GROUP id="satSharedSimpleUi" name="TR-Shared SimpleUIV2">
+      <FILE id="satSimpleRootC" name="TRSimpleUIV2.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/TRSimpleUIV2.cpp"/>
+      <FILE id="satSimpleRootH" name="TRSimpleUIV2.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/TRSimpleUIV2.h"/>
+      <FILE id="satSimpleSettingsC" name="SimpleGlobalSettings.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Runtime/SimpleGlobalSettings.cpp"/>
+      <FILE id="satSimplePresetC" name="TRPresetManager.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Preset/TRPresetManager.cpp"/>
+      <FILE id="satSimpleLookC" name="SimpleV2LookAndFeel.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Style/SimpleV2LookAndFeel.cpp"/>
+      <FILE id="satSimpleControlC" name="SimpleDescriptorControl.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimpleDescriptorControl.cpp"/>
+      <FILE id="satSimpleDetailC" name="SimpleDetailPanel.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimpleDetailPanel.cpp"/>
+      <FILE id="satSimpleBrowserC" name="SimplePresetBrowser.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimplePresetBrowser.cpp"/>
+      <FILE id="satSimplePanelC" name="SimpleSettingsPanel.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimpleSettingsPanel.cpp"/>
+    </GROUP>
+    <GROUP id="satSharedModulation" name="TR-Shared Modulation">
+      <FILE id="satModStateC" name="TRModulationState.cpp" compile="1" resource="0" file="../TR-Shared/Modulation/State/TRModulationState.cpp"/>
+      <FILE id="satModStateH" name="TRModulationState.h" compile="0" resource="0" file="../TR-Shared/Modulation/State/TRModulationState.h"/>
+      <FILE id="satModRuntimeC" name="TRModulationRuntime.cpp" compile="1" resource="0" file="../TR-Shared/Modulation/Runtime/TRModulationRuntime.cpp"/>
+      <FILE id="satModRuntimeH" name="TRModulationRuntime.h" compile="0" resource="0" file="../TR-Shared/Modulation/Runtime/TRModulationRuntime.h"/>
+      <FILE id="satModBridgeC" name="TRParameterModulationBridge.cpp" compile="1" resource="0" file="../TR-Shared/Modulation/Integration/TRParameterModulationBridge.cpp"/>
+      <FILE id="satModBridgeH" name="TRParameterModulationBridge.h" compile="0" resource="0" file="../TR-Shared/Modulation/Integration/TRParameterModulationBridge.h"/>
+      <FILE id="satModWorkC" name="TRModulationWorkspace.cpp" compile="1" resource="0" file="../TR-Shared/Modulation/UI/TRModulationWorkspace.cpp"/>
+      <FILE id="satModWorkH" name="TRModulationWorkspace.h" compile="0" resource="0" file="../TR-Shared/Modulation/UI/TRModulationWorkspace.h"/>
+      <FILE id="satModSimpleC" name="TRSimpleModulationWorkspace.cpp" compile="1" resource="0" file="../TR-Shared/Modulation/UI/TRSimpleModulationWorkspace.cpp"/>
+      <FILE id="satModSimpleH" name="TRSimpleModulationWorkspace.h" compile="0" resource="0" file="../TR-Shared/Modulation/UI/TRSimpleModulationWorkspace.h"/>
+    </GROUP>
+    <GROUP id="satSharedCurves" name="TR-Shared Curves">
+      <FILE id="satCurveStateC" name="TRCurveState.cpp" compile="1" resource="0" file="../TR-Shared/Curves/State/TRCurveState.cpp"/>
+      <FILE id="satCurveStateH" name="TRCurveState.h" compile="0" resource="0" file="../TR-Shared/Curves/State/TRCurveState.h"/>
     </GROUP>
   </MAINGROUP>
   <MODULES>
@@ -33,8 +126,10 @@
   <EXPORTFORMATS>
     <VS2022 targetFolder="Builds/VisualStudio2022">
       <CONFIGURATIONS>
-        <CONFIGURATION isDebug="1" name="Debug" targetName="SAT-TR"/>
-        <CONFIGURATION isDebug="0" name="Release" targetName="SAT-TR"/>
+        <CONFIGURATION isDebug="1" name="Debug" targetName="SAT-TR"
+                       headerPath="../../ThirdParty/NeuralAmpModelerCore;../../ThirdParty/NeuralAmpModelerCore/Dependencies/eigen;../../ThirdParty/NeuralAmpModelerCore/Dependencies/nlohmann"/>
+        <CONFIGURATION isDebug="0" name="Release" targetName="SAT-TR"
+                       headerPath="../../ThirdParty/NeuralAmpModelerCore;../../ThirdParty/NeuralAmpModelerCore/Dependencies/eigen;../../ThirdParty/NeuralAmpModelerCore/Dependencies/nlohmann"/>
       </CONFIGURATIONS>
       <MODULEPATHS>
         <MODULEPATH id="juce_audio_basics" path="C:/Program Files/JUCE/modules"/>

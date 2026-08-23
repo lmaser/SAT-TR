@@ -3,6 +3,12 @@
 #include <JuceHeader.h>
 #include "SaturationEngine.h"
 #include "SatDspDiag.h"
+#include "../../TR-Shared/SimpleDSP/TRLimiterBank.h"
+#include "../../TR-Shared/SimpleDSP/TRStateCanonicalization.h"
+#include "../../TR-Shared/SimpleDSP/TRTemporalDSP.h"
+#include "Modulation/SatModulationConfig.h"
+#include "WaveShape/SatWaveShapeState.h"
+#include "WaveShape/SatWaveShapeCore.h"
 #include <array>
 #include <atomic>
 #include <memory>
@@ -35,7 +41,6 @@ public:
 	static constexpr const char* kParamPanA         = "pan_a";
 	static constexpr const char* kParamFredA        = "fred_a";
 	static constexpr const char* kParamPosA         = "pos_a";
-	static constexpr const char* kParamResoA        = "reso_a";
 	static constexpr const char* kParamInvA         = "inv_a";
 	static constexpr const char* kParamOffsetA       = "offset_a";
 	static constexpr const char* kParamSidechainA   = "sidechain_a";
@@ -66,6 +71,8 @@ public:
 	static constexpr const char* kParamSatBiasA     = "sat_bias_a";
 	static constexpr const char* kParamSatSagA      = "sat_sag_a";
 	static constexpr const char* kParamSatRawA      = "sat_raw_a";
+	static constexpr const char* kParamWaveShapeMorphA = "waveshape_morph_a";
+	static constexpr const char* kParamWaveShapeBiasA  = "waveshape_bias_a";
 	static constexpr const char* kParamExpA         = "exp_a";
 	static constexpr const char* kParamExpOrderA    = "exp_order_a";   // 0=PRE, 1=POST
 	static constexpr const char* kParamExpRatioA    = "exp_ratio_a";
@@ -100,7 +107,6 @@ public:
 	static constexpr const char* kParamPanB         = "pan_b";
 	static constexpr const char* kParamFredB        = "fred_b";
 	static constexpr const char* kParamPosB         = "pos_b";
-	static constexpr const char* kParamResoB        = "reso_b";
 	static constexpr const char* kParamInvB         = "inv_b";
 	static constexpr const char* kParamOffsetB       = "offset_b";
 	static constexpr const char* kParamSidechainB   = "sidechain_b";
@@ -131,6 +137,8 @@ public:
 	static constexpr const char* kParamSatBiasB     = "sat_bias_b";
 	static constexpr const char* kParamSatSagB      = "sat_sag_b";
 	static constexpr const char* kParamSatRawB      = "sat_raw_b";
+	static constexpr const char* kParamWaveShapeMorphB = "waveshape_morph_b";
+	static constexpr const char* kParamWaveShapeBiasB  = "waveshape_bias_b";
 	static constexpr const char* kParamExpB         = "exp_b";
 	static constexpr const char* kParamExpOrderB    = "exp_order_b";
 	static constexpr const char* kParamExpRatioB    = "exp_ratio_b";
@@ -165,7 +173,6 @@ public:
 	static constexpr const char* kParamPanC         = "pan_c";
 	static constexpr const char* kParamFredC        = "fred_c";
 	static constexpr const char* kParamPosC         = "pos_c";
-	static constexpr const char* kParamResoC        = "reso_c";
 	static constexpr const char* kParamInvC         = "inv_c";
 	static constexpr const char* kParamOffsetC       = "offset_c";
 	static constexpr const char* kParamSidechainC   = "sidechain_c";
@@ -196,6 +203,8 @@ public:
 	static constexpr const char* kParamSatBiasC     = "sat_bias_c";
 	static constexpr const char* kParamSatSagC      = "sat_sag_c";
 	static constexpr const char* kParamSatRawC      = "sat_raw_c";
+	static constexpr const char* kParamWaveShapeMorphC = "waveshape_morph_c";
+	static constexpr const char* kParamWaveShapeBiasC  = "waveshape_bias_c";
 	static constexpr const char* kParamExpC         = "exp_c";
 	static constexpr const char* kParamExpOrderC    = "exp_order_c";
 	static constexpr const char* kParamExpRatioC    = "exp_ratio_c";
@@ -227,6 +236,7 @@ public:
 	// Limiter
 	static constexpr const char* kParamLimThreshold = "lim_threshold";
 	static constexpr const char* kParamLimMode      = "lim_mode";
+	static constexpr const char* kParamLimQuality   = "lim_quality";
 
 	// Invert Polarity / Invert Stereo
 	static constexpr const char* kParamInvPol       = "inv_pol";
@@ -239,27 +249,10 @@ public:
 	static constexpr const char* kParamAlign        = "align";
 
 	// ----------------------------------------------------------------
-	//  UI State Parameters (hidden from DAW automation)
-	// ----------------------------------------------------------------
-	static constexpr const char* kParamUiWidth      = "ui_width";
-	static constexpr const char* kParamUiHeight     = "ui_height";
-	static constexpr const char* kParamUiPalette    = "ui_palette";
-	static constexpr const char* kParamUiFxTail     = "ui_fx_tail";
-	static constexpr const char* kParamUiIoFx       = "ui_io_fx";
-	static constexpr const char* kParamUiColor0     = "ui_color0";
-	static constexpr const char* kParamUiColor1     = "ui_color1";
-	static constexpr const char* kParamUiColor2     = "ui_color2";
-	static constexpr const char* kParamUiColor3     = "ui_color3";
-
-	// ----------------------------------------------------------------
 	//  UI State Keys (non-automatable, stored in APVTS tree)
 	// ----------------------------------------------------------------
 	struct UiStateKeys
 	{
-		static constexpr const char* ioExpandedA = "uiIoExpandedA";
-		static constexpr const char* ioExpandedB = "uiIoExpandedB";
-		static constexpr const char* ioExpandedC = "uiIoExpandedC";
-		static constexpr const char* firstVisibleLoader = "uiFirstVisibleLoader";
 		static constexpr const char* dryAlignMode = "uiDryAlignMode";
 		static constexpr const char* dryAlignAnchorA = "uiDryAlignAnchorA";
 		static constexpr const char* dryAlignAnchorB = "uiDryAlignAnchorB";
@@ -268,12 +261,10 @@ public:
 		static constexpr const char* legacyTruePeakMode = "uiTruePeakMode";
 	};
 
-	void  setUiIoExpanded (int loaderIndex, bool expanded);
-	bool  getUiIoExpanded (int loaderIndex) const noexcept;
-	void  setUiFirstVisibleLoaderIndex (int loaderIndex);
-	int   getUiFirstVisibleLoaderIndex() const noexcept;
 	void  setDryAlignModeEnabled (bool enabled);
 	bool  isDryAlignModeEnabled() const noexcept;
+	float getDryAlignAnchorForLoader (int loaderIndex) const noexcept;
+	void  setDryAlignAnchorForLoader (int loaderIndex, float samples) noexcept;
 	void  setSafeClipModeEnabled (bool enabled);
 	bool  isSafeClipModeEnabled() const noexcept;
 	void  toggleSafeClipMode();
@@ -313,6 +304,7 @@ public:
 	static constexpr float kLimThresholdMax     =   0.0f;
 	static constexpr float kLimThresholdDefault =   0.0f;
 	static constexpr int   kLimModeDefault      = 0;
+	static constexpr int   kLimQualityDefault   = 0;
 
 	// Invert Polarity / Invert Stereo defaults
 	static constexpr int   kInvPolDefault       = 0;   // 0=NONE  1=WET  2=GLOBAL
@@ -359,6 +351,12 @@ public:
 	static constexpr float kSatBiasMin          = -1.0f;
 	static constexpr float kSatBiasMax          = 1.0f;
 	static constexpr float kSatBiasDefault      = 0.0f;
+	static constexpr float kWaveShapeMorphMin     = 0.0f;
+	static constexpr float kWaveShapeMorphMax     = 1.0f;
+	static constexpr float kWaveShapeMorphDefault = 0.0f;
+	static constexpr float kWaveShapeBiasMin      = -1.0f;
+	static constexpr float kWaveShapeBiasMax      = 1.0f;
+	static constexpr float kWaveShapeBiasDefault  = 0.0f;
 	static constexpr float kSatSagMin           = 0.0f;
 	static constexpr float kSatSagMax           = 1.0f;
 	static constexpr float kSatSagDefault       = 0.0f;
@@ -458,10 +456,6 @@ public:
 	static constexpr float kPosMax                  = 1.0f;       // 100% = full Friedman simulation
 	static constexpr float kPosDefault              = 0.0f;
 
-	static constexpr float kResoMin                  = 0.0f;       // 0%
-	static constexpr float kResoMax                  = 2.0f;       // 200%
-	static constexpr float kResoDefault              = 1.0f;       // 100% = neutral resonance response
-
 	// ----------------------------------------------------------------
 	//  Parameter Ranges & Defaults - Global
 	// ----------------------------------------------------------------
@@ -520,100 +514,33 @@ public:
 	//  Public API - Parameter access
 	// ----------------------------------------------------------------
 	juce::AudioProcessorValueTreeState& getValueTreeState() { return parameters; }
-
-	// ----------------------------------------------------------------
-	//  UI State Accessors
-	// ----------------------------------------------------------------
-	int getUiEditorWidth() const
+	TR::Modulation::State modulationState() const;
+	bool setModulationState (const TR::Modulation::State&);
+	std::uint64_t modulationStateGeneration() const noexcept;
+	std::array<float, TR::Modulation::macroCount> modulationMacroValues() const noexcept;
+	void setModulationMacroValue (int macro, float value);
+	TR::Modulation::Runtime::TelemetrySnapshot modulationTelemetry() const noexcept;
+	std::array<std::uint32_t, 3> instabilitySeeds() const noexcept { return instabilitySeeds_; }
+	void setInstabilitySeeds(const std::array<std::uint32_t, 3>&) noexcept;
+	bool modulationDestinationValues (juce::StringRef id, float& base,
+	                                  float& effective) const noexcept;
+	SATTR::WaveShape::State waveShapeState() const;
+	bool setWaveShapeState (const SATTR::WaveShape::State&);
+	bool setWaveShapeEnabled (int loaderIndex, bool enabled);
+	bool setWaveShapePolarityMode (int loaderIndex, SATTR::WaveShape::PolarityMode);
+	bool isWaveShapeEnabled (int loaderIndex) const noexcept;
+	bool makeWaveShapeTransferSnapshot (int loaderIndex, float* output, int pointCount,
+	                                    float inputMinimum = -1.15f,
+	                                    float inputMaximum = 1.15f) const noexcept;
+	bool makeWaveShapeTransferSnapshotForMorph (int loaderIndex, float morph, float* output,
+	                                            int pointCount,
+	                                            float inputMinimum = -1.15f,
+	                                            float inputMaximum = 1.15f) const noexcept;
+	std::uint64_t waveShapeRevision() const noexcept
 	{
-		if (auto* p = parameters.getRawParameterValue (kParamUiWidth))
-			return juce::jlimit (360, 1080, static_cast<int> (*p));
-		return 360;
+		return waveShapeRevision_.load (std::memory_order_acquire);
 	}
-
-	int getUiEditorHeight() const
-	{
-		return 752;
-	}
-
-	void setUiEditorSize (int w, int h)
-	{
-		const int safeW = juce::jlimit (360, 1080, w);
-		const int safeH = 752;
-		if (auto* pw = parameters.getParameter (kParamUiWidth))
-			pw->setValueNotifyingHost (pw->convertTo0to1 (static_cast<float> (safeW)));
-		if (auto* ph = parameters.getParameter (kParamUiHeight))
-			ph->setValueNotifyingHost (ph->convertTo0to1 (static_cast<float> (safeH)));
-		juce::ignoreUnused (h);
-	}
-
-	bool getUiUseCustomPalette() const
-	{
-		if (auto* p = parameters.getRawParameterValue (kParamUiPalette))
-			return static_cast<int> (*p) != 0;
-		return false;
-	}
-
-	void setUiUseCustomPalette (bool useCustom)
-	{
-		if (auto* p = parameters.getParameter (kParamUiPalette))
-			p->setValueNotifyingHost (useCustom ? 1.0f : 0.0f);
-	}
-
-	bool getUiFxTailEnabled() const
-	{
-		if (auto* p = parameters.getRawParameterValue (kParamUiFxTail))
-			return static_cast<bool> (*p);
-		return false;
-	}
-
-	bool getUiIoFxEnabled() const
-	{
-		if (auto* p = parameters.getRawParameterValue (kParamUiIoFx))
-			return static_cast<bool> (*p);
-		return true;
-	}
-
-	void setUiFxTailEnabled (bool enabled)
-	{
-		if (auto* p = parameters.getParameter (kParamUiFxTail))
-			p->setValueNotifyingHost (enabled ? 1.0f : 0.0f);
-	}
-
-	void setUiIoFxEnabled (bool enabled)
-	{
-		if (auto* p = parameters.getParameter (kParamUiIoFx))
-			p->setValueNotifyingHost (enabled ? 1.0f : 0.0f);
-	}
-
-	juce::Colour getUiCustomPaletteColour (int index) const
-	{
-		static constexpr juce::uint32 fallback[] = { 0x00FF00u, 0x000000u, 0x0000FFu, 0xFF0000u };
-		const char* ids[] = { kParamUiColor0, kParamUiColor1, kParamUiColor2, kParamUiColor3 };
-		if (index < 0 || index >= 4)
-			return juce::Colours::green;
-
-		if (auto* p = parameters.getRawParameterValue (ids[index]))
-		{
-			const auto rgb = static_cast<juce::uint32> (*p);
-			return juce::Colour (0xFF000000 | rgb);
-		}
-		return juce::Colour (0xFF000000 | fallback[index]);
-	}
-
-	void setUiCustomPaletteColour (int index, juce::Colour colour)
-	{
-		const char* ids[] = { kParamUiColor0, kParamUiColor1, kParamUiColor2, kParamUiColor3 };
-		if (index < 0 || index >= 4)
-			return;
-
-		if (auto* p = parameters.getParameter (ids[index]))
-		{
-			const auto rgb = colour.getARGB() & 0x00FFFFFF;
-			const float normalized = static_cast<float> (rgb) / static_cast<float> (0xFFFFFF);
-			p->setValueNotifyingHost (normalized);
-		}
-	}
+	friend struct SatNativeSidechainTestAccess;
 
 	float getLoaderInputMeterPeak (int loaderIndex) const noexcept
 	{
@@ -728,6 +655,8 @@ public:
 
 		// Saturation engine state
 		SatEngine::State satState;
+		int lastWaveShapeOsOrder = -1;
+		bool lastWaveShapeEnabled = false;
 		std::shared_ptr<SatNamModel> namModel;
 		juce::String pendingNamPath;
 
@@ -753,9 +682,9 @@ public:
 		float expScLastGain = 1.0f;
 
 		// Delay line for phase alignment (max ~0.5s)
-		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> delayLine { 192000 };
+		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> delayLine { 1 };
 		juce::SmoothedValue<float> smoothedDelay { 0.0f };
-		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> dryDelayLine { 192000 };
+		juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> dryDelayLine { 1 };
 		juce::SmoothedValue<float> smoothedDryDelay { 0.0f };
 		std::atomic<float> dryAnchorSamples { 0.0f };
 		
@@ -790,8 +719,19 @@ private:
 	// ----------------------------------------------------------------
 	juce::AudioProcessorValueTreeState parameters;
 	juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+	TR::Modulation::Integration::ParameterModulationBridge modulation;
+	TR::Modulation::Runtime::MidiEventBuffer modulationMidiEvents;
+	std::array<std::uint32_t, 3> instabilitySeeds_ {};
+	mutable juce::CriticalSection waveShapeStateLock_;
+	SATTR::WaveShape::State waveShapeState_ = SATTR::WaveShape::makeDefaultState();
+	std::array<std::array<std::unique_ptr<SATTR::WaveShape::Core>, 5>,
+	           SATTR::WaveShape::loaderCount> waveShapeCores_;
+	std::array<std::atomic<bool>, SATTR::WaveShape::loaderCount> waveShapeEnabled_ {};
+	std::array<std::atomic<bool>, SATTR::WaveShape::loaderCount> waveShapePublishPending_ {};
+	std::atomic<std::uint64_t> waveShapeRevision_ { 1 };
+	void publishWaveShapeState (const SATTR::WaveShape::State&);
 
-	double currentSampleRate = 44100.0;
+	double currentSampleRate = 0.0;
 	int currentBlockSize = 512;
 	bool hasPreparedToPlay = false;
 
@@ -885,6 +825,7 @@ private:
 	std::atomic<float>* pTrim  = nullptr;
 	std::atomic<float>* pLimThreshold = nullptr;
 	std::atomic<float>* pLimMode     = nullptr;
+	std::atomic<float>* pLimQuality  = nullptr;
 	std::atomic<float>* pInvA        = nullptr;
 	std::atomic<float>* pInvB        = nullptr;
 	std::atomic<float>* pInvC        = nullptr;
@@ -919,6 +860,12 @@ private:
 	std::atomic<float>* pSatBiasC  = nullptr;
 	std::atomic<float>* pSatSagC   = nullptr;
 	std::atomic<float>* pSatRawC   = nullptr;
+	std::atomic<float>* pWaveShapeMorphA = nullptr;
+	std::atomic<float>* pWaveShapeMorphB = nullptr;
+	std::atomic<float>* pWaveShapeMorphC = nullptr;
+	std::atomic<float>* pWaveShapeBiasA = nullptr;
+	std::atomic<float>* pWaveShapeBiasB = nullptr;
+	std::atomic<float>* pWaveShapeBiasC = nullptr;
 	std::atomic<float>* pOversample = nullptr;
 	std::atomic<float>* pOffsetA  = nullptr;
 	std::atomic<float>* pOffsetB  = nullptr;
@@ -1020,110 +967,22 @@ private:
 	float normSmoothedGain_  = 1.0f;
 	int   normWarmupSamples_ = 0;    // samples since peak follower activated
 
-	// -- Dual-stage transparent peak limiter --
-	static constexpr float kLimFloor = 1.0e-12f;
-	float limEnv1_[2] = { kLimFloor, kLimFloor };
-	float limEnv2_[2] = { kLimFloor, kLimFloor };
-	float limAtt1_  = 0.0f;
-	float limRel1_  = 0.0f;
-	float limRel2_  = 0.0f;
+	TR::DSP::LimiterBank limiterBank_;
 
 	inline void applyLimiter (float* leftData, float* rightData, int numSamples,
 	                         float thresholdGainStart, float thresholdGainEnd) noexcept
 	{
-		if (numSamples <= 0)
-			return;
-
-		const float invSamples = 1.0f / static_cast<float> (numSamples);
-		float thresholdGain = thresholdGainStart;
-		const float thresholdStep = (thresholdGainEnd - thresholdGainStart) * invSamples;
-
-		for (int i = 0; i < numSamples; ++i)
-		{
-			const float peakL = std::abs (leftData[i]);
-			const float peakR = std::abs (rightData[i]);
-
-			// Stage 1 - leveler (2 ms attack, 10 ms release)
-			for (int ch = 0; ch < 2; ++ch)
-			{
-				const float p = (ch == 0) ? peakL : peakR;
-				if (p > limEnv1_[ch])
-					limEnv1_[ch] = limAtt1_ * limEnv1_[ch] + (1.0f - limAtt1_) * p;
-				else
-					limEnv1_[ch] = limRel1_ * limEnv1_[ch] + (1.0f - limRel1_) * p;
-				if (limEnv1_[ch] < kLimFloor) limEnv1_[ch] = kLimFloor;
-			}
-
-			// Stage 2 - brickwall (instant attack, 100 ms release)
-			for (int ch = 0; ch < 2; ++ch)
-			{
-				const float p = (ch == 0) ? peakL : peakR;
-				if (p > limEnv2_[ch])
-					limEnv2_[ch] = p;
-				else
-					limEnv2_[ch] = limRel2_ * limEnv2_[ch] + (1.0f - limRel2_) * p;
-				if (limEnv2_[ch] < kLimFloor) limEnv2_[ch] = kLimFloor;
-			}
-
-			// Stereo-linked gain reduction
-			float gr = 1.0f;
-			const float maxEnv1 = juce::jmax (limEnv1_[0], limEnv1_[1]);
-			const float maxEnv2 = juce::jmax (limEnv2_[0], limEnv2_[1]);
-			if (maxEnv1 > thresholdGain)
-				gr = juce::jmin (gr, thresholdGain / maxEnv1);
-			if (maxEnv2 > thresholdGain)
-				gr = juce::jmin (gr, thresholdGain / maxEnv2);
-
-			leftData[i]  *= gr;
-			rightData[i] *= gr;
-			thresholdGain += thresholdStep;
-		}
+		limiterBank_.processGlobalStereoBuffer (leftData, rightData, numSamples,
+		                                        thresholdGainStart, thresholdGainEnd,
+		                                        TR::DSP::LimiterBank::ThresholdRamp::exclusiveEndReciprocal);
 	}
 
 	inline void applyLimiterMono (float* data, int numSamples,
 	                              float thresholdGainStart, float thresholdGainEnd) noexcept
 	{
-		if (numSamples <= 0)
-			return;
-
-		const float invSamples = 1.0f / static_cast<float> (numSamples);
-		float thresholdGain = thresholdGainStart;
-		const float thresholdStep = (thresholdGainEnd - thresholdGainStart) * invSamples;
-
-		for (int i = 0; i < numSamples; ++i)
-		{
-			const float peak = std::abs (data[i]);
-
-			// Keep both internal detector lanes coherent with dual-mono use.
-			for (int ch = 0; ch < 2; ++ch)
-			{
-				if (peak > limEnv1_[ch])
-					limEnv1_[ch] = limAtt1_ * limEnv1_[ch] + (1.0f - limAtt1_) * peak;
-				else
-					limEnv1_[ch] = limRel1_ * limEnv1_[ch] + (1.0f - limRel1_) * peak;
-				if (limEnv1_[ch] < kLimFloor) limEnv1_[ch] = kLimFloor;
-			}
-
-			for (int ch = 0; ch < 2; ++ch)
-			{
-				if (peak > limEnv2_[ch])
-					limEnv2_[ch] = peak;
-				else
-					limEnv2_[ch] = limRel2_ * limEnv2_[ch] + (1.0f - limRel2_) * peak;
-				if (limEnv2_[ch] < kLimFloor) limEnv2_[ch] = kLimFloor;
-			}
-
-			float gr = 1.0f;
-			const float maxEnv1 = juce::jmax (limEnv1_[0], limEnv1_[1]);
-			const float maxEnv2 = juce::jmax (limEnv2_[0], limEnv2_[1]);
-			if (maxEnv1 > thresholdGain)
-				gr = juce::jmin (gr, thresholdGain / maxEnv1);
-			if (maxEnv2 > thresholdGain)
-				gr = juce::jmin (gr, thresholdGain / maxEnv2);
-
-			data[i] *= gr;
-			thresholdGain += thresholdStep;
-		}
+		limiterBank_.processGlobalMonoBuffer (data, numSamples, thresholdGainStart, thresholdGainEnd,
+		                                      TR::DSP::LimiterBank::ThresholdRamp::exclusiveEndReciprocal,
+		                                      TR::DSP::LimiterBank::FastMonoMode::dualLane);
 	}
 
 	// Post-prepare fade-in to suppress processing/filter warmup transients
@@ -1141,6 +1000,8 @@ private:
 	
 	// Pre-computed coefficients (set once in prepareToPlay, avoids per-block std::exp)
 	float cachedTiltSmoothCoeff_  = 0.0f;  // 1 - exp(-1/(sr*0.03))
+	float cachedFiveMsRetain_     = 0.0f;
+	float cachedFiveMsStep_       = 1.0f;
 	float cachedDcBlockR_         = 0.0f;  // 1 - 2*pi*5/sr
 	float cachedOutputDcBlockR_   = 0.0f;  // 1 - 2*pi*2/sr, final wet-only protection
 	float cachedNormFastCoeff_    = 0.0f;  // for NORM AGC 10ms tau
@@ -1150,8 +1011,14 @@ private:
 	float lastGlobalDryMix_       = 0.0f;
 	float lastGlobalWetMix_       = 1.0f;
 	float lastLimiterThresholdLin_ = 1.0f;
-	juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> globalDryDelayLine { 192000 };
+	juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> globalDryDelayLine { 1 };
 	juce::SmoothedValue<float> smoothedGlobalDryDelay { 0.0f };
+	using RouteAlignDelayLine = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd>;
+	std::array<RouteAlignDelayLine, 3> routeAlignDelayLines_ {
+		RouteAlignDelayLine (1), RouteAlignDelayLine (1), RouteAlignDelayLine (1)
+	};
+	RouteAlignDelayLine pdcRoundingDelayLine_ { 1 };
+	int lastRouteAlignSignature_ = -1;
 	std::atomic<bool> dryAlignModeEnabled_ { false };
 	std::atomic<bool> dryAlignRuntimeActive_ { false };
 
@@ -1167,6 +1034,8 @@ private:
 	float sidechainLastGain_[3] = { 1.0f, 1.0f, 1.0f };
 	float sidechainEnv_[3] = {};
 	float sidechainDriveAmount_[3] = {};
+	std::array<TR::Modulation::Runtime::ControlSignalView, 3> sharedSidechainControls_ {};
+	bool useNativeSidechainForTests_ = false;
 	std::atomic<float> loaderInputMeterPeak_[3] {};
 	std::atomic<float> loaderOutputMeterPeak_[3] {};
 	std::atomic<float> globalInputMeterPeak_ { 0.0f };
@@ -1191,8 +1060,11 @@ private:
 	void applyOffset (juce::AudioBuffer<float>& buffer, float offsetMs, int loaderIndex);
 	void applyDryAlignDelay (juce::AudioBuffer<float>& buffer, float targetDelaySamples, int loaderIndex);
 	void applyGlobalDryAlignDelay (juce::AudioBuffer<float>& buffer, float targetDelaySamples);
+	void applyRouteAlignDelay (juce::AudioBuffer<float>& buffer, float targetDelaySamples, int branchIndex);
+	void applyPdcRoundingDelay (juce::AudioBuffer<float>& buffer, float delaySamples);
 	void calculateAutoAlignment();
-	void updateReportedLatency();
+	void updateReportedLatency (int route, float loaderDelayA,
+	                            float loaderDelayB, float loaderDelayC);
 
 
 	// Shared M/S encoding helper (used by processBlock + offline export)
@@ -1232,4 +1104,3 @@ private:
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SATTRAudioProcessor)
 };
-

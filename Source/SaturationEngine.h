@@ -46,7 +46,6 @@ static constexpr float kHalfPi     = 1.57079632679489661923f;
 static constexpr float kTwoPi      = 6.28318530717958647692f;
 static constexpr float kInvPi      = 0.31830988618379067154f;
 static constexpr float kLn2        = 0.69314718055994530942f;
-static constexpr float kSmoothCoeff = 0.995f;   // ~10ms @ 48kHz
 static constexpr float kRawCeiling  = 1.0f;       // 0 dBFS internal sample ceiling for RAW mode
 static constexpr int   kReactBufSize = 8192;
 static constexpr int   kTriodeSagBufSize = 512;
@@ -1094,6 +1093,38 @@ struct InstabilityState
         gainDrift.reset();
         inputDrift.reset();
         shapeDrift.reset();
+    }
+};
+
+struct InstabilityModulationView
+{
+    const float* gainCoordinate = nullptr;
+    const float* inputCoordinate = nullptr;
+    const float* shapeCoordinate = nullptr;
+    const float* amountCoordinate = nullptr;
+    int numSamples = 0;
+
+    bool valid() const noexcept
+    {
+        return (gainCoordinate != nullptr || inputCoordinate != nullptr
+            || shapeCoordinate != nullptr || amountCoordinate != nullptr) && numSamples > 0;
+    }
+
+    float sample(const float* values, int index, int processingSamples) const noexcept
+    {
+        if (numSamples <= 1 || processingSamples <= 1) return values[0];
+        const auto position = static_cast<float>(index) * static_cast<float>(numSamples)
+                            / static_cast<float>(processingSamples);
+        if (position >= static_cast<float>(numSamples - 1))
+        {
+            const auto fraction = position - static_cast<float>(numSamples - 1);
+            return values[numSamples - 1]
+                + fraction * (values[numSamples - 1] - values[numSamples - 2]);
+        }
+        const auto lower = juce::jlimit(0, numSamples - 2, static_cast<int>(position));
+        const auto upper = juce::jmin(numSamples - 1, lower + 1);
+        const auto fraction = position - static_cast<float>(lower);
+        return values[lower] + fraction * (values[upper] - values[lower]);
     }
 };
 
@@ -6276,7 +6307,8 @@ inline void processBlock (State& state,
                           bool  isSafetyLpfOn = false,
                           bool  rawMode = false,
                           SatDiag::Collector* diagCollector = nullptr,
-                          int channelsToProcessParam = 2) noexcept
+                          int channelsToProcessParam = 2,
+                          const InstabilityModulationView* instabilityModulation = nullptr) noexcept
 {
 
     // CLEAN model: 1:1 pass-through. Flush model state once on entry so
@@ -6611,7 +6643,11 @@ inline void processBlock (State& state,
         state.sBias  += (biasParam  - state.sBias)  * oneMinusSmooth;
         state.sReact += (reactParam - state.sReact) * oneMinusSmooth;
         state.sDetail += (detailTarget - state.sDetail) * oneMinusSmooth;
-        state.sInstability   += (instabilityParam   - state.sInstability)   * oneMinusSmooth;
+        const auto instabilityTarget = instabilityModulation != nullptr
+            && instabilityModulation->amountCoordinate != nullptr
+            ? instabilityModulation->sample(instabilityModulation->amountCoordinate, i, numSamples)
+            : instabilityParam;
+        state.sInstability += (instabilityTarget - state.sInstability) * oneMinusSmooth;
 
         const float drive = state.sDrive;
         const float detailDrive = state.sDetailDrive;
@@ -6626,7 +6662,24 @@ inline void processBlock (State& state,
         // Static tolerance (per-instance hash): each "unit" has unique character.
         // Thermal drift stays continuous and only touches AC-safe controls.
         float driveMod = 1.0f, inputMod = 1.0f, shapeMod = 0.0f;
-        if (instabilityAmount > 0.001f)
+        if (instabilityModulation != nullptr && instabilityModulation->valid()
+            && instabilityModulation->amountCoordinate == nullptr)
+        {
+            const auto gainCoordinate = instabilityModulation->gainCoordinate != nullptr
+                ? instabilityModulation->sample(instabilityModulation->gainCoordinate, i, numSamples)
+                : 0.5f;
+            driveMod = 1.0f + (2.0f * gainCoordinate - 1.0f) * 0.16f;
+            const auto inputCoordinate = instabilityModulation->inputCoordinate != nullptr
+                ? instabilityModulation->sample(instabilityModulation->inputCoordinate, i, numSamples)
+                : 0.5f;
+            const auto inputDb = detail::clampF(2.0f * inputCoordinate - 1.0f, -1.0f, 1.0f);
+            inputMod = std::pow(10.0f, inputDb / 20.0f);
+            const auto shapeCoordinate = instabilityModulation->shapeCoordinate != nullptr
+                ? instabilityModulation->sample(instabilityModulation->shapeCoordinate, i, numSamples)
+                : 0.5f;
+            shapeMod = (2.0f * shapeCoordinate - 1.0f) * 0.04f;
+        }
+        else if (instabilityAmount > 0.001f)
         {
             // Init static tolerances once per loader instance.
             if (! state.instability.tolerancesReady)
